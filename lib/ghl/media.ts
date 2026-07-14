@@ -9,8 +9,12 @@ export async function subirFotoSa(subcuenta: Subcuenta, archivo: File): Promise<
     formData.append("file", archivo);
     formData.append("hosted", "false");
 
-    const response = await fetch(`${SA_BASE_URL}/media/upload-file?locationId=${locationId}`, {
+    const urlCompleta = `${SA_BASE_URL}/medias/upload-file?locationId=${locationId}`;
+    console.log("DEBUG URL de subida: ", urlCompleta)
+
+    const response = await fetch(urlCompleta, {
         method: "POST",
+        cache: "no-store",
         headers: {
             Authorization: `Bearer ${apiToken}`,
             Version: "2021-07-28",

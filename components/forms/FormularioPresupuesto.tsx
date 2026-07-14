@@ -24,6 +24,46 @@ export function FormularioPresupuesto({ subcuenta, comunidades, administradores 
     const [descripcion, setDescripcion] = useState("");
     const [fotos, setFotos] = useState<string[]>([]);
     const [subiendoFoto, setSubiendoFoto] = useState(false);
+    const [enviando, setEnviando] = useState(false);
+    const [resultadoEnvio, setResultadoEnvio] = useState<string | null>(null);
+
+    async function handleEnviar() {
+      if (!formularioValido || !comunidadSeleccionada) return;
+
+      setEnviando(true);
+      setResultadoEnvio(null);
+
+      try{
+        const response = await fetch("/api/crear-oportunidad", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            comuidadNombre: comunidadSeleccionada.nombreDireccion,
+            administrador: administradorAsociado,
+            modeloNegocio,
+            fecha,
+            contactoVisita,
+            descripcion,
+            camposEspecificos: valoresCampos,
+            fotos,
+          }),
+        });
+
+        const data = await response.json();
+        
+        if(!response.ok){
+          throw new Error(data.error ?? "Error al crear la oportunidad");
+        }
+
+        setResultadoEnvio(`Oportunidad creada correctamente (ID: ${data.id})`);
+      } catch (error) {
+        setResultadoEnvio(
+          error instanceof Error ? `Error: ${error.message}` : "Error desconocido"
+        );
+      } finally {
+        setEnviando(false);
+      }
+    }
 
     async function handleFotosSeleccionadas(archivos: FileList | null) {
       if (!archivos) return;
@@ -110,6 +150,11 @@ export function FormularioPresupuesto({ subcuenta, comunidades, administradores 
         </label>
 
         <label>
+          Fecha de la visita
+          <input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} />
+        </label>
+
+        <label>
           Modelo de negocio
           <select
             value={modeloNegocio}
@@ -176,9 +221,11 @@ export function FormularioPresupuesto({ subcuenta, comunidades, administradores 
           </fieldset>
         )}
 
-        <button type="submit" disabled={!formularioValido}>
-          Enviar presupuesto
+        <button type="button" disabled={!formularioValido || enviando} onClick={handleEnviar}>
+          {enviando ? "Enviando..." : "Enviar presupuesto"}
         </button>
+
+        {resultadoEnvio && <p>{resultadoEnvio}</p>}
 
         {!formularioValido && (
           <p style={{ color: "gray", fontSize: "0.9em" }}>
