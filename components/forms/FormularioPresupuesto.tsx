@@ -26,19 +26,22 @@ export function FormularioPresupuesto({ subcuenta, comunidades, administradores 
     const [subiendoFoto, setSubiendoFoto] = useState(false);
     const [enviando, setEnviando] = useState(false);
     const [resultadoEnvio, setResultadoEnvio] = useState<string | null>(null);
+    const [candidatas, setCandidatas] = useState
+        <Array<{ id: string; name: string; createdAt: string; modeloNegocio: string | null }> | null
+      >(null);
 
-    async function handleEnviar() {
+    async function handleEnviar(oportunidadIdElegida?: string) {
       if (!formularioValido || !comunidadSeleccionada) return;
 
       setEnviando(true);
       setResultadoEnvio(null);
 
       try{
-        const response = await fetch("/api/crear-oportunidad", {
+        const response = await fetch("/api/registrar-visita", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            comuidadNombre: comunidadSeleccionada.nombreDireccion,
+            comunidadNombre: comunidadSeleccionada.nombreDireccion,
             administrador: administradorAsociado,
             modeloNegocio,
             fecha,
@@ -46,6 +49,7 @@ export function FormularioPresupuesto({ subcuenta, comunidades, administradores 
             descripcion,
             camposEspecificos: valoresCampos,
             fotos,
+            oportunidadId: oportunidadIdElegida,
           }),
         });
 
@@ -55,7 +59,13 @@ export function FormularioPresupuesto({ subcuenta, comunidades, administradores 
           throw new Error(data.error ?? "Error al crear la oportunidad");
         }
 
-        setResultadoEnvio(`Oportunidad creada correctamente (ID: ${data.id})`);
+        if (data.estado === "elegir") {
+          setCandidatas(data.candidatas);
+          return;
+        }
+
+        setCandidatas(null);
+        setResultadoEnvio(`Visita registrada correctamente (oportunidad: ${data.id})`);
       } catch (error) {
         setResultadoEnvio(
           error instanceof Error ? `Error: ${error.message}` : "Error desconocido"
@@ -221,7 +231,27 @@ export function FormularioPresupuesto({ subcuenta, comunidades, administradores 
           </fieldset>
         )}
 
-        <button type="button" disabled={!formularioValido || enviando} onClick={handleEnviar}>
+        {candidatas && candidatas.length > 0 && (
+          <fieldset>
+            <legend>Hay varias oportunidades abiertas para este administrador - elige la correcta</legend>
+            {candidatas.map((c) => (
+              <label key={c.id} style={{ display: "block" }}>
+                <input
+                  type="radio"
+                  name="oportunidad-elegida"
+                  onChange={() => handleEnviar(c.id)}
+                />
+                {c.name} - {c.modeloNegocio ?? "sin modelo"} - creada el {" "}
+                {new Date(c.createdAt).toLocaleDateString()}
+              </label>
+            ))}
+          </fieldset>
+        )}
+
+        <button type="button" 
+          disabled={!formularioValido || enviando || candidatas !== null} 
+          onClick={() => handleEnviar()}
+        >
           {enviando ? "Enviando..." : "Enviar presupuesto"}
         </button>
 
