@@ -21,6 +21,13 @@ const ETIQUETA_MODELO_NEGOCIO: Record<string, string> = {
     reformas_zonas_comunes: "Reformas y zonas comunes",
 };
 
+export const NOMBRE_ETAPA: Record<string, string> = {
+    [ETAPA.VISITA_CONCERTADA]: "Visita concertada",
+    [ETAPA.DATOS_RECOGIDOS]: "Datos recogidos",
+    [ETAPA.PRESUPUESTO_EN_REVISION]: "Presupuesto en revisión",
+    [ETAPA.AVISO_RECIBIDO]: "Aviso recibido",
+};
+
 type DatosOportunidad = {
     contactId: string;
     comunidadNombre: string;
@@ -130,6 +137,31 @@ export async function buscarOportunidadesAbiertas(
                 op.customFields?.find(
                     (cf: any) => cf.id === CUSTOM_FIELD_MODELO_NEGOCIO
                 )?.fieldValueString ?? null,
+        }));
+}
+
+export async function listarOportunidadesAbiertas(
+    subcuenta: Subcuenta
+): Promise<OportunidadAbierta[]> {
+    const locationId = getLocationId(subcuenta);
+
+    const data = await saFetch(
+        subcuenta,
+        `/opportunities/search?location_id=${locationId}&pipeline_id=${PIPELINE_ID}`
+    );
+
+    const oportunidades: any[] = data.opportunities ?? [];
+
+    return oportunidades
+        .filter((op) => op.pipelineId === PIPELINE_ID && op.status === "open")
+        .map((op) => ({
+            id: op.id,
+            name: op.name,
+            pipelineStageId: op.pipelineStageId,
+            createdAt: op.createdAt,
+            modeloNegocio:
+                op.customFields?.find((fc: any) => fc.id === CUSTOM_FIELD_MODELO_NEGOCIO)
+                    ?.fieldValueString ?? null,
         }));
 }
 

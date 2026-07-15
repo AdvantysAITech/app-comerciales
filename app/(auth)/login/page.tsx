@@ -25,7 +25,7 @@ export default function Loginage() {
             return;
         }
 
-        router.push("/visitas");
+        router.push("/");
     }
 
     return (
