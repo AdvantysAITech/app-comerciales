@@ -39,7 +39,7 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ id: oportunidad.id, estado: "actualizada" });
         }
 
-        return NextResponse.json
+        return NextResponse.json({ estado: "elegir", candidatas })
     } catch (error) {
         const mensaje = error instanceof Error ? error.message : "Error desconocido";
         return NextResponse.json({ error: mensaje }, { status: 500 });
