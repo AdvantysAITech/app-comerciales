@@ -141,7 +141,7 @@ export async function adjuntarDatosVisita(
     const descripcionCompleta = construirDescripcion(datos);
 
     const data = await saFetch(subcuenta, `/opportunities/${oportunidadId}`, {
-        method: "POST",
+        method: "PUT",
         body: JSON.stringify({
             pipelineStageId: ETAPA.DATOS_RECOGIDOS,
             customFields: [
