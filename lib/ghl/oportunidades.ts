@@ -8,11 +8,24 @@ export const ETAPA = {
     DATOS_RECOGIDOS: "c1c13b28-af25-4769-b95b-cdb89500a9b7",
     PRESUPUESTO_EN_REVISION: "c5e51f0b-763f-4cce-b581-f6919f66ba29",
     PRESUPUESTO_ENVIADO: "3d1f30db-9c7d-4391-90d7-50d98b217e42",
+    EN_NEGOCIACION: "eb1fe6ae-b418-4df0-84cd-cb27b6fb051c",
+    GANADA: "74963521-4c81-447e-8fb5-858bf0b8120a",
+    PERDIDA: "f89b0539-1afa-4f1f-be2a-517b22f415c9",
 } as const;
+
+export const ETAPAS_PRESUPUESTO = [
+    ETAPA.DATOS_RECOGIDOS,
+    ETAPA.PRESUPUESTO_EN_REVISION,
+    ETAPA.PRESUPUESTO_ENVIADO,
+    ETAPA.EN_NEGOCIACION,
+    ETAPA.GANADA,
+    ETAPA.PERDIDA,
+];
 
 const CUSTOM_FIELD_MODELO_NEGOCIO = "PTtDhuZnyksZ9Tj0Sb4f";
 const CUSTOM_FIELD_DESCRIPCION = "T9ubn5i7yJhutgOBSWZD";
 const CUSTOM_FIELD_FECHA_VISITA = "jltp3YJ2gnMMVnoIepLn";
+const CUSTOM_FIELD_COMUNIDAD = "rUPG2ZYUgBLRlEvR1tHh";
 
 const ETIQUETA_MODELO_NEGOCIO: Record<string, string> = {
     rehabilitacion_impermeabilizacion: "Rehabilitación e impermeabilización",
@@ -22,10 +35,14 @@ const ETIQUETA_MODELO_NEGOCIO: Record<string, string> = {
 };
 
 export const NOMBRE_ETAPA: Record<string, string> = {
+    [ETAPA.AVISO_RECIBIDO]: "Aviso recibido",
     [ETAPA.VISITA_CONCERTADA]: "Visita concertada",
     [ETAPA.DATOS_RECOGIDOS]: "Datos recogidos",
     [ETAPA.PRESUPUESTO_EN_REVISION]: "Presupuesto en revisión",
-    [ETAPA.AVISO_RECIBIDO]: "Aviso recibido",
+    [ETAPA.PRESUPUESTO_ENVIADO]: "Presupuesto enviado",
+    [ETAPA.EN_NEGOCIACION]: "En negociación",
+    [ETAPA.GANADA]: "Ganada",
+    [ETAPA.PERDIDA]: "Pérdida",
 };
 
 type DatosOportunidad = {
@@ -47,7 +64,22 @@ type OportunidadAbierta = {
     modeloNegocio: string | null;
 }
 
+export type OportunidadListado = {
+    id: string;
+    name: string;
+    pipelineStageId: string;
+    createdAt: string;
+    modeloNegocio: string | null;
+    comunidadNombre: string | null;
+    administrador: {
+        nombre: string | null;
+        email: string | null;
+        telefono: string | null;
+    };
+};
+
 type DatosVisita = {
+    comunidadNombre: string;
     modeloNegocio: string;
     fecha: string;
     contactoVisita: string;
@@ -140,9 +172,10 @@ export async function buscarOportunidadesAbiertas(
         }));
 }
 
-export async function listarOportunidadesAbiertas(
-    subcuenta: Subcuenta
-): Promise<OportunidadAbierta[]> {
+export async function listarOportunidades(
+    subcuenta: Subcuenta,
+    etapasIncluidas: string[]
+): Promise<OportunidadListado[]> {
     const locationId = getLocationId(subcuenta);
 
     const data = await saFetch(
@@ -153,15 +186,27 @@ export async function listarOportunidadesAbiertas(
     const oportunidades: any[] = data.opportunities ?? [];
 
     return oportunidades
-        .filter((op) => op.pipelineId === PIPELINE_ID && op.status === "open")
+        .filter(
+            (op) =>
+                op.pipelineId === PIPELINE_ID &&
+                etapasIncluidas.includes(op.pipelineStageId)
+        )
         .map((op) => ({
             id: op.id,
             name: op.name,
             pipelineStageId: op.pipelineStageId,
             createdAt: op.createdAt,
             modeloNegocio:
-                op.customFields?.find((fc: any) => fc.id === CUSTOM_FIELD_MODELO_NEGOCIO)
+                op.customFields?.find((cf: any) => cf.id === CUSTOM_FIELD_MODELO_NEGOCIO)
                     ?.fieldValueString ?? null,
+            comunidadNombre:
+                op.customFields?.find((cf: any) => cf.id === CUSTOM_FIELD_COMUNIDAD)
+                    ?.fieldValueString ?? null,
+            administrador: {
+                nombre: op.contact?.name ?? null,
+                email: op.contact?.email ?? null,
+                telefono: op.contact?.phone ?? null,
+            },
         }));
 }
 
@@ -180,6 +225,7 @@ export async function adjuntarDatosVisita(
                 { id: CUSTOM_FIELD_MODELO_NEGOCIO, field_value: ETIQUETA_MODELO_NEGOCIO[datos.modeloNegocio] },
                 { id: CUSTOM_FIELD_DESCRIPCION, field_value: descripcionCompleta },
                 { id: CUSTOM_FIELD_FECHA_VISITA, field_value: datos.fecha },
+                { id: CUSTOM_FIELD_COMUNIDAD, field_value: datos.comunidadNombre },
             ],
         }),
     });

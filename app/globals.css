@@ -10,6 +10,14 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+
+  --color-navy-900: #15375A;
+  --color-sky-500: #5D93BE;
+  --color-sky-300: #9CC6E4;
+  --color-sky-100: #D8EBF5;
+  --color-ink-900: #111318;
+  --color-cloud: #FFFFFF;
+  --color-slate-500: #667085;
 }
 
 @media (prefers-color-scheme: dark) {
