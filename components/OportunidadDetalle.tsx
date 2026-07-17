@@ -45,8 +45,8 @@ export async function OportunidadDetalle({ id }: { id: string }) {
                     <dd className="text-right font-medium text-ink">
                         <div>{oportunidad.administrador.nombre ?? "Sin identificar"}</div>
                         {oportunidad.administrador.id && (
-                            
-                                href={urlContactoGhl(subcuenta, oportunidad.administrador.id)}
+                            <a
+                                href={urlContactoSa(subcuenta, oportunidad.administrador.id)}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="text-xs font-normal text-accent hover:underline"
@@ -61,8 +61,8 @@ export async function OportunidadDetalle({ id }: { id: string }) {
                     <dt className="text-muted">Estado de la oportunidad</dt>
                     <dd className="text-right font-medium text-ink">
                         <div>{NOMBRE_ETAPA[oportunidad.pipelineStageId] ?? "Desconocido"}</div>
-                        
-                            href={urlOportunidadGhl(subcuenta, oportunidad.id)}
+                        <a
+                            href={urlOportunidadSa(subcuenta, oportunidad.id)}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="text-xs font-normal text-accent hover:underline"

@@ -8,5 +8,5 @@ export function urlContactoSa(subcuenta: Subcuenta, contactId: string): string {
 }
 
 export function urlOportunidadSa(subcuenta: Subcuenta, oportunidadId: string): string {
-    return `${SA_APP_BASE_URL}/location/${getLocationId(subcuenta)}/opportunities/${oportunidadId}`;
+    return `${SA_APP_BASE_URL}/location/${getLocationId(subcuenta)}/opportunities/${oportunidadId}?tab=Información+del+cliente+potencial`;
 }
