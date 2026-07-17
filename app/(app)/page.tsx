@@ -14,7 +14,7 @@ export default async function DashboardPage() {
 
     const total = oportunidades.length;
     const porRevisar = oportunidades.filter((op) =>
-        [ETAPA.PRESUPUESTO_EN_REVISION, ETAPA.PRESUPUESTO_ENVIADO, ETAPA.EN_NEGOCIACION].includes(
+        ([ETAPA.PRESUPUESTO_EN_REVISION, ETAPA.PRESUPUESTO_ENVIADO, ETAPA.EN_NEGOCIACION] as string[]).includes(
             op.pipelineStageId
         )
     ).length;
