@@ -71,7 +71,10 @@ export type OportunidadListado = {
     createdAt: string;
     modeloNegocio: string | null;
     comunidadNombre: string | null;
+    fechaVisita: string | null;
+    descripcionVisita: string | null;
     administrador: {
+        id: string | null;
         nombre: string | null;
         email: string | null;
         telefono: string | null;
@@ -114,6 +117,33 @@ function construirDescripcion(datos: {
         "Descripción del comercial: ",
         datos.descripcionLibre || "(sin descripción adicional)",
     ].join("\n");
+}
+
+function mapearOportunidadListado(op: any): OportunidadListado {
+    return {
+        id: op.id,
+        name: op.name,
+        pipelineStageId: op.pipelineStageId,
+        createdAt: op.createdAt,
+        modeloNegocio:
+            op.customFields?.find((cf: any) => cf.id === CUSTOM_FIELD_MODELO_NEGOCIO)
+                ?.fieldValueString ?? null,
+        comunidadNombre:
+            op.customFields?.find((cf: any) => cf.id === CUSTOM_FIELD_COMUNIDAD)
+                ?.fieldValueString ?? null,
+        fechaVisita:
+            op.customFields?.find((cf: any) => cf.id === CUSTOM_FIELD_FECHA_VISITA)
+                ?.fieldValueString ?? null,
+        descripcionVisita:
+            op.customFields?.find((cf: any) => cf.id === CUSTOM_FIELD_DESCRIPCION)
+                ?.fieldValueString ?? null,
+        administrador: {
+            id: op.contactId ?? op.contact?.id ?? null,
+            nombre: op.contact?.name ?? null,
+            email: op.contact?.email ?? null,
+            telefono: op.contact?.phone ?? null,
+        },
+    };
 }
 
 export async function crearOportunidad(subcuenta: Subcuenta, datos: DatosOportunidad) {
@@ -191,23 +221,21 @@ export async function listarOportunidades(
                 op.pipelineId === PIPELINE_ID &&
                 etapasIncluidas.includes(op.pipelineStageId)
         )
-        .map((op) => ({
-            id: op.id,
-            name: op.name,
-            pipelineStageId: op.pipelineStageId,
-            createdAt: op.createdAt,
-            modeloNegocio:
-                op.customFields?.find((cf: any) => cf.id === CUSTOM_FIELD_MODELO_NEGOCIO)
-                    ?.fieldValueString ?? null,
-            comunidadNombre:
-                op.customFields?.find((cf: any) => cf.id === CUSTOM_FIELD_COMUNIDAD)
-                    ?.fieldValueString ?? null,
-            administrador: {
-                nombre: op.contact?.name ?? null,
-                email: op.contact?.email ?? null,
-                telefono: op.contact?.phone ?? null,
-            },
-        }));
+        .map(mapearOportunidadListado);
+}
+
+export async function obtenerOportunidad(
+    subcuenta: Subcuenta,
+    oportunidadId: string
+): Promise<OportunidadListado | null> {
+    try {
+        const data = await saFetch(subcuenta, `/opportunities/${oportunidadId}`);
+        const op = data.opportunity ?? data;
+        if (!op?.id) return null;
+        return mapearOportunidadListado(op);
+    } catch {
+        return null;
+    }
 }
 
 export async function adjuntarDatosVisita(
