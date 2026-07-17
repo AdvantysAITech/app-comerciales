@@ -1,5 +1,7 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
   --background: #ffffff;
   --foreground: #171717;
@@ -18,13 +20,34 @@
   --color-ink-900: #111318;
   --color-cloud: #FFFFFF;
   --color-slate-500: #667085;
+
+  --color-canvas: var(--app-canvas);
+  --color-surface: var(--app-surface);
+  --color-ink: var(--app-ink);
+  --color-muted: var(--app-muted);
+  --color-hairline: var(--app-hairline);
+  --color-accent: var(--app-accent);
+  --color-cta: var(--app-cta);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+:root {
+  --app-canvas: #D8EBF5;
+  --app-surface: #FFFFFF;
+  --app-ink: #15375A;
+  --app-muted: #667085;
+  --app-hairline: rgb(102 112 133 / 0.2);
+  --app-accent: #5D93BE;
+  --app-cta: #111318;
+}
+
+.dark {
+  --app-canvas: #0B1E30;
+  --app-surface: #16324F;
+  --app-ink: #EAF3FA;
+  --app-muted: #93A6BD;
+  --app-hairline: rgb(255 255 255 / 0.1);
+  --app-accent: #5D93BE;
+  --app-cta: #5D93BE;
 }
 
 body {
