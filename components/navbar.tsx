@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
+import { cerrarSesion } from "@/app/actions/auth";
 
 const ENLACES = [
   {
@@ -54,11 +55,6 @@ export function Navbar() {
     localStorage.setItem("navbar-abierto", String(nuevo));
   }
 
-  function cerrarTrasNavegar() {
-    setAbierto(false);
-    localStorage.setItem("navbar-abierto", "false");
-  }
-
   return (
     <div className="fixed inset-x-0 bottom-0 z-40 flex justify-center pb-[max(1rem,env(safe-area-inset-bottom))]">
       <div className="flex items-center gap-1 rounded-full border border-hairline bg-surface p-1.5 shadow-lg">
@@ -70,7 +66,6 @@ export function Navbar() {
                 <Link
                   key={enlace.href}
                   href={enlace.href}
-                  onClick={cerrarTrasNavegar}
                   aria-label={enlace.label}
                   className={`flex h-11 w-11 items-center justify-center rounded-full transition ${
                     activo ? "bg-accent/15 text-ink" : "text-muted hover:bg-accent/10 hover:text-ink"
@@ -81,9 +76,9 @@ export function Navbar() {
               );
             })}
             <button
-              onClick={() => signOut({ redirectTo: "/login" })}
+              onClick={() => cerrarSesion()}
               aria-label="Cerrar sesión"
-              className="flex h-11 w-11 items-center justify-center rounded-full text-muted transition hover:bg-red-500/10 hover:text-red-600"
+              className="flex h-11 w-11 cursor-pointer items-center justify-center rounded-full text-muted transition hover:bg-red-500/10 hover:text-red-600"
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5 shrink-0">
                 <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
@@ -97,7 +92,7 @@ export function Navbar() {
         <button
           onClick={alternar}
           aria-label={abierto ? "Cerrar menú" : "Abrir menú"}
-          className="flex h-12 w-12 items-center justify-center rounded-full bg-accent text-white shadow-md transition hover:brightness-105"
+          className="flex h-12 w-12 cursor-pointer items-center justify-center rounded-full bg-accent text-canvas shadow-md transition hover:brightness-105"
         >
           {abierto ? (
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
