@@ -1,0 +1,65 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --background: #F6F3EC;
+  --foreground: #1C1917;
+  color-scheme: light;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-public-sans);
+  --font-serif: var(--font-fraunces);
+
+  --color-stone-900: #1C1917;
+  --color-bone-300: #EDE7DA;
+  --color-bone-100: #F6F3EC;
+  --color-cloud: #FFFFFF;
+  --color-graphite-500: #6F6A62;
+
+  --color-canvas: var(--app-canvas);
+  --color-surface: var(--app-surface);
+  --color-ink: var(--app-ink);
+  --color-muted: var(--app-muted);
+  --color-hairline: var(--app-hairline);
+  --color-accent: var(--app-accent);
+  --color-cta: var(--app-cta);
+}
+
+:root {
+  --app-canvas: #F6F3EC;
+  --app-surface: #FFFFFF;
+  --app-ink: #1C1917;
+  --app-muted: #6F6A62;
+  --app-hairline: rgb(28 25 23 / 0.12);
+  --app-accent: #1C1917;
+  --app-cta: #1C1917;
+}
+
+.dark {
+  --app-canvas: #17140F;
+  --app-surface: #211D18;
+  --app-ink: #F3EFE6;
+  --app-muted: #A69F93;
+  --app-hairline: rgb(243 239 230 / 0.14);
+  --app-accent: #F3EFE6;
+  --app-cta: #F3EFE6;
+  color-scheme: dark;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-serif), ui-serif, Georgia, serif;
+  letter-spacing: -0.01em;
+}
