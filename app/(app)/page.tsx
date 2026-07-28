@@ -1,6 +1,7 @@
 import { auth } from "@/auth";
 import { listarOportunidades, ETAPAS_PRESUPUESTO, ETAPA } from "@/lib/ghl/oportunidades";
 import { PanelPresupuestos } from "@/components/PanelPresupuesto";
+import { LogoSubcuenta } from "@/components/LogoSubcuenta";
 
 export default async function DashboardPage() {
     const session = await auth();
@@ -34,6 +35,10 @@ export default async function DashboardPage() {
         // pb-28: deja hueco para que el navbar flotante fijo no tape la última fila en móvil
         <div className="relative min-h-screen overflow-hidden bg-canvas px-4 pb-28 pt-6 sm:px-10">
             <div className="pointer-events-none absolute -right-16 -top-16 h-48 w-48 rounded-full bg-ink/5 blur-3xl sm:h-64 sm:w-64" />
+
+            <div className="relative mb-5 flex items-center">
+                <LogoSubcuenta subcuenta={subcuenta} variante="completo" alto={36} priority />
+            </div>
 
             <div className="relative flex items-center gap-3">
                 <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-ink text-sm font-medium text-canvas">

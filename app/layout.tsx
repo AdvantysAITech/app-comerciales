@@ -26,6 +26,7 @@ export default function RootLayout({
   return (
     <html
       lang="es"
+      suppressHydrationWarning
       className={`${fraunces.variable} ${publicSans.variable} h-full antialiased`}
     >
       <head>

@@ -1,4 +1,4 @@
-type Subcuenta = "scala-valencia" | "vertical-projects";
+import type { SubcuentaSlug as Subcuenta } from "../subcuenta";
 
 type SaConfig = {
     apiToken: string;
