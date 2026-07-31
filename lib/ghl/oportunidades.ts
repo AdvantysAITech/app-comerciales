@@ -1,4 +1,5 @@
 import { saFetch, getLocationId, type Subcuenta } from "./client";
+import { asociarComunidadConOportunidad } from "./comunidades";
 
 const PIPELINE_ID = "Lg3gwS0oqpYDiBm8bjcD";
 
@@ -47,6 +48,7 @@ export const NOMBRE_ETAPA: Record<string, string> = {
 
 type DatosOportunidad = {
     contactId: string;
+    comunidadId: string;
     comunidadNombre: string;
     modeloNegocio: string;
     fecha: string;
@@ -166,7 +168,35 @@ export async function crearOportunidad(subcuenta: Subcuenta, datos: DatosOportun
         }),
     });
 
-    return data.opportunity ?? data;
+    const oportunidad = data.opportunity ?? data;
+    await asociarComunidadConOportunidad(subcuenta, datos.comunidadId, oportunidad.id);
+    return oportunidad;
+}
+
+export async function crearOportunidadDesdeVisita(subcuenta: Subcuenta, datos: DatosOportunidad) {
+    const descripcionCompleta = construirDescripcion(datos);
+
+    const data = await saFetch(subcuenta, "/opportunities/", {
+        method: "POST",
+        body: JSON.stringify({
+            locationId: getLocationId(subcuenta),
+            pipelineId: PIPELINE_ID,
+            pipelineStageId: ETAPA.DATOS_RECOGIDOS,
+            contactId: datos.contactId,
+            name: `${datos.comunidadNombre} - ${ETIQUETA_MODELO_NEGOCIO[datos.modeloNegocio]}`,
+            status: "open",
+            customFields: [
+                { id: CUSTOM_FIELD_MODELO_NEGOCIO, field_value: ETIQUETA_MODELO_NEGOCIO[datos.modeloNegocio] },
+                { id: CUSTOM_FIELD_DESCRIPCION, field_value: descripcionCompleta },
+                { id: CUSTOM_FIELD_FECHA_VISITA, field_value: datos.fecha },
+                { id: CUSTOM_FIELD_COMUNIDAD, field_value: datos.comunidadNombre },
+            ],
+        }),
+    });
+
+    const oportunidad = data.opportunity ?? data;
+    await asociarComunidadConOportunidad(subcuenta, datos.comunidadId, oportunidad.id);
+    return oportunidad;
 }
 
 export async function buscarOportunidadesAbiertas(

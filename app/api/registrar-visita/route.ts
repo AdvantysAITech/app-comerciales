@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { upsertContact } from "@/lib/ghl/contactos";
-import { buscarOportunidadesAbiertas, adjuntarDatosVisita, ETAPA } from "@/lib/ghl/oportunidades";
+import { buscarOportunidadesAbiertas, adjuntarDatosVisita, crearOportunidadDesdeVisita, ETAPA } from "@/lib/ghl/oportunidades";
 
 export async function POST(request: NextRequest) {
     const session = await auth();
@@ -24,14 +24,22 @@ export async function POST(request: NextRequest) {
         }
 
         const candidatas = await buscarOportunidadesAbiertas(subcuenta, contactId, [
-            ETAPA.AVISO_RECIBIDO,
+            ETAPA.VISITA_CONCERTADA,
         ]);
 
         if (candidatas.length === 0) {
-            return NextResponse.json(
-                { error: "No hay ninguna oportunidad abierta para este administrador. Verificar que la visita esté agendada." },
-                { status: 404 }
-            );
+            const oportunidad = await crearOportunidadDesdeVisita(subcuenta, {
+                contactId,
+                comunidadId: body.comunidadId,
+                comunidadNombre: body.comunidadNombre,
+                modeloNegocio: body.modeloNegocio,
+                fecha: body.fecha,
+                contactoVisita: body.contactoVisita,
+                descripcionLibre: body.descripcionLibre,
+                camposEspecificos: body.camposEspecificos,
+                fotos: body.fotos,
+            });
+            return NextResponse.json({ id: oportunidad.id, estado: "creada" });
         }
 
         if (candidatas.length === 1) {

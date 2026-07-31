@@ -2,6 +2,27 @@ import { saFetch, type Subcuenta, getLocationId } from "./client";
 
 const OBJECT_KEY_COMUNIDAD = "custom_objects.comunidades_de_propietarios";
 
+// Association "comunidad_de_la_oportunidad" (Comunidades De Propietarios -> Opportunity),
+// confirmada por curl el 31/07/2026. GHL no impone cardinalidad 1:1 en esta relación:
+// hay que evitar crearla más de una vez por oportunidad desde el propio código.
+const ASSOCIATION_ID_COMUNIDAD_OPORTUNIDAD = "6a4b7ab79e37d62b69f3fced";
+
+export async function asociarComunidadConOportunidad(
+    subcuenta: Subcuenta,
+    comunidadId: string,
+    oportunidadId: string
+) {
+    return saFetch(subcuenta, "/associations/relations", {
+        method: "POST",
+        body: JSON.stringify({
+            locationId: getLocationId(subcuenta),
+            associationId: ASSOCIATION_ID_COMUNIDAD_OPORTUNIDAD,
+            firstRecordId: comunidadId,
+            secondRecordId: oportunidadId,
+        }),
+    });
+}
+
 type SaRecord = {
     id: string;
     properties: Record<string, unknown>;

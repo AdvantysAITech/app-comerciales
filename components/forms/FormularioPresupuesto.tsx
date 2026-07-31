@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { CAMPOS_POR_MODELO } from "@/lib/forms/camposModeloNegocio";
 
 type ModeloNegocio =
@@ -20,6 +21,7 @@ const ESTILO_CAMPO =
 const ESTILO_LABEL = "mb-1.5 block text-xs text-muted";
 
 export function FormularioPresupuesto({ subcuenta, comunidades, administradores }: Props) {
+    const router = useRouter();
     const [modeloNegocio, setModeloNegocio] = useState<ModeloNegocio | "">("");
     const [valoresCampos, setValoresCampos] = useState<Record<string, string>>({});
     const [comunidadId, setComunidadId] = useState("");
@@ -29,28 +31,43 @@ export function FormularioPresupuesto({ subcuenta, comunidades, administradores 
     const [fotos, setFotos] = useState<string[]>([]);
     const [subiendoFoto, setSubiendoFoto] = useState(false);
     const [enviando, setEnviando] = useState(false);
-    const [resultadoEnvio, setResultadoEnvio] = useState<string | null>(null);
+    const [toast, setToast] = useState<{ tipo: "exito" | "error"; mensaje: string } | null>(null);
     const [candidatas, setCandidatas] = useState
         <Array<{ id: string; name: string; createdAt: string; modeloNegocio: string | null }> | null
       >(null);
+
+    useEffect(() => {
+      if (!toast) return;
+
+      if (toast.tipo === "exito") {
+        const irAlDashboard = setTimeout(() => {
+          router.push("/");
+        }, 1200);
+        return () => clearTimeout(irAlDashboard);
+      }
+
+      const ocultarToast = setTimeout(() => setToast(null), 5000);
+      return () => clearTimeout(ocultarToast);
+    }, [toast, router]);
 
     async function handleEnviar(oportunidadIdElegida?: string) {
       if (!formularioValido || !comunidadSeleccionada) return;
 
       setEnviando(true);
-      setResultadoEnvio(null);
+      setToast(null);
 
       try{
         const response = await fetch("/api/registrar-visita", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
+            comunidadId: comunidadSeleccionada.id,
             comunidadNombre: comunidadSeleccionada.nombreDireccion,
             administrador: administradorAsociado,
             modeloNegocio,
             fecha,
             contactoVisita,
-            descripcion,
+            descripcionLibre: descripcion,
             camposEspecificos: valoresCampos,
             fotos,
             oportunidadId: oportunidadIdElegida,
@@ -69,11 +86,12 @@ export function FormularioPresupuesto({ subcuenta, comunidades, administradores 
         }
 
         setCandidatas(null);
-        setResultadoEnvio(`Visita registrada correctamente (oportunidad: ${data.id})`);
+        setToast({ tipo: "exito", mensaje: "Visita registrada correctamente" });
       } catch (error) {
-        setResultadoEnvio(
-          error instanceof Error ? `Error: ${error.message}` : "Error desconocido"
-        );
+        setToast({
+          tipo: "error",
+          mensaje: error instanceof Error ? error.message : "Error desconocido",
+        });
       } finally {
         setEnviando(false);
       }
@@ -351,12 +369,17 @@ export function FormularioPresupuesto({ subcuenta, comunidades, administradores 
             </section>
           )}
 
-          {resultadoEnvio && (
-            <p className="rounded-xl border border-hairline bg-surface px-4 py-3 text-sm text-ink">
-              {resultadoEnvio}
-            </p>
-          )}
         </div>
+
+        {toast && (
+          <div
+            className={`fixed right-4 top-4 z-50 max-w-xs rounded-xl px-4 py-3 text-sm font-medium text-white shadow-lg ${
+              toast.tipo === "exito" ? "bg-green-600" : "bg-red-600"
+            }`}
+          >
+            {toast.mensaje}
+          </div>
+        )}
 
         {/* bottom-24: se posa justo encima del navbar flotante, nunca lo tapa */}
         <div className="sticky bottom-24 z-30 mt-4 rounded-2xl border border-hairline bg-canvas/95 p-3 backdrop-blur-md">
