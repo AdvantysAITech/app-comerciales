@@ -1,9 +1,18 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { SelectorArbol } from "@/components/forms/SelectorArbol";
+import { SubidorFotos } from "@/components/forms/SubidorFotos";
 import { getModulos, type ModuloTrabajo } from "@/lib/catalogo";
 import { normalizarNombre } from "@/lib/texto";
+import {
+    cargarBorrador,
+    describirAntiguedad,
+    guardarBorrador,
+    limpiarBorrador,
+    tieneContenido,
+    type DatosBorrador,
+} from "@/lib/visita/borrador";
 import {
     alertasActivas,
     contarPorModulo,
@@ -19,7 +28,7 @@ import {
  * Formulario de captura v2.
  *
  * Convive con el formulario actual en una ruta aparte: el flujo antiguo sigue
- * operativo en producción hasta que este esté completo (el envío llega en B4).
+ * operativo en produccion hasta que este esté completo (el envío llega en B4).
  */
 
 type ComunidadListado = {
@@ -45,6 +54,9 @@ const ESTILO_LABEL = "mb-1.5 block text-xs text-muted";
 const ESTILO_SECCION = "rounded-2xl border border-hairline bg-surface p-4";
 const ESTILO_TITULO = "mb-3 text-[11px] font-medium uppercase tracking-wide text-muted";
 
+/** Fotos mínimas cuando el módulo incluye una partida con aviso (amianto). */
+const MINIMO_FOTOS_CON_ALERTA = 3;
+
 export function FormularioPresupuesto({ subcuenta, comunidades, administradores }: Props) {
     const [nombreComunidad, setNombreComunidad] = useState("");
     const [comunidadElegidaId, setComunidadElegidaId] = useState<string | null>(null);
@@ -55,11 +67,73 @@ export function FormularioPresupuesto({ subcuenta, comunidades, administradores 
     const [observaciones, setObservaciones] = useState("");
     const [modulosElegidos, setModulosElegidos] = useState<string[]>([]);
     const [seleccion, setSeleccion] = useState<SeleccionVisita>(seleccionVacia);
+    const [fotosPorModulo, setFotosPorModulo] = useState<Record<string, string[]>>({});
+
+    const [borradorRecuperado, setBorradorRecuperado] = useState<string | null>(null);
+    // Evita que el autoguardado pise el borrador con el formulario vacío durante
+    // el primer render, antes de haber intentado recuperarlo.
+    const rehidratado = useRef(false);
 
     const modulos = useMemo(() => getModulos(subcuenta), [subcuenta]);
 
-    // Sugerencias mientras escribe. Coincidencia parcial: la máquina propone,
-    // el comercial decide. Nunca se empareja solo (ver nota de B2.1).
+    const datosActuales: DatosBorrador = useMemo(
+        () => ({
+            nombreComunidad,
+            comunidadElegidaId,
+            administradorId,
+            contacto,
+            telefono,
+            fecha,
+            observaciones,
+            modulosElegidos,
+            seleccion,
+            fotosPorModulo,
+        }),
+        [
+            nombreComunidad,
+            comunidadElegidaId,
+            administradorId,
+            contacto,
+            telefono,
+            fecha,
+            observaciones,
+            modulosElegidos,
+            seleccion,
+            fotosPorModulo,
+        ]
+    );
+
+    // Recuperación del borrador al montar.
+    useEffect(() => {
+        const borrador = cargarBorrador(subcuenta);
+
+        if (borrador && tieneContenido(borrador)) {
+            setNombreComunidad(borrador.nombreComunidad);
+            setComunidadElegidaId(borrador.comunidadElegidaId);
+            setAdministradorId(borrador.administradorId);
+            setContacto(borrador.contacto);
+            setTelefono(borrador.telefono);
+            setFecha(borrador.fecha);
+            setObservaciones(borrador.observaciones);
+            setModulosElegidos(borrador.modulosElegidos);
+            setSeleccion(borrador.seleccion);
+            setFotosPorModulo(borrador.fotosPorModulo);
+            setBorradorRecuperado(borrador.guardadoEn);
+        }
+
+        rehidratado.current = true;
+    }, [subcuenta]);
+
+    // Autoguardado con retardo: escribir en cada pulsación castiga al móvil sin
+    // aportar nada.
+    useEffect(() => {
+        if (!rehidratado.current) return;
+        if (!tieneContenido(datosActuales)) return;
+
+        const id = setTimeout(() => guardarBorrador(subcuenta, datosActuales), 800);
+        return () => clearTimeout(id);
+    }, [subcuenta, datosActuales]);
+
     const sugerencias = useMemo(() => {
         const texto = normalizarNombre(nombreComunidad);
         if (texto.length < 2) return [];
@@ -98,13 +172,28 @@ export function FormularioPresupuesto({ subcuenta, comunidades, administradores 
         [subcuenta, modulosElegidos, seleccion]
     );
 
+    const modulosConAlerta = useMemo(
+        () => new Set(alertas.map((a) => a.moduloKey)),
+        [alertas]
+    );
+
+    const modulosSinFotosSuficientes = useMemo(
+        () =>
+            [...modulosConAlerta].filter(
+                (key) => (fotosPorModulo[key]?.length ?? 0) < MINIMO_FOTOS_CON_ALERTA
+            ),
+        [modulosConAlerta, fotosPorModulo]
+    );
+
     function alternarModulo(modulo: ModuloTrabajo) {
         setModulosElegidos((anterior) => {
             if (anterior.includes(modulo.key)) {
-                // Al quitar un módulo se limpian sus partidas: si no, quedarían
-                // huérfanas en el estado y viajarían al presupuesto sin que nadie
-                // las vea en pantalla.
                 setSeleccion((s) => limpiarModulo(s, modulo.key));
+                setFotosPorModulo((f) => {
+                    const siguiente = { ...f };
+                    delete siguiente[modulo.key];
+                    return siguiente;
+                });
                 return anterior.filter((k) => k !== modulo.key);
             }
             return [...anterior, modulo.key];
@@ -117,12 +206,54 @@ export function FormularioPresupuesto({ subcuenta, comunidades, administradores 
         if (comunidad.administradorId) setAdministradorId(comunidad.administradorId);
     }
 
+    function descartarBorrador() {
+        limpiarBorrador(subcuenta);
+        setNombreComunidad("");
+        setComunidadElegidaId(null);
+        setAdministradorId("");
+        setContacto("");
+        setTelefono("");
+        setFecha("");
+        setObservaciones("");
+        setModulosElegidos([]);
+        setSeleccion(seleccionVacia);
+        setFotosPorModulo({});
+        setBorradorRecuperado(null);
+    }
+
     const faltanDatosGenerales =
         nombreComunidad.trim() === "" || contacto.trim() === "" || telefono.trim() === "" || fecha === "";
+
+    const motivoBloqueo = faltanDatosGenerales
+        ? "Completa comunidad, contacto, teléfono y fecha"
+        : errores.length > 0
+          ? "Hay partidas marcadas sin resolver"
+          : partidas.length === 0
+            ? "Selecciona al menos una partida"
+            : modulosSinFotosSuficientes.length > 0
+              ? `Faltan fotos en: ${modulosSinFotosSuficientes
+                    .map((k) => modulos.find((m) => m.key === k)?.label ?? k)
+                    .join(", ")}`
+              : "Envío pendiente de implementar";
 
     return (
         <div className="px-4 pb-24 pt-6 sm:px-10">
             <h1 className="mb-5 text-xl font-semibold text-ink sm:text-2xl">Nuevo presupuesto</h1>
+
+            {borradorRecuperado && (
+                <div className="mb-3 flex items-center justify-between gap-3 rounded-2xl border border-hairline bg-ink/[0.04] px-4 py-3">
+                    <p className="text-xs text-muted">
+                        Borrador recuperado ({describirAntiguedad(borradorRecuperado)})
+                    </p>
+                    <button
+                        type="button"
+                        onClick={descartarBorrador}
+                        className="shrink-0 cursor-pointer rounded-lg border border-hairline px-2.5 py-1.5 text-xs font-medium text-ink transition hover:bg-canvas"
+                    >
+                        Empezar de cero
+                    </button>
+                </div>
+            )}
 
             <div className="flex flex-col gap-3">
                 <section className={ESTILO_SECCION}>
@@ -271,9 +402,13 @@ export function FormularioPresupuesto({ subcuenta, comunidades, administradores 
                 {modulosElegidos.map((key) => {
                     const modulo = modulos.find((m) => m.key === key);
                     if (!modulo) return null;
+
+                    const minimo = modulosConAlerta.has(key) ? MINIMO_FOTOS_CON_ALERTA : 0;
+
                     return (
                         <section key={key} className={ESTILO_SECCION}>
                             <p className={ESTILO_TITULO}>{modulo.label}</p>
+
                             {modulo.captura === "arbol" ? (
                                 <SelectorArbol
                                     subcuenta={subcuenta}
@@ -288,6 +423,16 @@ export function FormularioPresupuesto({ subcuenta, comunidades, administradores 
                                         : "Módulo sin estructura definida todavía"}
                                 </p>
                             )}
+
+                            <div className="mt-4 border-t border-hairline pt-4">
+                                <SubidorFotos
+                                    fotos={fotosPorModulo[key] ?? []}
+                                    onFotosChange={(fotos) =>
+                                        setFotosPorModulo((anterior) => ({ ...anterior, [key]: fotos }))
+                                    }
+                                    minimo={minimo}
+                                />
+                            </div>
                         </section>
                     );
                 })}
@@ -340,15 +485,7 @@ export function FormularioPresupuesto({ subcuenta, comunidades, administradores 
             </div>
 
             <div className="sticky bottom-24 z-30 mt-4 rounded-2xl border border-hairline bg-canvas/95 p-3 backdrop-blur-md">
-                <p className="mb-2 text-center text-xs text-muted">
-                    {faltanDatosGenerales
-                        ? "Completa comunidad, contacto, teléfono y fecha"
-                        : errores.length > 0
-                          ? "Hay partidas marcadas sin resolver"
-                          : partidas.length === 0
-                            ? "Selecciona al menos una partida"
-                            : "Envío pendiente de implementar"}
-                </p>
+                <p className="mb-2 text-center text-xs text-muted">{motivoBloqueo}</p>
                 <button
                     type="button"
                     disabled
