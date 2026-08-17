@@ -28,16 +28,35 @@ export function mediosAuxiliares(): NodoCatalogo {
     };
 }
 
-/** 3.2 Picado. */
-export function picado(): NodoCatalogo {
+/**
+ * 3.2 Picado.
+ *
+ * En Cubiertas la limpieza va en grupo propio (asi lo lista el cliente), por eso
+ * se puede excluir de aqui: tenerla en los dos sitios duplicaba las mismas dos
+ * partidas dentro del mismo modulo.
+ */
+export function picado(opciones: { incluirLimpieza?: boolean } = {}): NodoCatalogo {
+    const { incluirLimpieza = true } = opciones;
+
     return {
         key: "picado",
         label: "Picado",
         hijos: [
-            { key: "limpieza_manual", label: "Limpieza manual", medicion: { unidad: "m2" } },
-            { key: "limpieza_mecanica", label: "Limpieza mecánica", medicion: { unidad: "m2" } },
+            ...(incluirLimpieza ? limpieza().hijos ?? [] : []),
             { key: "picado_revestimiento", label: "Picado de revestimiento", medicion: { unidad: "m2" } },
             { key: "picado_piedra", label: "Picado de piedra", medicion: { unidad: "m2" } },
+        ],
+    };
+}
+
+/** Limpieza. Grupo propio en Cubiertas; dentro de Picado en el resto. */
+export function limpieza(): NodoCatalogo {
+    return {
+        key: "limpieza",
+        label: "Limpieza",
+        hijos: [
+            { key: "limpieza_manual", label: "Limpieza manual", medicion: { unidad: "m2" } },
+            { key: "limpieza_mecanica", label: "Limpieza mecánica", medicion: { unidad: "m2" } },
         ],
     };
 }
@@ -50,6 +69,8 @@ export function saneado(): NodoCatalogo {
         hijos: [
             { key: "mortero_m75_arena", label: "Mortero M-7,5 + arena", medicion: { unidad: "m2" } },
             { key: "geolite_t40", label: "Geolite T40", medicion: { unidad: "m2" } },
+            // TODO(validar): el esquema de fachadas anota "Geolite T40 . T10".
+            { key: "geolite_t10", label: "Geolite T10", medicion: { unidad: "m2" } },
         ],
     };
 }
