@@ -1,400 +1,362 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import { CAMPOS_POR_MODELO } from "@/lib/forms/camposModeloNegocio";
+import { useMemo, useState } from "react";
+import { SelectorArbol } from "@/components/forms/SelectorArbol";
+import { getModulos, type ModuloTrabajo } from "@/lib/catalogo";
+import { normalizarNombre } from "@/lib/texto";
+import {
+    alertasActivas,
+    contarPorModulo,
+    limpiarModulo,
+    partidasSeleccionadas,
+    seleccionVacia,
+    validarSeleccion,
+    type SeleccionVisita,
+    type Subcuenta,
+} from "@/lib/visita/seleccion";
 
-type ModeloNegocio =
-    | "rehabilitacion_impermeabilizacion"
-    | "descuelgues_verticales"
-    | "retirada_amianto"
-    | "reformas_zonas_comunes";
+/**
+ * Formulario de captura v2.
+ *
+ * Convive con el formulario actual en una ruta aparte: el flujo antiguo sigue
+ * operativo en producción hasta que este esté completo (el envío llega en B4).
+ */
+
+type ComunidadListado = {
+    id: string;
+    nombreDireccion: string;
+    administradorId?: string;
+};
+
+type AdministradorListado = {
+    id: string;
+    nombreDespacho?: string;
+};
 
 type Props = {
-    subcuenta: "scala-valencia" | "vertical-projects";
-    comunidades: Array<{ id: string; nombreDireccion: string; administradorId?: string }>;
-    administradores: Array<{ id: string; nombreDespacho?: string }>;
+    subcuenta: Subcuenta;
+    comunidades: ComunidadListado[];
+    administradores: AdministradorListado[];
 };
 
 const ESTILO_CAMPO =
     "w-full rounded-xl border border-hairline bg-canvas px-3 py-2.5 text-sm text-ink placeholder:text-muted focus:border-ink/30 focus:outline-none";
 const ESTILO_LABEL = "mb-1.5 block text-xs text-muted";
+const ESTILO_SECCION = "rounded-2xl border border-hairline bg-surface p-4";
+const ESTILO_TITULO = "mb-3 text-[11px] font-medium uppercase tracking-wide text-muted";
 
 export function FormularioPresupuesto({ subcuenta, comunidades, administradores }: Props) {
-    const router = useRouter();
-    const [modeloNegocio, setModeloNegocio] = useState<ModeloNegocio | "">("");
-    const [valoresCampos, setValoresCampos] = useState<Record<string, string>>({});
-    const [comunidadId, setComunidadId] = useState("");
+    const [nombreComunidad, setNombreComunidad] = useState("");
+    const [comunidadElegidaId, setComunidadElegidaId] = useState<string | null>(null);
+    const [administradorId, setAdministradorId] = useState("");
+    const [contacto, setContacto] = useState("");
+    const [telefono, setTelefono] = useState("");
     const [fecha, setFecha] = useState("");
-    const [contactoVisita, setContactoVisita] = useState("");
-    const [descripcion, setDescripcion] = useState("");
-    const [fotos, setFotos] = useState<string[]>([]);
-    const [subiendoFoto, setSubiendoFoto] = useState(false);
-    const [enviando, setEnviando] = useState(false);
-    const [toast, setToast] = useState<{ tipo: "exito" | "error"; mensaje: string } | null>(null);
-    const [candidatas, setCandidatas] = useState
-        <Array<{ id: string; name: string; createdAt: string; modeloNegocio: string | null }> | null
-      >(null);
+    const [observaciones, setObservaciones] = useState("");
+    const [modulosElegidos, setModulosElegidos] = useState<string[]>([]);
+    const [seleccion, setSeleccion] = useState<SeleccionVisita>(seleccionVacia);
 
-    useEffect(() => {
-      if (!toast) return;
+    const modulos = useMemo(() => getModulos(subcuenta), [subcuenta]);
 
-      if (toast.tipo === "exito") {
-        const irAlDashboard = setTimeout(() => {
-          router.push("/");
-        }, 1200);
-        return () => clearTimeout(irAlDashboard);
-      }
+    // Sugerencias mientras escribe. Coincidencia parcial: la máquina propone,
+    // el comercial decide. Nunca se empareja solo (ver nota de B2.1).
+    const sugerencias = useMemo(() => {
+        const texto = normalizarNombre(nombreComunidad);
+        if (texto.length < 2) return [];
+        return comunidades
+            .filter((c) => normalizarNombre(c.nombreDireccion).includes(texto))
+            .slice(0, 5);
+    }, [comunidades, nombreComunidad]);
 
-      const ocultarToast = setTimeout(() => setToast(null), 5000);
-      return () => clearTimeout(ocultarToast);
-    }, [toast, router]);
+    const comunidadElegida = comunidades.find((c) => c.id === comunidadElegidaId);
 
-    async function handleEnviar(oportunidadIdElegida?: string) {
-      if (!formularioValido || !comunidadSeleccionada) return;
+    const coincidenciaExacta = useMemo(() => {
+        const texto = normalizarNombre(nombreComunidad);
+        if (!texto) return undefined;
+        return comunidades.find((c) => normalizarNombre(c.nombreDireccion) === texto);
+    }, [comunidades, nombreComunidad]);
 
-      setEnviando(true);
-      setToast(null);
+    const seCrearaComunidad = nombreComunidad.trim() !== "" && !comunidadElegida && !coincidenciaExacta;
 
-      try{
-        const response = await fetch("/api/registrar-visita", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            comunidadId: comunidadSeleccionada.id,
-            comunidadNombre: comunidadSeleccionada.nombreDireccion,
-            administrador: administradorAsociado,
-            modeloNegocio,
-            fecha,
-            contactoVisita,
-            descripcionLibre: descripcion,
-            camposEspecificos: valoresCampos,
-            fotos,
-            oportunidadId: oportunidadIdElegida,
-          }),
-        });
-
-        const data = await response.json();
-
-        if(!response.ok){
-          throw new Error(data.error ?? "Error al crear la oportunidad");
-        }
-
-        if (data.estado === "elegir") {
-          setCandidatas(data.candidatas);
-          return;
-        }
-
-        setCandidatas(null);
-        setToast({ tipo: "exito", mensaje: "Visita registrada correctamente" });
-      } catch (error) {
-        setToast({
-          tipo: "error",
-          mensaje: error instanceof Error ? error.message : "Error desconocido",
-        });
-      } finally {
-        setEnviando(false);
-      }
-    }
-
-    async function handleFotosSeleccionadas(archivos: FileList | null) {
-      if (!archivos) return;
-
-      setSubiendoFoto(true);
-
-      try {
-        for (const archivo of Array.from(archivos)) {
-          const formData = new FormData();
-          formData.append("foto", archivo);
-
-          const response = await fetch("/api/subir-foto", {
-            method: "POST",
-            body: formData,
-          });
-
-          const data = await response.json();
-
-          if (!response.ok){
-            throw new Error(data.error ?? "Fallo al subir una de las fotos");
-          }
-
-          setFotos((anterior) => [...anterior, data.url]);
-        }
-      } catch (error) {
-        console.error(error);
-        alert("Hubo un problema subiendo alguna foto. Revisa e inténtalo de nuevo.");
-      } finally {
-        setSubiendoFoto(false);
-      }
-    }
-
-    function quitarFoto(url: string) {
-        setFotos((anterior) => anterior.filter((f) => f !== url));
-    }
-
-    const esScala = subcuenta === "scala-valencia";
-
-    function handleCampoChange(key: string, valor: string) {
-        setValoresCampos((anterior) => ({ ...anterior, [key]: valor }));
-    }
-
-    const camposActuales = modeloNegocio ? CAMPOS_POR_MODELO[modeloNegocio] : [];
-    const comunidadSeleccionada = comunidades.find((c) => c.id === comunidadId);
-    const administradorAsociado = administradores.find(
-      (a) => a.id === comunidadSeleccionada?.administradorId
+    const conteo = useMemo(
+        () => contarPorModulo(subcuenta, modulosElegidos, seleccion),
+        [subcuenta, modulosElegidos, seleccion]
     );
 
-    const fotosMinimasAmianto = modeloNegocio === "retirada_amianto" ? 3 : 0;
+    const partidas = useMemo(
+        () => partidasSeleccionadas(subcuenta, modulosElegidos, seleccion),
+        [subcuenta, modulosElegidos, seleccion]
+    );
 
-    const formularioValido =
-    comunidadId !== "" &&
-    modeloNegocio !== "" &&
-    fecha !== "" &&
-    fotos.length >= fotosMinimasAmianto;
+    const errores = useMemo(
+        () => validarSeleccion(subcuenta, modulosElegidos, seleccion),
+        [subcuenta, modulosElegidos, seleccion]
+    );
 
-    const motivoBloqueo = comunidadId === ""
-        ? "Selecciona una comunidad"
-        : modeloNegocio === ""
-        ? "Selecciona un modelo de negocio"
-        : fecha === ""
-        ? "Indica la fecha de la visita"
-        : fotos.length < fotosMinimasAmianto
-        ? `Faltan ${fotosMinimasAmianto - fotos.length} foto(s) más para poder enviar`
-        : null;
+    const alertas = useMemo(
+        () => alertasActivas(subcuenta, modulosElegidos, seleccion),
+        [subcuenta, modulosElegidos, seleccion]
+    );
+
+    function alternarModulo(modulo: ModuloTrabajo) {
+        setModulosElegidos((anterior) => {
+            if (anterior.includes(modulo.key)) {
+                // Al quitar un módulo se limpian sus partidas: si no, quedarían
+                // huérfanas en el estado y viajarían al presupuesto sin que nadie
+                // las vea en pantalla.
+                setSeleccion((s) => limpiarModulo(s, modulo.key));
+                return anterior.filter((k) => k !== modulo.key);
+            }
+            return [...anterior, modulo.key];
+        });
+    }
+
+    function elegirSugerencia(comunidad: ComunidadListado) {
+        setComunidadElegidaId(comunidad.id);
+        setNombreComunidad(comunidad.nombreDireccion);
+        if (comunidad.administradorId) setAdministradorId(comunidad.administradorId);
+    }
+
+    const faltanDatosGenerales =
+        nombreComunidad.trim() === "" || contacto.trim() === "" || telefono.trim() === "" || fecha === "";
 
     return (
-      // pb-24: hueco extra para que la barra de envío pegajosa no quede tapada por el navbar flotante
-      <div className="px-4 pb-24 pt-6 sm:px-10">
-        <h1 className="mb-5 text-xl font-semibold text-ink sm:text-2xl">Nuevo presupuesto</h1>
-
-        <div className="flex flex-col gap-3">
-          <section className="rounded-2xl border border-hairline bg-surface p-4">
-            <p className="mb-3 text-[11px] font-medium uppercase tracking-wide text-muted">
-              Comunidad y visita
-            </p>
+        <div className="px-4 pb-24 pt-6 sm:px-10">
+            <h1 className="mb-5 text-xl font-semibold text-ink sm:text-2xl">Nuevo presupuesto</h1>
 
             <div className="flex flex-col gap-3">
-              <label>
-                <span className={ESTILO_LABEL}>Comunidad</span>
-                <select
-                  value={comunidadId}
-                  onChange={(e) => setComunidadId(e.target.value)}
-                  className={`${ESTILO_CAMPO} cursor-pointer`}
-                >
-                  <option value="">-- Selecciona una comunidad --</option>
-                  {comunidades.map((comunidad) => (
-                    <option key={comunidad.id} value={comunidad.id}>
-                      {comunidad.nombreDireccion}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                <section className={ESTILO_SECCION}>
+                    <p className={ESTILO_TITULO}>Datos generales</p>
 
-              <p className="text-xs text-muted">
-                Administrador:{" "}
-                <span className="font-medium text-ink">
-                  {administradorAsociado
-                    ? administradorAsociado.nombreDespacho
-                    : comunidadId
-                      ? "Sin administrador asociado"
-                      : "(elige una comunidad primero)"}
-                </span>
-              </p>
+                    <div className="flex flex-col gap-3">
+                        <div>
+                            <label>
+                                <span className={ESTILO_LABEL}>Comunidad</span>
+                                <input
+                                    type="text"
+                                    value={nombreComunidad}
+                                    onChange={(e) => {
+                                        setNombreComunidad(e.target.value);
+                                        setComunidadElegidaId(null);
+                                    }}
+                                    placeholder="C/ Islas Canarias, 180"
+                                    className={ESTILO_CAMPO}
+                                />
+                            </label>
 
-              <div className="grid grid-cols-2 gap-3">
-                <label>
-                  <span className={ESTILO_LABEL}>Contacto en sitio</span>
-                  <input
-                    type="text"
-                    value={contactoVisita}
-                    onChange={(e) => setContactoVisita(e.target.value)}
-                    placeholder="Nombre"
-                    className={ESTILO_CAMPO}
-                  />
-                </label>
+                            {!comunidadElegida && sugerencias.length > 0 && (
+                                <div className="mt-1.5 flex flex-col gap-1">
+                                    {sugerencias.map((c) => (
+                                        <button
+                                            key={c.id}
+                                            type="button"
+                                            onClick={() => elegirSugerencia(c)}
+                                            className="cursor-pointer rounded-lg border border-hairline px-3 py-2 text-left text-sm text-ink transition hover:border-ink/30"
+                                        >
+                                            {c.nombreDireccion}
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
 
-                <label>
-                  <span className={ESTILO_LABEL}>Fecha de la visita</span>
-                  <input
-                    type="date"
-                    value={fecha}
-                    onChange={(e) => setFecha(e.target.value)}
-                    className={`${ESTILO_CAMPO} cursor-pointer`}
-                  />
-                </label>
-              </div>
-            </div>
-          </section>
+                            {comunidadElegida && (
+                                <p className="mt-1.5 text-xs text-muted">Comunidad existente seleccionada</p>
+                            )}
 
-          <section className="rounded-2xl border border-hairline bg-surface p-4">
-            <p className="mb-3 text-[11px] font-medium uppercase tracking-wide text-muted">
-              Modelo de negocio
-            </p>
+                            {seCrearaComunidad && (
+                                <p className="mt-1.5 text-xs text-muted">
+                                    No consta en la base de datos: se creará al guardar
+                                </p>
+                            )}
+                        </div>
 
-            <label>
-              <span className={ESTILO_LABEL}>Tipo de trabajo</span>
-              <select
-                value={modeloNegocio}
-                onChange={(e) => {
-                  setModeloNegocio(e.target.value as ModeloNegocio);
-                  setValoresCampos({});
-                }}
-                className={`${ESTILO_CAMPO} cursor-pointer`}
-              >
-                <option value="">-- Selecciona --</option>
-                <option value="rehabilitacion_impermeabilizacion">Rehabilitación e impermeabilización</option>
-                {esScala && <option value="retirada_amianto">Retirada de amianto</option>}
-                <option value="descuelgues_verticales">Descuelgues verticales</option>
-                <option value="reformas_zonas_comunes">Reformas y zonas comunes</option>
-              </select>
-            </label>
+                        <label>
+                            <span className={ESTILO_LABEL}>Administrador</span>
+                            <select
+                                value={administradorId}
+                                onChange={(e) => setAdministradorId(e.target.value)}
+                                className={`${ESTILO_CAMPO} cursor-pointer`}
+                            >
+                                <option value="">-- Sin administrador --</option>
+                                {administradores.map((a) => (
+                                    <option key={a.id} value={a.id}>
+                                        {a.nombreDespacho ?? "(sin nombre)"}
+                                    </option>
+                                ))}
+                            </select>
+                        </label>
 
-            {camposActuales.length > 0 && (
-              <div className="mt-3 grid grid-cols-2 gap-3">
-                {camposActuales.map((campo) => (
-                  <label key={campo.key} className={campo.tipo === "texto" ? "col-span-2" : ""}>
-                    <span className={ESTILO_LABEL}>{campo.label}</span>
-                    {campo.tipo === "select" ? (
-                      <select
-                        value={valoresCampos[campo.key] ?? ""}
-                        onChange={(e) => handleCampoChange(campo.key, e.target.value)}
-                        className={`${ESTILO_CAMPO} cursor-pointer`}
-                      >
-                        <option value="">-- Selecciona --</option>
-                        {campo.opciones?.map((opcion) => (
-                          <option key={opcion} value={opcion}>
-                            {opcion}
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <input
-                        type={campo.tipo === "numero" ? "number" : "text"}
-                        value={valoresCampos[campo.key] ?? ""}
-                        onChange={(e) => handleCampoChange(campo.key, e.target.value)}
-                        className={ESTILO_CAMPO}
-                      />
-                    )}
-                  </label>
-                ))}
-              </div>
-            )}
+                        <div className="grid grid-cols-2 gap-3">
+                            <label>
+                                <span className={ESTILO_LABEL}>Contacto</span>
+                                <input
+                                    type="text"
+                                    value={contacto}
+                                    onChange={(e) => setContacto(e.target.value)}
+                                    placeholder="Nombre"
+                                    className={ESTILO_CAMPO}
+                                />
+                            </label>
 
-            <label className="mt-3 block">
-              <span className={ESTILO_LABEL}>Descripción de la visita</span>
-              <textarea
-                value={descripcion}
-                onChange={(e) => setDescripcion(e.target.value)}
-                rows={3}
-                placeholder="Observaciones, incidencias, accesos..."
-                className={`${ESTILO_CAMPO} resize-none`}
-              />
-            </label>
-          </section>
+                            <label>
+                                <span className={ESTILO_LABEL}>Teléfono</span>
+                                <input
+                                    type="tel"
+                                    inputMode="tel"
+                                    value={telefono}
+                                    onChange={(e) => setTelefono(e.target.value)}
+                                    placeholder="600 000 000"
+                                    className={ESTILO_CAMPO}
+                                />
+                            </label>
+                        </div>
 
-          {modeloNegocio && (
-            <section className="rounded-2xl border border-hairline bg-surface p-4">
-              <div className="mb-3 flex items-center justify-between">
-                <p className="text-[11px] font-medium uppercase tracking-wide text-muted">Fotos</p>
-                {fotosMinimasAmianto > 0 && (
-                  <span className={`text-[11px] font-medium ${fotos.length >= fotosMinimasAmianto ? "text-muted" : "text-amber-600"}`}>
-                    {fotos.length} de {fotosMinimasAmianto} mínimo
-                  </span>
+                        <label>
+                            <span className={ESTILO_LABEL}>Fecha de la visita</span>
+                            <input
+                                type="date"
+                                value={fecha}
+                                onChange={(e) => setFecha(e.target.value)}
+                                className={`${ESTILO_CAMPO} cursor-pointer`}
+                            />
+                        </label>
+
+                        <label>
+                            <span className={ESTILO_LABEL}>Observaciones</span>
+                            <textarea
+                                value={observaciones}
+                                onChange={(e) => setObservaciones(e.target.value)}
+                                rows={3}
+                                placeholder="Accesos, incidencias, lo que convenga recordar..."
+                                className={`${ESTILO_CAMPO} resize-none`}
+                            />
+                            <span className="mt-1 block text-[11px] text-muted">
+                                El dictado por voz llega en un bloque posterior
+                            </span>
+                        </label>
+                    </div>
+                </section>
+
+                <section className={ESTILO_SECCION}>
+                    <p className={ESTILO_TITULO}>Tipo de trabajo</p>
+
+                    <div className="flex flex-wrap gap-2">
+                        {modulos.map((modulo) => {
+                            const elegido = modulosElegidos.includes(modulo.key);
+                            const n = conteo[modulo.key] ?? 0;
+                            return (
+                                <button
+                                    key={modulo.key}
+                                    type="button"
+                                    onClick={() => alternarModulo(modulo)}
+                                    aria-pressed={elegido}
+                                    className={`flex min-h-11 cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-sm transition ${
+                                        elegido
+                                            ? "border-ink/30 bg-ink/[0.04] font-medium text-ink"
+                                            : "border-hairline text-ink hover:border-ink/20"
+                                    }`}
+                                >
+                                    {modulo.label}
+                                    {elegido && n > 0 && (
+                                        <span className="rounded-full border border-hairline px-1.5 text-[11px] text-muted">
+                                            {n}
+                                        </span>
+                                    )}
+                                </button>
+                            );
+                        })}
+                    </div>
+                </section>
+
+                {modulosElegidos.map((key) => {
+                    const modulo = modulos.find((m) => m.key === key);
+                    if (!modulo) return null;
+                    return (
+                        <section key={key} className={ESTILO_SECCION}>
+                            <p className={ESTILO_TITULO}>{modulo.label}</p>
+                            {modulo.captura === "arbol" ? (
+                                <SelectorArbol
+                                    subcuenta={subcuenta}
+                                    modulo={modulo}
+                                    seleccion={seleccion}
+                                    onSeleccionChange={setSeleccion}
+                                />
+                            ) : (
+                                <p className="rounded-xl border border-dashed border-hairline px-3 py-4 text-center text-xs text-muted">
+                                    {modulo.captura === "importacion"
+                                        ? "Importación de Excel / BC3 / PDF: pendiente de desarrollo"
+                                        : "Módulo sin estructura definida todavía"}
+                                </p>
+                            )}
+                        </section>
+                    );
+                })}
+
+                {alertas.length > 0 && (
+                    <section className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4">
+                        <p className={ESTILO_TITULO}>Requiere atención</p>
+                        <ul className="flex flex-col gap-1.5">
+                            {alertas.map((a) => (
+                                <li key={a.ruta} className="text-xs text-amber-700 dark:text-amber-400">
+                                    <span className="font-medium">{a.moduloLabel}:</span> {a.alerta}
+                                </li>
+                            ))}
+                        </ul>
+                    </section>
                 )}
-              </div>
 
-              <div className="grid grid-cols-4 gap-2">
-                {fotos.map((url) => (
-                  <div key={url} className="group relative aspect-square overflow-hidden rounded-xl bg-canvas">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={url} alt="Foto de la visita" className="h-full w-full object-cover" />
-                    <button
-                      type="button"
-                      onClick={() => quitarFoto(url)}
-                      aria-label="Quitar foto"
-                      className="absolute right-1 top-1 flex h-5 w-5 cursor-pointer items-center justify-center rounded-full bg-ink/60 text-canvas"
-                    >
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="h-3 w-3">
-                        <path d="M18 6 6 18M6 6l12 12" />
-                      </svg>
-                    </button>
-                  </div>
-                ))}
+                {(partidas.length > 0 || errores.length > 0) && (
+                    <section className={ESTILO_SECCION}>
+                        <p className={ESTILO_TITULO}>Resumen ({partidas.length} partidas)</p>
 
-                <label className="flex aspect-square cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-hairline text-muted transition hover:border-ink/30 hover:text-ink">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
-                    <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
-                    <circle cx="12" cy="13" r="4" />
-                  </svg>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    multiple
-                    capture="environment"
-                    onChange={(e) => handleFotosSeleccionadas(e.target.files)}
-                    disabled={subiendoFoto}
-                    className="hidden"
-                  />
-                </label>
-              </div>
+                        <div className="flex flex-col gap-1.5">
+                            {partidas.map((p) => (
+                                <div
+                                    key={p.ruta}
+                                    className="flex items-baseline justify-between gap-3 border-b border-hairline pb-1.5 last:border-0"
+                                >
+                                    <span className="text-xs text-ink">
+                                        <span className="text-muted">{p.moduloLabel} · </span>
+                                        {p.caminoLabels.join(" › ")}
+                                    </span>
+                                    <span className="shrink-0 text-xs text-muted">
+                                        {p.cantidad !== undefined ? `${p.cantidad} ${p.unidad ?? ""}` : "sin medir"}
+                                    </span>
+                                </div>
+                            ))}
+                        </div>
 
-              {subiendoFoto && <p className="mt-2 text-xs text-muted">Subiendo foto...</p>}
-            </section>
-          )}
+                        {errores.length > 0 && (
+                            <ul className="mt-3 flex flex-col gap-1 border-t border-hairline pt-3">
+                                {errores.map((e) => (
+                                    <li key={e.ruta} className="text-xs text-red-600 dark:text-red-400">
+                                        {e.mensaje}
+                                    </li>
+                                ))}
+                            </ul>
+                        )}
+                    </section>
+                )}
+            </div>
 
-          {candidatas && candidatas.length > 0 && (
-            <section className="rounded-2xl border border-hairline bg-surface p-4">
-              <p className="mb-3 text-[11px] font-medium uppercase tracking-wide text-muted">
-                Hay varias oportunidades abiertas para este administrador — elige la correcta
-              </p>
-              <div className="flex flex-col gap-2">
-                {candidatas.map((c) => (
-                  <label
-                    key={c.id}
-                    className="flex cursor-pointer items-center gap-3 rounded-xl border border-hairline p-3 transition hover:border-ink/30"
-                  >
-                    <input
-                      type="radio"
-                      name="oportunidad-elegida"
-                      onChange={() => handleEnviar(c.id)}
-                      className="h-4 w-4 shrink-0 cursor-pointer accent-ink"
-                    />
-                    <span className="text-sm text-ink">
-                      <span className="font-medium">{c.name}</span>
-                      <span className="text-muted"> · {c.modeloNegocio ?? "sin modelo"} · {new Date(c.createdAt).toLocaleDateString()}</span>
-                    </span>
-                  </label>
-                ))}
-              </div>
-            </section>
-          )}
-
+            <div className="sticky bottom-24 z-30 mt-4 rounded-2xl border border-hairline bg-canvas/95 p-3 backdrop-blur-md">
+                <p className="mb-2 text-center text-xs text-muted">
+                    {faltanDatosGenerales
+                        ? "Completa comunidad, contacto, teléfono y fecha"
+                        : errores.length > 0
+                          ? "Hay partidas marcadas sin resolver"
+                          : partidas.length === 0
+                            ? "Selecciona al menos una partida"
+                            : "Envío pendiente de implementar"}
+                </p>
+                <button
+                    type="button"
+                    disabled
+                    className="w-full cursor-not-allowed rounded-xl bg-ink py-3 text-sm font-semibold text-canvas opacity-40"
+                >
+                    Enviar presupuesto
+                </button>
+            </div>
         </div>
-
-        {toast && (
-          <div
-            className={`fixed right-4 top-4 z-50 max-w-xs rounded-xl px-4 py-3 text-sm font-medium text-white shadow-lg ${
-              toast.tipo === "exito" ? "bg-green-600" : "bg-red-600"
-            }`}
-          >
-            {toast.mensaje}
-          </div>
-        )}
-
-        {/* bottom-24: se posa justo encima del navbar flotante, nunca lo tapa */}
-        <div className="sticky bottom-24 z-30 mt-4 rounded-2xl border border-hairline bg-canvas/95 p-3 backdrop-blur-md">
-          {motivoBloqueo && (
-            <p className="mb-2 text-center text-xs text-muted">{motivoBloqueo}</p>
-          )}
-          <button
-            type="button"
-            disabled={!formularioValido || enviando || candidatas !== null}
-            onClick={() => handleEnviar()}
-            className="w-full cursor-pointer rounded-xl bg-ink py-3 text-sm font-semibold text-canvas transition disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {enviando ? "Enviando..." : "Enviar presupuesto"}
-          </button>
-        </div>
-      </div>
     );
 }
