@@ -28,11 +28,20 @@ const CUSTOM_FIELD_DESCRIPCION = "T9ubn5i7yJhutgOBSWZD";
 const CUSTOM_FIELD_FECHA_VISITA = "jltp3YJ2gnMMVnoIepLn";
 const CUSTOM_FIELD_COMUNIDAD = "rUPG2ZYUgBLRlEvR1tHh";
 
+/**
+ * Etiquetas EXACTAS del picklist "Modelo de negocio" en GHL.
+ *
+ * No tocar sin comprobar antes el picklist en la subcuenta. GHL acepta y guarda
+ * valores que no estan en la lista sin devolver error, asi que una mayuscula
+ * mal puesta no rompe nada a la vista: simplemente esa oportunidad deja de
+ * aparecer al filtrar por modelo de negocio y el reporting de direccion sale
+ * incompleto sin que nadie se entere.
+ */
 const ETIQUETA_MODELO_NEGOCIO: Record<string, string> = {
-    rehabilitacion_impermeabilizacion: "Rehabilitación e impermeabilización",
-    descuelgues_verticales: "Descuelgues verticales",
-    retirada_amianto: "Retirada de amianto",
-    reformas_zonas_comunes: "Reformas y zonas comunes",
+    rehabilitacion_impermeabilizacion: "Rehabilitación e Impermeabilización",
+    descuelgues_verticales: "Descuelgues Verticales",
+    retirada_amianto: "Retirada de Amianto",
+    reformas_zonas_comunes: "Reformas y Zonas Comunes",
 };
 
 export const NOMBRE_ETAPA: Record<string, string> = {
@@ -93,6 +102,61 @@ type DatosVisita = {
     fotos: string[];
 };
 
+/**
+ * Lee un custom field sin dar por hecho en que clave viene el valor.
+ *
+ * GHL no es consistente: /opportunities/search devuelve `fieldValueString` y
+ * /opportunities/{id} devuelve `fieldValue` para el mismo campo. Como este
+ * mapeador se usa para las dos respuestas, leer una sola clave dejaba la ficha
+ * de detalle completamente vacia. Se prueban por orden y gana la primera que
+ * traiga algo.
+ */
+function valorCampo(op: any, campoId: string): string | null {
+    const campo = op.customFields?.find((cf: any) => cf.id === campoId);
+    if (!campo) return null;
+
+    const bruto = campo.fieldValueString ?? campo.fieldValue ?? campo.value ?? null;
+    if (bruto === null || bruto === undefined || bruto === "") return null;
+
+    return typeof bruto === "string" ? bruto : String(bruto);
+}
+
+/**
+ * Lee un custom field de tipo DATE y lo devuelve como dd/mm/aaaa.
+ *
+ * Los campos DATE llegan en `fieldValueDate` como timestamp en milisegundos, no
+ * en `fieldValueString`. Se usan getters UTC a proposito: con los locales, una
+ * fecha guardada a medianoche UTC puede pintarse con un dia de menos segun la
+ * zona horaria del servidor.
+ */
+function valorFecha(op: any, campoId: string): string | null {
+    const campo = op.customFields?.find((cf: any) => cf.id === campoId);
+    if (!campo) return null;
+
+    const bruto =
+        campo.fieldValueDate ?? campo.fieldValue ?? campo.fieldValueString ?? null;
+    if (bruto === null || bruto === undefined || bruto === "") return null;
+
+    // El timestamp puede llegar como numero o como cadena de digitos.
+    const comoTexto = String(bruto);
+    const milisegundos =
+        typeof bruto === "number"
+            ? bruto
+            : /^\d+$/.test(comoTexto)
+              ? Number(comoTexto)
+              : null;
+
+    const fecha = milisegundos !== null ? new Date(milisegundos) : new Date(comoTexto);
+
+    // Si no hay forma de interpretarla, se devuelve tal cual antes que perder el dato.
+    if (Number.isNaN(fecha.getTime())) return comoTexto;
+
+    const dia = String(fecha.getUTCDate()).padStart(2, "0");
+    const mes = String(fecha.getUTCMonth() + 1).padStart(2, "0");
+
+    return `${dia}/${mes}/${fecha.getUTCFullYear()}`;
+}
+
 function construirDescripcion(datos: {
     contactoVisita: string;
     camposEspecificos: Record<string, string>;
@@ -102,7 +166,7 @@ function construirDescripcion(datos: {
     const detalles = 
         Object.entries(datos.camposEspecificos)
             .map(([key, value]) => `- ${key}: ${value}`)
-            .join("\n") || "(sin detales)";
+            .join("\n") || "(sin detalles)";
 
     const fotos =
         datos.fotos.map((url, i) => `Foto ${i + 1}: ${url}`).join("\n") || "(sin fotos)";
@@ -127,18 +191,10 @@ function mapearOportunidadListado(op: any): OportunidadListado {
         name: op.name,
         pipelineStageId: op.pipelineStageId,
         createdAt: op.createdAt,
-        modeloNegocio:
-            op.customFields?.find((cf: any) => cf.id === CUSTOM_FIELD_MODELO_NEGOCIO)
-                ?.fieldValueString ?? null,
-        comunidadNombre:
-            op.customFields?.find((cf: any) => cf.id === CUSTOM_FIELD_COMUNIDAD)
-                ?.fieldValueString ?? null,
-        fechaVisita:
-            op.customFields?.find((cf: any) => cf.id === CUSTOM_FIELD_FECHA_VISITA)
-                ?.fieldValueString ?? null,
-        descripcionVisita:
-            op.customFields?.find((cf: any) => cf.id === CUSTOM_FIELD_DESCRIPCION)
-                ?.fieldValueString ?? null,
+        modeloNegocio: valorCampo(op, CUSTOM_FIELD_MODELO_NEGOCIO),
+        comunidadNombre: valorCampo(op, CUSTOM_FIELD_COMUNIDAD),
+        fechaVisita: valorFecha(op, CUSTOM_FIELD_FECHA_VISITA),
+        descripcionVisita: valorCampo(op, CUSTOM_FIELD_DESCRIPCION),
         administrador: {
             id: op.contactId ?? op.contact?.id ?? null,
             nombre: op.contact?.name ?? null,
@@ -217,18 +273,15 @@ export async function buscarOportunidadesAbiertas(
         .filter(
             (op) =>
                 op.pipelineId === PIPELINE_ID &&
-            op.status === "open" &&
-            etapasCandidatas.includes(op.pipelineStageId)   
+                op.status === "open" &&
+                etapasCandidatas.includes(op.pipelineStageId)
         )
         .map((op) => ({
             id: op.id,
             name: op.name,
             pipelineStageId: op.pipelineStageId,
             createdAt: op.createdAt,
-            modeloNegocio:
-                op.customFields?.find(
-                    (cf: any) => cf.id === CUSTOM_FIELD_MODELO_NEGOCIO
-                )?.fieldValueString ?? null,
+            modeloNegocio: valorCampo(op, CUSTOM_FIELD_MODELO_NEGOCIO),
         }));
 }
 
