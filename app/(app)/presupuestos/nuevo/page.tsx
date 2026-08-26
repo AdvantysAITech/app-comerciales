@@ -1,7 +1,7 @@
 import { auth } from "@/auth";
 import { listarAdministradores } from "@/lib/ghl/administradores";
 import { listarComunidades } from "@/lib/ghl/comunidades";
-import { FormularioPresupuesto } from "@/components/forms/FormularioPresupuestoV2";
+import { FormularioPresupuesto } from "@/components/forms/FormularioPresupuesto";
 
 /**
  * Ruta paralela del flujo nuevo de presupuestos.

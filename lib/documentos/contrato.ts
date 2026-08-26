@@ -1,26 +1,3 @@
-/**
- * Contrato con la app de documentos (ExponentialIT Risk Reports API).
- *
- * Este fichero es la ÚNICA fuente de verdad de qué campos viajan en el JSON.
- * No lo decidimos nosotros: lo dicta la configuración de content types y prompt
- * templates de la app. Cada entrada de RUTAS se corresponde con un markerkey
- * `{{actividad.NombreMarkerKey}}` de la plantilla ODT.
- *
- * Verificado empíricamente (TEST-001 a TEST-006, 26/08/2026):
- *
- *   - La app navega JSON ANIDADO. No hay que aplanar nada.
- *   - La interpolación en los prompts es `{variable}`. `{{variable}}` NO se
- *     sustituye nunca: el modelo recibe el literal y responde que no tiene datos.
- *   - Un markerkey sin dato se sustituye por VACÍO, sin error.
- *   - `success: true` en una traza NO significa que el contenido valga: la app
- *     da por buena cualquier respuesta del modelo, incluida "No se han recibido
- *     datos de entrada". Por eso existe validarContenido().
- *   - Los campos económicos van SIN símbolo: la plantilla ya escribe " €" y
- *     " %" al lado del markerkey. Enviarlos con símbolo produce "12.450,00 € €".
- *   - Markdown se convierte a ODF real (tablas, negritas) TANTO en secciones de
- *     IA como en Mapeo Directo.
- */
-
 export type TipoResolucion = "directo" | "ia";
 
 export type DefinicionRuta = {
@@ -154,7 +131,7 @@ export function validarTablaMarkdown(etiqueta: string, texto: string): string[] 
     // Sin pipe de cierre, el nº de celdas es el de tramos tras el pipe inicial.
     // Se cuentan así (y no filtrando vacíos) porque las filas de totales llevan
     // la primera celda vacía a propósito.
-    const celdasDe = (linea: string) => linea.split("|").slice(1).length;
+    const celdasDe = (linea: string) => linea.split("|").slice(1, -1).length;
     const columnas = celdasDe(lineas[0]);
 
     lineas.forEach((linea, i) => {
@@ -164,8 +141,12 @@ export function validarTablaMarkdown(etiqueta: string, texto: string): string[] 
         }
     });
 
-    if (lineas.some((l) => l.trimEnd().endsWith("|"))) {
-        errores.push(`${etiqueta}: hay filas con pipe de cierre; el conversor añadiría una columna vacía.`);
+    const sinCierre = lineas.filter((l) => !l.trimEnd().endsWith("|"));
+    if (sinCierre.length > 0) {
+        errores.push(
+            `${etiqueta}: ${sinCierre.length} fila(s) sin pipe de cierre. El conversor no las ` +
+                `reconocera como tabla y saldran impresas como texto.`
+        );
     }
 
     return errores;
@@ -186,6 +167,49 @@ const SENALES_DE_FALLO: readonly RegExp[] = [
     /\{\{[^}]+\}\}/, // markerkey o variable sin sustituir
     /```/, // valla de código: el prompt la prohíbe, el conversor la imprimiría
 ];
+
+/**
+ * Secciones cuyo valor DEBE cuadrar con lo que enviamos.
+ *
+ * Para las de mapeo directo, la app se limita a copiar la ruta del JSON. Si lo
+ * que vuelve no es lo que mandamos, la ruta configurada en el prompt template no
+ * es la que cree el codigo, y el markerkey habra salido vacio en el documento.
+ * Fue exactamente lo que paso con `presup.ResumenCapitulos` apuntando todavia a
+ * `{tabla_prueba}`: traza correcta, tabla ausente del ODT.
+ */
+export function validarMapeoDirecto(
+    trazas: readonly TrazaSeccion[],
+    json: unknown
+): string[] {
+    const errores: string[] = [];
+
+    for (const definicion of RUTAS) {
+        if (definicion.tipo !== "directo") continue;
+
+        const traza = trazas.find((t) => t.markerKey === definicion.markerkey);
+        if (!traza) continue;
+
+        const esperado = String(resolverRuta(json, definicion.ruta) ?? "").trim();
+        const recibido = (traza.aiResponse ?? "").trim();
+
+        if (esperado !== "" && recibido === "") {
+            errores.push(
+                `${definicion.markerkey}: se envio un valor pero la app devolvio vacio. ` +
+                    `Comprueba que su prompt template apunta a "${definicion.ruta}".`
+            );
+            continue;
+        }
+
+        if (recibido !== esperado) {
+            errores.push(
+                `${definicion.markerkey}: la app devolvio algo distinto de lo enviado. ` +
+                    `Enviado: "${esperado.slice(0, 60)}" / Devuelto: "${recibido.slice(0, 60)}".`
+            );
+        }
+    }
+
+    return errores;
+}
 
 export type TrazaSeccion = {
     markerKey?: string | null;

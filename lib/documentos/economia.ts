@@ -1,22 +1,3 @@
-/**
- * Cálculo económico del presupuesto y render de las tablas.
- *
- * Todo lo que sea aritmética vive AQUÍ y solo aquí. Ningún importe pasa por un
- * LLM: `ResumenCapitulos` y `ResumenPresupuesto` eran secciones de IA cuyos
- * propios prompts decían "eres un formateador determinista, no calculas".
- * Convertirlas a Mapeo Directo con la tabla ya montada en TypeScript ahorra
- * ~8.000 tokens por presupuesto y elimina la posibilidad de que un modelo
- * altere un dígito en un documento que se firma.
- *
- * Verificado en TEST-006: el Mapeo Directo también pasa por el conversor
- * Markdown -> ODF, así que una cadena con pipes se convierte en <table:table>
- * real con estilos AI-TableHeader / AI-TableCell.
- *
- * Módulo puro: sin dependencias de Node ni de DOM. Se puede probar sin montar
- * nada y comparte lógica entre cliente y servidor.
- */
-
-/** IVA general de obra en vivienda. Configurable: hay obras al 10%. */
 export const IVA_POR_DEFECTO = 21;
 
 /** Céntimos. Trabajar en enteros evita el arrastre de los flotantes. */
@@ -141,14 +122,20 @@ export function calcularEconomia(
 // --- Render de tablas ---------------------------------------------------
 
 /**
- * Fila Markdown SIN pipe de cierre.
+ * Fila Markdown CON pipe de cierre.
  *
- * El conversor de la app cuenta el pipe final como separador y genera una
- * columna vacía a la derecha (TEST-003: 6 cabeceras -> 7 celdas). Las tablas de
- * IA lo sufren porque sus prompts exigen cerrar con pipe; las nuestras no.
+ * El pipe final es OBLIGATORIO: sin el, el conversor no reconoce el bloque como
+ * tabla y lo imprime como texto plano con pipes a la vista. Verificado sobre un
+ * documento real, y es la diferencia entre TEST-006 (con pipe, salio
+ * <table:table>) y la primera version de este render (sin pipe, salio texto).
+ *
+ * El efecto secundario conocido es una columna vacia a la derecha, porque el
+ * conversor cuenta el pipe de cierre como separador. Se absorbe: una columna de
+ * sobra es un defecto cosmetico, una tabla sin renderizar es un presupuesto
+ * inservible.
  */
 function fila(celdas: readonly string[]): string {
-    return `| ${celdas.map(escaparCelda).join(" | ")}`;
+    return `| ${celdas.map(escaparCelda).join(" | ")} |`;
 }
 
 /** El pipe dentro de una celda rompería la tabla. Se sustituye por "/". */
@@ -163,7 +150,7 @@ function escaparCelda(texto: string): string {
 export function renderResumenCapitulos(economia: Economia): string {
     const lineas = [
         fila(["CÓDIGO", "CAPÍTULO", "IMPORTE", "%"]),
-        "|---|---|---:|---:",
+        "|---|---|---:|---:|",
     ];
 
     for (const capitulo of economia.capitulos) {
@@ -185,21 +172,29 @@ export function renderResumenCapitulos(economia: Economia): string {
  * Capítulos en mayúsculas más las tres filas de cierre en negrita.
  */
 export function renderResumenPresupuesto(economia: Economia): string {
-    const lineas = [fila(["CÓDIGO", "CAPÍTULO", "IMPORTE"]), "|---|---|---:"];
+    const lineas = [fila(["CÓDIGO", "CAPÍTULO", "IMPORTE"]), "|---|---|---:|"];
 
     for (const capitulo of economia.capitulos) {
         lineas.push(fila([capitulo.codigo, capitulo.nombre.toUpperCase(), formatearImporte(capitulo.total)]));
     }
 
-    lineas.push(fila(["", "**TOTAL PEM**", `**${formatearImporte(economia.pem)}**`]));
+    // SIN negrita. El conversor Markdown -> ODF procesa `**` correctamente en
+    // texto corrido (ObjetoYAlcance sale en AI-Bold), pero DENTRO DE UNA CELDA
+    // de tabla anula el contenido: la celda sale vacia. Verificado sobre un
+    // documento real: las tres filas de total salieron en blanco.
+    //
+    // Un presupuesto sin totales es un fallo grave, asi que se sacrifica el
+    // resalte. Si Miguel lo quiere en negrita, se resuelve con un estilo en la
+    // plantilla, nunca con Markdown.
+    lineas.push(fila(["", "TOTAL PEM", formatearImporte(economia.pem)]));
     lineas.push(
         fila([
             "",
-            `**IVA ${formatearPorcentajeIva(economia.porcentajeIva)} %**`,
-            `**${formatearImporte(economia.importeIva)}**`,
+            `IVA ${formatearPorcentajeIva(economia.porcentajeIva)} %`,
+            formatearImporte(economia.importeIva),
         ])
     );
-    lineas.push(fila(["", "**TOTAL PRESUPUESTO (IVA INCLUIDO)**", `**${formatearImporte(economia.total)}**`]));
+    lineas.push(fila(["", "TOTAL PRESUPUESTO (IVA INCLUIDO)", formatearImporte(economia.total)]));
 
     return lineas.join("\n");
 }

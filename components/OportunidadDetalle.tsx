@@ -1,6 +1,8 @@
 import { auth } from "@/auth";
 import { obtenerOportunidad, NOMBRE_ETAPA } from "@/lib/ghl/oportunidades";
 import { urlContactoSa, urlOportunidadSa } from "@/lib/ghl/urls";
+import { documentosDisponibles, leerRegistro } from "@/lib/documentos/estado";
+import { DocumentoPresupuesto } from "@/components/DocumentoPresupuesto";
 
 export async function OportunidadDetalle({ id }: { id: string }) {
     const session = await auth();
@@ -11,6 +13,11 @@ export async function OportunidadDetalle({ id }: { id: string }) {
 
     const subcuenta = session.user.subcuenta as "scala-valencia" | "vertical-projects";
     const oportunidad = await obtenerOportunidad(subcuenta, id);
+
+    // El registro se lee en servidor: al reabrir la ficha, el comercial ve en
+    // que punto esta el documento sin depender de que el polling siguiera vivo.
+    const disponible = documentosDisponibles(subcuenta);
+    const registro = disponible ? await leerRegistro(subcuenta, id) : null;
 
     if (!oportunidad) {
         return <p className="text-sm text-muted">No se ha encontrado esta oportunidad.</p>
@@ -54,17 +61,22 @@ export async function OportunidadDetalle({ id }: { id: string }) {
                     valor={oportunidad.fechaVisita ?? "Sin fecha registrada"}
                 />
 
-                <Fila
-                    icono={
-                        <>
-                            <path d="M14 2v6h6" />
-                            <path d="M6 2h8l6 6v14H6z" />
-                        </>
-                    }
-                    etiqueta="Presupuesto generado"
-                    valor="Pendiente (Fase 7)"
-                    valorMuted
-                />
+                <div>
+                    <div className="mb-2 flex items-center gap-2.5">
+                        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-ink/5 text-muted">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
+                                <path d="M14 2v6h6" />
+                                <path d="M6 2h8l6 6v14H6z" />
+                            </svg>
+                        </div>
+                        <p className="text-[11px] text-muted">Presupuesto</p>
+                    </div>
+                    <DocumentoPresupuesto
+                        oportunidadId={oportunidad.id}
+                        registroInicial={registro}
+                        disponible={disponible}
+                    />
+                </div>
 
                 <div className="flex items-center justify-between gap-3">
                     <Fila
