@@ -1,5 +1,20 @@
 import type { ModuloTrabajo, NodoCatalogo } from "./tipos";
+<<<<<<< HEAD
 import { mediosAuxiliares, picado, limpieza, saneado, pintura, varios } from "./estructuras";
+=======
+import {
+    mediosAuxiliares,
+    mediosAuxiliaresFachada,
+    mediosAuxiliaresReparaciones,
+    picado,
+    picadoFachada,
+    saneado,
+    saneadoFachada,
+    pintura,
+    pinturaFachada,
+    varios,
+} from "./estructuras";
+>>>>>>> origin/main
 
 /**
  * Los 12 módulos de trabajo (apartado 2 del brief del cliente).
@@ -12,9 +27,14 @@ import { mediosAuxiliares, picado, limpieza, saneado, pintura, varios } from "./
  * aparecen en el texto del cliente. Pendientes de confirmación de Miguel.
  */
 
-/** 3. Estructura común a Fachada principal, Fachada trasera, Medianeras y Patio de luces. */
+/**
+ * 3. Estructura común a Fachada principal, Fachada trasera, Medianeras y Patio
+ * de luces. Usa las variantes de fachada: el criterio de picado, saneado,
+ * pintura y andamio confirmado por el cliente para estos cuatro módulos difiere
+ * del que mantienen Cubiertas, Reparaciones puntuales y Bajantes exterior.
+ */
 function estructuraFachadas(): NodoCatalogo[] {
-    return [mediosAuxiliares(), picado(), saneado(), pintura(), varios()];
+    return [mediosAuxiliaresFachada(), picadoFachada(), saneadoFachada(), pinturaFachada(), varios()];
 }
 
 /** 4. Cubiertas. */
@@ -35,13 +55,19 @@ function estructuraCubiertas(): NodoCatalogo[] {
                     key: "tela_asfaltica",
                     label: "Tela asfáltica",
                     hijos: [
-                        // TODO(validar): desglose tomado del esquema manuscrito.
-                        { key: "retirada_antigua", label: "Retirada de la antigua", medicion: { unidad: "m2" } },
-                        { key: "colocacion_doblada", label: "Colocación doblada", medicion: { unidad: "m2" } },
-                        { key: "colocacion_nueva", label: "Colocación de nueva", medicion: { unidad: "m2" } },
+                        { key: "retirada_manual", label: "Retirada manual", medicion: { unidad: "m2" } },
+                        { key: "retirada_automatica", label: "Retirada automática", medicion: { unidad: "m2" } },
                     ],
                 },
-                { key: "colocacion_pavimento", label: "Colocación de pavimento", medicion: { unidad: "m2" } },
+                {
+                    key: "colocacion_pavimento",
+                    label: "Colocación de pavimento",
+                    hijos: [
+                        { key: "retirada_antigua", label: "Retirada del antiguo", medicion: { unidad: "m2" } },
+                        { key: "colocacion_doblada", label: "Colocación doblada", medicion: { unidad: "m2" } },
+                        { key: "colocacion_nueva", label: "Colocación de nuevo", medicion: { unidad: "m2" } },
+                    ],
+                },
             ],
         },
         limpieza(),
@@ -63,7 +89,7 @@ function estructuraCubiertas(): NodoCatalogo[] {
 /** 5. Reparaciones puntuales. */
 function estructuraReparaciones(): NodoCatalogo[] {
     return [
-        mediosAuxiliares(),
+        mediosAuxiliaresReparaciones(),
         {
             key: "picado",
             label: "Picado",
@@ -101,7 +127,8 @@ function estructuraReparaciones(): NodoCatalogo[] {
                 },
             ],
         },
-        varios(),
+        // "Varios" retirado a petición del cliente: este módulo no admite
+        // partida abierta. El texto libre queda en Observaciones del formulario.
     ];
 }
 
@@ -146,10 +173,11 @@ function estructuraEscaleraZaguan(): NodoCatalogo[] {
         {
             key: "varios",
             label: "Varios",
-            permiteTextoLibre: true,
             hijos: [
                 { key: "puerta_zaguan", label: "Puerta del zaguán", medicion: { unidad: "ud" } },
-                { key: "otros", label: "Otros" },
+                // El texto libre cuelga de "Otros", no del grupo: el campo solo
+                // aparece cuando el comercial elige explícitamente esa opción.
+                { key: "otros", label: "Otros", permiteTextoLibre: true },
             ],
         },
     ];
