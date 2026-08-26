@@ -6,8 +6,8 @@ import {
     renderResumenCapitulos,
     renderResumenPresupuesto,
     type Economia,
-} from "../documentos/economia";
-import { validarPreVuelo } from "../documentos/contrato";
+} from "./economia";
+import { validarPreVuelo } from "./contrato";
 
 /**
  * Proyección del payload canónico al JSON que consume la app de documentos.
