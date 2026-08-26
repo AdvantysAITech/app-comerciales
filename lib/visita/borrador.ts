@@ -1,8 +1,5 @@
 import type { SeleccionVisita } from "./seleccion";
-<<<<<<< HEAD
-=======
 import type { DocumentoAdjunto } from "@/lib/documentos/tipos";
->>>>>>> origin/main
 
 /**
  * Borrador del presupuesto guardado en el propio dispositivo.
@@ -27,15 +24,12 @@ export type BorradorPresupuesto = {
     modulosElegidos: string[];
     seleccion: SeleccionVisita;
     fotosPorModulo: Record<string, string[]>;
-<<<<<<< HEAD
-=======
     /**
      * Documentación del arquitecto en los módulos de captura por importación.
      * Se guardan URLs ya subidas, nunca el fichero: un BC3 cabría en
      * localStorage, pero un PDF de proyecto reventaría la cuota al instante.
      */
     documentosPorModulo: Record<string, DocumentoAdjunto[]>;
->>>>>>> origin/main
 };
 
 export type DatosBorrador = Omit<BorradorPresupuesto, "version" | "guardadoEn">;
@@ -53,15 +47,11 @@ export function tieneContenido(datos: DatosBorrador): boolean {
         datos.telefono.trim() !== "" ||
         datos.observaciones.trim() !== "" ||
         datos.modulosElegidos.length > 0 ||
-<<<<<<< HEAD
-        Object.keys(datos.seleccion).length > 0
-=======
         Object.keys(datos.seleccion).length > 0 ||
         // En el módulo Proyectos no hay partidas ni módulos con árbol: el único
         // contenido puede ser el BC3 que acaba de subir. Sin esta comprobación
         // ese borrador se consideraría vacío y no se autoguardaría.
         Object.values(datos.documentosPorModulo).some((docs) => docs.length > 0)
->>>>>>> origin/main
     );
 }
 
@@ -91,14 +81,11 @@ export function guardarBorrador(subcuenta: string, datos: DatosBorrador): void {
  * Un borrador de una versión anterior se descarta: preferimos perder un
  * borrador a rehidratar el formulario con una forma que ya no encaja.
  *
-<<<<<<< HEAD
-=======
  * VERSION_BORRADOR sigue en 1 pese a haber añadido `documentosPorModulo`. El
  * cambio es aditivo y la rehidratación ya rellena el campo que falte, así que
  * subirla solo serviría para tirar los borradores que algún comercial tenga a
  * medias ahora mismo.
  *
->>>>>>> origin/main
  * Las rutas de partidas que ya no existan en el catálogo no dan problema: el
  * resolutor recorre el catálogo y busca en la selección, así que una ruta
  * huérfana simplemente no se pinta ni viaja al presupuesto.
@@ -129,10 +116,7 @@ export function cargarBorrador(subcuenta: string): BorradorPresupuesto | null {
             modulosElegidos: datos.modulosElegidos ?? [],
             seleccion: datos.seleccion ?? {},
             fotosPorModulo: datos.fotosPorModulo ?? {},
-<<<<<<< HEAD
-=======
             documentosPorModulo: datos.documentosPorModulo ?? {},
->>>>>>> origin/main
         };
     } catch {
         return null;

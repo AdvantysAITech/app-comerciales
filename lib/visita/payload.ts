@@ -9,17 +9,6 @@ import {
 } from "./seleccion";
 
 /**
-<<<<<<< HEAD
- * Construye el payload que se guarda en la oportunidad de GHL.
- *
- * Este objeto es el CONTRATO con el motor de IA de Fase 2. Va versionado
- * (`version` + `versionCatalogo`) para que, cuando el árbol crezca, se pueda
- * saber contra qué estructura se capturó cada visita. Cambiar la forma sin
- * subir la versión rompería el histórico en silencio.
- */
-
-export const VERSION_PAYLOAD = 1;
-=======
  * Payload CANONICO de una visita.
  *
  * Es la representacion completa y anidada de lo que capturo el comercial. Se
@@ -38,7 +27,6 @@ export const VERSION_PAYLOAD = 1;
  */
 
 export const VERSION_PAYLOAD = 2;
->>>>>>> origin/main
 
 export type PartidaPayload = {
     ruta: string;
@@ -63,26 +51,19 @@ export type PayloadVisita = {
     versionCatalogo: number;
     capturadoEn: string;
     subcuenta: string;
-<<<<<<< HEAD
-=======
     /** Nombre comercial de la empresa. Necesario para el branding del DERCAS 5.1. */
     empresa: string;
     /** Comercial que hace la visita. Firma los documentos (DERCAS 5.1). */
     comercial: string;
->>>>>>> origin/main
     comunidad: {
         id: string | null;
         nombre: string;
         creada: boolean;
     };
-<<<<<<< HEAD
-    administradorId: string | null;
-=======
     administrador: {
         id: string | null;
         nombre: string | null;
     };
->>>>>>> origin/main
     contacto: {
         nombre: string;
         telefono: string;
@@ -94,19 +75,13 @@ export type PayloadVisita = {
 
 export type DatosCaptura = {
     subcuenta: Subcuenta;
-<<<<<<< HEAD
-=======
     empresa: string;
     comercial: string;
->>>>>>> origin/main
     comunidadId: string | null;
     comunidadNombre: string;
     comunidadCreada: boolean;
     administradorId: string | null;
-<<<<<<< HEAD
-=======
     administradorNombre: string | null;
->>>>>>> origin/main
     contacto: string;
     telefono: string;
     fechaVisita: string;
@@ -151,24 +126,17 @@ export function construirPayload(datos: DatosCaptura): PayloadVisita {
         versionCatalogo: VERSION_CATALOGO,
         capturadoEn: new Date().toISOString(),
         subcuenta: datos.subcuenta,
-<<<<<<< HEAD
-=======
         empresa: datos.empresa,
         comercial: datos.comercial,
->>>>>>> origin/main
         comunidad: {
             id: datos.comunidadId,
             nombre: datos.comunidadNombre.trim(),
             creada: datos.comunidadCreada,
         },
-<<<<<<< HEAD
-        administradorId: datos.administradorId,
-=======
         administrador: {
             id: datos.administradorId,
             nombre: datos.administradorNombre?.trim() || null,
         },
->>>>>>> origin/main
         contacto: {
             nombre: datos.contacto.trim(),
             telefono: datos.telefono.trim(),
@@ -180,13 +148,6 @@ export function construirPayload(datos: DatosCaptura): PayloadVisita {
 }
 
 /**
-<<<<<<< HEAD
- * Versión legible del payload, para el campo de descripción de la oportunidad.
- *
- * El JSON lo consume la IA; esto lo lee Miguel al validar el presupuesto y el
- * comercial al repasar la visita. Son dos públicos distintos y por eso van en
- * campos distintos: nadie debería tener que leer JSON para revisar una obra.
-=======
  * Numero en formato espanol: coma decimal, y sin decimales si es entero.
  * Vive aqui porque lo usan las dos salidas (resumen legible y JSON plano) y las
  * dos tienen que decir exactamente lo mismo.
@@ -202,16 +163,12 @@ export function formatearCantidad(cantidad: number): string {
  * presupuesto y el comercial al repasar la visita. Son dos publicos distintos y
  * por eso van en campos distintos: nadie deberia tener que leer JSON para
  * revisar una obra.
->>>>>>> origin/main
  */
 export function resumenLegible(payload: PayloadVisita): string {
     const lineas: string[] = [];
 
     lineas.push(`Comunidad: ${payload.comunidad.nombre}`);
-<<<<<<< HEAD
-=======
     if (payload.administrador.nombre) lineas.push(`Administrador: ${payload.administrador.nombre}`);
->>>>>>> origin/main
     lineas.push(`Contacto: ${payload.contacto.nombre} - ${payload.contacto.telefono}`);
     lineas.push(`Fecha de visita: ${payload.fechaVisita}`);
     lineas.push("");
@@ -225,13 +182,8 @@ export function resumenLegible(payload: PayloadVisita): string {
             for (const partida of modulo.partidas) {
                 const medicion =
                     partida.cantidad !== undefined
-<<<<<<< HEAD
-                        ? ` — ${partida.cantidad} ${partida.unidad ?? ""}`.trimEnd()
-                        : " — sin medir";
-=======
                         ? ` - ${formatearCantidad(partida.cantidad)} ${partida.unidad ?? ""}`.trimEnd()
                         : " - sin medir";
->>>>>>> origin/main
                 const nota = partida.nota ? ` (${partida.nota})` : "";
                 lineas.push(`- ${partida.camino.join(" > ")}${medicion}${nota}`);
             }
@@ -241,13 +193,7 @@ export function resumenLegible(payload: PayloadVisita): string {
             for (const alerta of modulo.alertas) lineas.push(`! ${alerta}`);
         }
 
-<<<<<<< HEAD
-        lineas.push(
-            modulo.fotos.length > 0 ? `Fotos (${modulo.fotos.length}):` : "Fotos: (ninguna)"
-        );
-=======
         lineas.push(modulo.fotos.length > 0 ? `Fotos (${modulo.fotos.length}):` : "Fotos: (ninguna)");
->>>>>>> origin/main
         modulo.fotos.forEach((url, i) => lineas.push(`  ${i + 1}. ${url}`));
         lineas.push("");
     }
@@ -259,17 +205,6 @@ export function resumenLegible(payload: PayloadVisita): string {
 }
 
 /**
-<<<<<<< HEAD
- * Cómo se reparten los módulos en oportunidades de GHL.
- *
- * - "una": un presupuesto = una oportunidad, con todos los módulos dentro.
- * - "por_modulo": una oportunidad por módulo (literal del DERCAS §4.1).
- * - "por_modelo_negocio": agrupadas por el modelo de negocio del DERCAS.
- *
- * PENDIENTE DE VALIDACIÓN POR MIGUEL. Por defecto "una", porque la cadena de
- * seguimiento del §5.2 se dispara por oportunidad: con "por_modulo", una visita
- * a una fachada mandaría cuatro WhatsApps al mismo administrador a los 14 días.
-=======
  * Como se reparten los modulos en oportunidades de GHL.
  *
  * - "una": un presupuesto = una oportunidad, con todos los modulos dentro.
@@ -279,7 +214,6 @@ export function resumenLegible(payload: PayloadVisita): string {
  * PENDIENTE DE VALIDACION POR MIGUEL. Por defecto "una", porque la cadena de
  * seguimiento del 5.2 se dispara por oportunidad: con "por_modulo", una visita
  * a una fachada mandaria cuatro WhatsApps al mismo administrador a los 14 dias.
->>>>>>> origin/main
  */
 export type ModoAgrupacion = "una" | "por_modulo" | "por_modelo_negocio";
 
@@ -291,11 +225,7 @@ export type GrupoOportunidad = {
     modulos: ModuloPayload[];
 };
 
-<<<<<<< HEAD
-/** Reparte los módulos del payload en los grupos que serán oportunidades. */
-=======
 /** Reparte los modulos del payload en los grupos que seran oportunidades. */
->>>>>>> origin/main
 export function agruparEnOportunidades(
     payload: PayloadVisita,
     modo: ModoAgrupacion = MODO_AGRUPACION
@@ -330,18 +260,12 @@ export function agruparEnOportunidades(
 /** Nombre de la oportunidad en GHL. Se recorta para que el pipeline sea legible. */
 export function nombreOportunidad(comunidad: string, etiqueta: string, maximo = 90): string {
     const completo = `${comunidad} - ${etiqueta}`;
-<<<<<<< HEAD
-    return completo.length <= maximo ? completo : `${completo.slice(0, maximo - 1).trimEnd()}…`;
-=======
     return completo.length <= maximo ? completo : `${completo.slice(0, maximo - 1).trimEnd()}...`;
->>>>>>> origin/main
 }
 
 /** Total de partidas del payload. Para logs y validaciones. */
 export function totalPartidas(payload: PayloadVisita): number {
     return payload.modulos.reduce((suma, m) => suma + m.partidas.length, 0);
-<<<<<<< HEAD
-=======
 }
 
 /**
@@ -357,5 +281,4 @@ export function modeloNegocioComun(modulos: ModuloPayload[]): ModeloNegocioDerca
         modulos.map((m) => m.modeloNegocioDercas).filter((m): m is ModeloNegocioDercas => m !== null)
     );
     return modelos.size === 1 ? [...modelos][0] : null;
->>>>>>> origin/main
 }

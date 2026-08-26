@@ -1,7 +1,4 @@
 import type { ModuloTrabajo, NodoCatalogo } from "./tipos";
-<<<<<<< HEAD
-import { mediosAuxiliares, picado, limpieza, saneado, pintura, varios } from "./estructuras";
-=======
 import {
     mediosAuxiliares,
     mediosAuxiliaresFachada,
@@ -14,7 +11,6 @@ import {
     pinturaFachada,
     varios,
 } from "./estructuras";
->>>>>>> origin/main
 
 /**
  * Los 12 módulos de trabajo (apartado 2 del brief del cliente).
@@ -41,8 +37,9 @@ function estructuraFachadas(): NodoCatalogo[] {
 function estructuraCubiertas(): NodoCatalogo[] {
     return [
         mediosAuxiliares(),
-        // En Cubiertas la limpieza es grupo propio, por eso Picado va sin ella.
-        picado({ incluirLimpieza: false }),
+        // TODO(validar): en el esquema de Cubiertas la limpieza va suelta y aquí el
+        // texto la repite dentro de Picado. Confirmar si se deduplica.
+        picado(),
         saneado(),
         pintura(),
         {
@@ -70,7 +67,14 @@ function estructuraCubiertas(): NodoCatalogo[] {
                 },
             ],
         },
-        limpieza(),
+        {
+            key: "limpieza",
+            label: "Limpieza",
+            hijos: [
+                { key: "limpieza_manual", label: "Limpieza manual", medicion: { unidad: "m2" } },
+                { key: "limpieza_mecanica", label: "Limpieza mecánica", medicion: { unidad: "m2" } },
+            ],
+        },
         // TODO(validar): el esquema pide "una pestaña para contemplar también el
         // techo del casetón" y trata Peto y Casetones como ámbito propio de cubierta.
         {
@@ -162,12 +166,6 @@ function estructuraEscaleraZaguan(): NodoCatalogo[] {
                     label: "Esmalte de barandillas y rejas",
                     medicion: { unidad: "ml" },
                 },
-                // TODO(validar): el esquema anota tambien la puerta del ascensor.
-                {
-                    key: "esmalte_puerta_ascensor",
-                    label: "Esmalte de puerta de ascensor",
-                    medicion: { unidad: "ud" },
-                },
             ],
         },
         {
@@ -201,7 +199,7 @@ function estructuraBajantes(): NodoCatalogo[] {
                         // El fibrocemento con documentación es amianto: requiere licencia
                         // que Vertical Projects no tiene (DERCAS §4.1 y §5.4).
                         alerta:
-                            "Trabajo con amianto: añade también el módulo Gestión de residuos, que se presupuesta y factura aparte.",
+                            "Trabajo con amianto: requiere licencia y gestión documental de residuos.",
                     },
                     { key: "normal", label: "Normal", medicion: { unidad: "ml" } },
                 ],
@@ -251,52 +249,6 @@ function estructuraBajantes(): NodoCatalogo[] {
                 },
             ],
         },
-    ];
-}
-
-/**
- * 10. Gestion de residuos.
- *
- * El cliente confirma que la retirada de amianto vive aqui, no como modelo de
- * negocio propio. Eso lo convierte en un modulo presupuestable, no en un cajon:
- * el amianto lo factura Escala aparte (DERCAS 5.4) y necesita medicion, tipologia
- * y documentacion propias.
- *
- * TODO(validar): estructura propuesta por Advantys. Los esquemas manuscritos no
- * desarrollan este modulo; las tipologias salen de lo que si aparece en Bajantes
- * (fibrocemento con y sin documentacion).
- */
-function estructuraGestionResiduos(): NodoCatalogo[] {
-    return [
-        {
-            key: "retirada_amianto",
-            label: "Retirada de amianto / fibrocemento",
-            alerta: "Requiere licencia RERA y plan de trabajo. Solo Escala Valencia.",
-            hijos: [
-                { key: "placas_fibrocemento", label: "Placas de fibrocemento", medicion: { unidad: "m2" } },
-                { key: "bajantes_fibrocemento", label: "Bajantes de fibrocemento", medicion: { unidad: "ml" } },
-                { key: "depositos_fibrocemento", label: "Depósitos de fibrocemento", medicion: { unidad: "ud" } },
-                { key: "otros_elementos", label: "Otros elementos", medicion: { unidad: "ud" } },
-            ],
-        },
-        {
-            key: "retirada_escombro",
-            label: "Retirada de escombro",
-            hijos: [
-                { key: "contenedor", label: "Contenedor", medicion: { unidad: "ud" } },
-                { key: "big_bag", label: "Saca / big bag", medicion: { unidad: "ud" } },
-            ],
-        },
-        {
-            key: "documentacion_gestion",
-            label: "Documentación y gestión",
-            hijos: [
-                { key: "plan_trabajo", label: "Plan de trabajo", medicion: { unidad: "ud" } },
-                { key: "seguimiento_ambiental", label: "Seguimiento ambiental", medicion: { unidad: "ud" } },
-                { key: "gestor_autorizado", label: "Gestor autorizado / vertedero", medicion: { unidad: "ud" } },
-            ],
-        },
-        varios(),
     ];
 }
 
@@ -379,13 +331,11 @@ export const MODULOS: ModuloTrabajo[] = [
         key: "gestion_de_residuos",
         label: "Gestión de residuos",
         orden: 10,
-        captura: "arbol",
-        estructura: estructuraGestionResiduos(),
-        modeloNegocioDercas: "retirada_amianto",
-        // Minimo del DERCAS 6.2 para amianto, aplicado donde el amianto vive ahora.
-        fotosMinimas: 3,
+        captura: "libre",
+        estructura: [],
+        modeloNegocioDercas: null,
         notaInterna:
-            "Absorbe la retirada de amianto por decision del cliente (17/08/2026). Vertical Projects no tiene licencia: este modulo dispara la derivacion a Escala (DERCAS §5.4), pendiente de automatizar.",
+            "Sin estructura definida. Pendiente decidir si absorbe la retirada de amianto (DERCAS §4.1) y si dispara la derivación Vertical -> Escala (§5.4).",
     },
     {
         key: "documentacion",
