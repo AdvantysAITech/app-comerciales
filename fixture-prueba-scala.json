@@ -1,0 +1,40 @@
+{
+  "num_ref": "ESC-2026-0001",
+  "fechaVisita": "26/08/2026",
+  "fecha_validez": "25/09/2026",
+  "localidad_visita": "Valencia",
+
+  "comunidad": {
+    "nombre": "C/ Islas Canarias, 180",
+    "localidad": "Valencia",
+    "provincia": "Valencia"
+  },
+
+  "administrador": {
+    "nombre": "Fincas Ejemplo S.L.",
+    "localidad": "Burjassot"
+  },
+
+  "tabla_prueba": "| CÓDIGO | CAPÍTULO | IMPORTE |\n|---|---|---:|\n| 01 | CUBIERTAS | 9.870,00 |\n| 02 | BAJANTES | 2.580,00 |",
+  "total_PEM": "12.450,00",
+  "porcentaje_IVA": "21",
+  "importe_IVA": "2.614,50",
+  "total_con_IVA": "15.064,50",
+
+  "modulos": [
+    {
+      "label": "Cubiertas",
+      "partidas": [
+        { "descripcion": "Medios auxiliares > Andamio", "cantidad": "45", "unidad": "m²" },
+        { "descripcion": "Impermeabilización > EPDM", "cantidad": "120", "unidad": "m²" },
+        { "descripcion": "Picado > Saneado de petos", "cantidad": "18,5", "unidad": "ml" }
+      ]
+    },
+    {
+      "label": "Bajantes",
+      "partidas": [
+        { "descripcion": "Interior > Retirada de bajante > PVC", "cantidad": "4", "unidad": "ud" }
+      ]
+    }
+  ]
+}
