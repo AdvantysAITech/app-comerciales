@@ -3,8 +3,8 @@ import { auth } from "@/auth";
 import { esSubcuentaValida } from "@/lib/subcuenta";
 import { saFetch } from "@/lib/ghl/client";
 import type { PayloadVisita } from "@/lib/visita/payload";
-import { presupuestar, PreciosPendientesError } from "@/lib/documentos/mapeo-capitulos";
-import { calcularEconomia, type Economia, type PartidaValorada } from "@/lib/documentos/economia";
+import { presupuestar, RutasSinMapearError } from "@/lib/documentos/mapeo-capitulos";
+import type { PresupuestoCalculado } from "@/lib/documentos/motor";
 import { prepararDocumento, formatearReferencia } from "@/lib/documentos/payloadDocumento";
 import { obtenerPlantilla } from "@/lib/documentos/plantilla";
 import { construirRequestId, generarDocumento } from "@/lib/documentos/soluciona";
@@ -64,35 +64,6 @@ async function leerPayloadVisita(
     }
 }
 
-/**
- * Economía de borrador: misma estructura, precios a CERO.
- *
- * No son precios estimados ni aproximados: son cero, y se ven como cero. Un
- * importe plausible pero inventado es peor que ninguno, porque nadie lo detecta
- * hasta que el administrador lo firma. Un capítulo a 0,00 canta a la primera.
- */
-function economiaDeBorrador(payload: PayloadVisita): Economia {
-    const porCapitulo = new Map<string, { nombre: string; partidas: PartidaValorada[] }>();
-
-    for (const modulo of payload.modulos) {
-        if (modulo.partidas.length === 0) continue;
-
-        porCapitulo.set(modulo.key, {
-            nombre: modulo.label,
-            partidas: modulo.partidas.map((p) => ({
-                ruta: p.ruta,
-                codigo: "",
-                descripcion: p.camino.join(" > "),
-                unidad: p.unidad ?? "",
-                cantidad: p.cantidad ?? 0,
-                precioUnitario: 0,
-            })),
-        });
-    }
-
-    return calcularEconomia(porCapitulo);
-}
-
 export async function POST(request: NextRequest) {
     const session = await auth();
 
@@ -129,20 +100,28 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        // --- Economía: real si hay precios, borrador si no ------------------
+        // --- Presupuesto: real si todas las rutas están mapeadas -------------
+        //
+        // Desde la carga de la tarifa (31/08/2026) los precios existen. Que una
+        // ruta no se pueda valorar ya no es el estado normal del proyecto: es un
+        // hueco concreto del mapeo. Por eso `presupuesto` se queda a null y el
+        // documento sale con los importes en blanco, no a cero: un cero es un
+        // dato, y un dato falso. El aviso enumera exactamente qué falta.
         const avisos: string[] = [];
-        let economia: Economia;
+        let presupuesto: PresupuestoCalculado | null = null;
         let esBorrador = false;
 
         try {
-            economia = presupuestar(payload);
+            presupuesto = presupuestar(payload);
         } catch (error) {
-            if (!(error instanceof PreciosPendientesError)) throw error;
+            if (!(error instanceof RutasSinMapearError)) throw error;
             esBorrador = true;
-            economia = economiaDeBorrador(payload);
+            presupuesto = null;
             avisos.push(
-                `BORRADOR: ${error.rutasSinPrecio.length} partidas sin precio en el catálogo. ` +
-                    `Los importes salen a cero y el documento NO se puede enviar al administrador.`
+                `BORRADOR: ${error.rutasSinPrecio.length} ruta(s) sin equivalencia en la tarifa. ` +
+                    `Los importes salen en blanco y el documento NO se puede enviar al administrador. ` +
+                    `Rutas: ${error.rutasSinPrecio.join(", ")}. ` +
+                    `Ejecuta "npm run mapeo:auditar" para el detalle.`
             );
         }
 
@@ -167,7 +146,7 @@ export async function POST(request: NextRequest) {
             comunidadLocalidad: marcador,
             comunidadProvincia: marcador,
             administradorLocalidad: marcador,
-            economia,
+            presupuesto,
         });
 
         if (!preparado.ok) {
