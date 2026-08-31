@@ -65,6 +65,27 @@ async function leerPayloadVisita(
     }
 }
 
+/**
+ * Traduce rutas técnicas a algo que el comercial entienda.
+ * "cubiertas.impermeabilizacion.epdm" -> "Cubiertas: Impermeabilización > EPDM"
+ */
+function describirRutas(payload: PayloadVisita, rutas: readonly string[]): string[] {
+    const conjunto = new Set(rutas);
+    const descripciones: string[] = [];
+
+    for (const modulo of payload.modulos) {
+        for (const partida of modulo.partidas) {
+            if (!conjunto.has(partida.ruta)) continue;
+            const camino = partida.camino?.length ? partida.camino.join(" > ") : partida.ruta;
+            descripciones.push(`${modulo.label}: ${camino}`);
+        }
+    }
+
+    // Si alguna ruta no aparece en el payload, se lista en crudo antes que
+    // omitirla: es preferible un tecnicismo a un problema invisible.
+    return descripciones.length > 0 ? descripciones : [...rutas];
+}
+
 export async function POST(request: NextRequest) {
     const session = await auth();
 
@@ -101,28 +122,36 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        // --- Presupuesto: real si todas las rutas están mapeadas -------------
+        // --- Presupuesto ------------------------------------------------------
+        //
+        // Ya no existe el modo borrador. Estaba muerto por construcción:
+        // `validarPreVuelo` (contrato.ts) exige que las 18 rutas resuelvan a un
+        // valor, así que un documento con los importes vacíos siempre daba 422.
+        // La versión anterior colaba porque mandaba ceros, y un cero es un dato
+        // falso que nadie detecta hasta que el administrador lo firma.
         //
         // Desde la carga de la tarifa (31/08/2026) los precios existen. Que una
-        // ruta no se pueda valorar ya no es el estado normal del proyecto: es un
-        // hueco concreto del mapeo. Por eso `presupuesto` se queda a null y el
-        // documento sale con los importes en blanco, no a cero: un cero es un
-        // dato, y un dato falso. El aviso enumera exactamente qué falta.
+        // ruta no se pueda valorar es un hueco concreto del mapeo, no un estado
+        // normal: se corta aquí y se dice exactamente qué falta.
         const avisos: string[] = [];
-        let presupuesto: PresupuestoCalculado | null = null;
-        let esBorrador = false;
+        let presupuesto: PresupuestoCalculado;
 
         try {
             presupuesto = presupuestar(payload);
         } catch (error) {
             if (!(error instanceof RutasSinMapearError)) throw error;
-            esBorrador = true;
-            presupuesto = null;
-            avisos.push(
-                `BORRADOR: ${error.rutasSinPrecio.length} ruta(s) sin equivalencia en la tarifa. ` +
-                    `Los importes salen en blanco y el documento NO se puede enviar al administrador. ` +
-                    `Rutas: ${error.rutasSinPrecio.join(", ")}. ` +
-                    `Ejecuta "npm run mapeo:auditar" para el detalle.`
+
+            const trabajos = describirRutas(payload, error.rutasSinPrecio);
+            return NextResponse.json(
+                {
+                    error:
+                        `No se puede presupuestar: ${trabajos.length} trabajo(s) del formulario no ` +
+                        `tienen partida en la tarifa 2026. Avisa a Advantys.\n\n` +
+                        trabajos.map((t) => `  · ${t}`).join("\n"),
+                    rutasSinMapear: error.rutasSinPrecio,
+                    detalle: error.message,
+                },
+                { status: 422 }
             );
         }
 
@@ -131,9 +160,7 @@ export async function POST(request: NextRequest) {
         // Mientras no existan esos campos, se marcan visiblemente en lugar de
         // dejarlos en blanco: un hueco pasa desapercibido, "(pendiente)" no.
         const marcador = "(pendiente)";
-        if (!esBorrador) {
-            avisos.push("Localidad y provincia no se capturan todavía: revísalas antes de enviar.");
-        }
+        avisos.push("Localidad y provincia no se capturan todavía: revísalas antes de enviar.");
 
         const version = cuerpo.version ?? 1;
 
@@ -150,8 +177,15 @@ export async function POST(request: NextRequest) {
         });
 
         if (!preparado.ok) {
+            // El detalle va en `error` y no solo en `errores` porque la UI solo
+            // pinta `error`, y "no pasa la validación previa" no es accionable.
             return NextResponse.json(
-                { error: "El documento no pasa la validación previa.", errores: preparado.errores },
+                {
+                    error:
+                        `El documento no pasa la validación previa (${preparado.errores.length} problema(s)):\n\n` +
+                        preparado.errores.map((e) => `  · ${e}`).join("\n"),
+                    errores: preparado.errores,
+                },
                 { status: 422 }
             );
         }
@@ -159,7 +193,6 @@ export async function POST(request: NextRequest) {
         if (cuerpo.simular) {
             return NextResponse.json({
                 simulado: true,
-                borrador: esBorrador,
                 avisos,
                 json: preparado.json,
             });
@@ -176,7 +209,6 @@ export async function POST(request: NextRequest) {
                 requestId,
                 estado: "solicitado",
                 numeroReferencia: preparado.json.num_ref,
-                borrador: esBorrador,
                 actualizadoEn: new Date().toISOString(),
             },
             // Si ya hubo un registro terminal, este es un intento nuevo con otra
@@ -192,13 +224,11 @@ export async function POST(request: NextRequest) {
             requestId,
             estado: "generando",
             numeroReferencia: preparado.json.num_ref,
-            borrador: esBorrador,
             actualizadoEn: new Date().toISOString(),
         });
 
         return NextResponse.json({
             requestId,
-            borrador: esBorrador,
             yaExistia: encolado.alreadyExisted,
             avisos,
         });
