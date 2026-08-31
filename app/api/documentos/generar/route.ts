@@ -33,6 +33,14 @@ type Cuerpo = {
     oportunidadId: string;
     /** Sube para forzar una regeneración real. Por defecto 1. */
     version?: number;
+    /**
+     * Construye y valida el JSON pero NO llama a la app ni toca GHL.
+     *
+     * El JSON del documento se arma en memoria y se envía, asi que sin esto no
+     * hay forma de inspeccionar que se manda exactamente. Cuando la app falla,
+     * lo primero que hay que descartar es que el problema sea la entrada.
+     */
+    simular?: boolean;
 };
 
 /** Lee el payload canónico guardado en la oportunidad. */
@@ -167,6 +175,15 @@ export async function POST(request: NextRequest) {
                 { error: "El documento no pasa la validación previa.", errores: preparado.errores },
                 { status: 422 }
             );
+        }
+
+        if (cuerpo.simular) {
+            return NextResponse.json({
+                simulado: true,
+                borrador: esBorrador,
+                avisos,
+                json: preparado.json,
+            });
         }
 
         // --- Envío -----------------------------------------------------------
