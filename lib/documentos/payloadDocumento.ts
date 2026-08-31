@@ -47,16 +47,11 @@ import { validarPreVuelo } from "./contrato";
 export const DIAS_VALIDEZ = 30;
 
 /**
- * Prefijo de la referencia por empresa. DERCAS §12.3.
- *
- * DESVIACIÓN ABIERTA: el presupuesto real del cliente usa "SV-2026-001", no
- * "ESC-". Pendiente de decisión de Miguel. Cuando se cierre, se cambia aquí y
- * en ningún otro sitio.
+ * El prefijo y el formato de la referencia viven en `contador.ts`, junto al
+ * contador que los produce. Se reexportan para no romper los imports
+ * existentes.
  */
-export const PREFIJO_REFERENCIA: Record<string, string> = {
-    "scala-valencia": "ESC",
-    "vertical-projects": "VRT",
-};
+export { PREFIJO_REFERENCIA, formatearReferencia } from "./contador";
 
 export type JsonDocumento = {
     num_ref: string;
@@ -131,17 +126,6 @@ export function calcularFechaValidez(fechaVisitaIso: string, dias = DIAS_VALIDEZ
     if (Number.isNaN(fecha.getTime())) return "";
     fecha.setUTCDate(fecha.getUTCDate() + dias);
     return formatearFechaEs(fecha.toISOString().slice(0, 10));
-}
-
-/**
- * Referencia correlativa: ESC-2026-0001 / VRT-2026-0001 (DERCAS §12.3).
- *
- * El contador NO vive aquí: se lleva en GHL a nivel de subcuenta. Esta función
- * solo da formato, para que el formato esté en un único sitio.
- */
-export function formatearReferencia(subcuenta: string, anio: number, correlativo: number): string {
-    const prefijo = PREFIJO_REFERENCIA[subcuenta] ?? "REF";
-    return `${prefijo}-${anio}-${String(correlativo).padStart(4, "0")}`;
 }
 
 // ---------------------------------------------------------------------------

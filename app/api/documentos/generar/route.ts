@@ -5,7 +5,8 @@ import { saFetch } from "@/lib/ghl/client";
 import type { PayloadVisita } from "@/lib/visita/payload";
 import { presupuestar, RutasSinMapearError } from "@/lib/documentos/mapeo-capitulos";
 import type { PresupuestoCalculado } from "@/lib/documentos/motor";
-import { prepararDocumento, formatearReferencia } from "@/lib/documentos/payloadDocumento";
+import { prepararDocumento } from "@/lib/documentos/payloadDocumento";
+import { asignarReferencia } from "@/lib/documentos/contador";
 import { obtenerPlantilla } from "@/lib/documentos/plantilla";
 import { construirRequestId, generarDocumento } from "@/lib/documentos/soluciona";
 import { documentosDisponibles, escribirRegistro, leerRegistro } from "@/lib/documentos/estado";
@@ -135,14 +136,13 @@ export async function POST(request: NextRequest) {
         }
 
         const version = cuerpo.version ?? 1;
+
+        // Correlativo real. Antes se derivaba de los dígitos del oportunidadId,
+        // que ni era correlativo ni era único.
+        const numeroReferencia = await asignarReferencia(subcuenta);
+
         const preparado = prepararDocumento(payload, {
-            // PENDIENTE: contador correlativo real. El formato ya sigue el
-            // DERCAS 12.3 (ESC-/VRT-); falta dónde vive el número.
-            numeroReferencia: formatearReferencia(
-                subcuenta,
-                new Date().getFullYear(),
-                Number(cuerpo.oportunidadId.replace(/\D/g, "").slice(-4)) || 1
-            ),
+            numeroReferencia,
             comunidadLocalidad: marcador,
             comunidadProvincia: marcador,
             administradorLocalidad: marcador,
