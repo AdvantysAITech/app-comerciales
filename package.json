@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "tarifa:extraer": "node scripts/tarifa/extraer-tarifa.mjs",
-    "tarifa:validar": "node scripts/tarifa/validar-tarifa.mjs"
+    "tarifa:validar": "node scripts/tarifa/validar-tarifa.mjs",
+    "motor:probar": "tsx scripts/tarifa/probar-motor.ts"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
@@ -28,6 +29,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.10",
     "tailwindcss": "^4",
+    "tsx": "^4.23.13",
     "typescript": "^5"
   }
 }
