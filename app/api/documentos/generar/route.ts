@@ -3,7 +3,7 @@ import { auth } from "@/auth";
 import { esSubcuentaValida } from "@/lib/subcuenta";
 import { saFetch } from "@/lib/ghl/client";
 import type { PayloadVisita } from "@/lib/visita/payload";
-import { presupuestar, RutasSinMapearError } from "@/lib/documentos/mapeo-capitulos";
+import { auditarPayload, presupuestar, RutasSinMapearError } from "@/lib/documentos/mapeo-capitulos";
 import type { PresupuestoCalculado } from "@/lib/documentos/motor";
 import { prepararDocumento } from "@/lib/documentos/payloadDocumento";
 import { asignarReferencia } from "@/lib/documentos/contador";
@@ -86,6 +86,29 @@ function describirRutas(payload: PayloadVisita, rutas: readonly string[]): strin
     return descripciones.length > 0 ? descripciones : [...rutas];
 }
 
+/**
+ * Igual que `describirRutas`, pero arrastrando lo que escribió el comercial.
+ * En un nodo de texto libre la nota ES el contenido: sin ella el aviso diría
+ * "Medianeras: Varios" y nadie sabría qué se ha quedado fuera del documento.
+ */
+function describirTextoLibre(payload: PayloadVisita, rutas: readonly string[]): string[] {
+    const conjunto = new Set(rutas);
+    const descripciones: string[] = [];
+
+    for (const modulo of payload.modulos) {
+        for (const partida of modulo.partidas) {
+            if (!conjunto.has(partida.ruta)) continue;
+            const camino = partida.camino?.length ? partida.camino.join(" > ") : partida.ruta;
+            const texto = partida.nota?.trim();
+            descripciones.push(
+                `${modulo.label}: ${camino}${texto ? ` — "${texto}"` : " (sin texto)"}`
+            );
+        }
+    }
+
+    return descripciones.length > 0 ? descripciones : [...rutas];
+}
+
 export async function POST(request: NextRequest) {
     const session = await auth();
 
@@ -133,6 +156,10 @@ export async function POST(request: NextRequest) {
         // Desde la carga de la tarifa (31/08/2026) los precios existen. Que una
         // ruta no se pueda valorar es un hueco concreto del mapeo, no un estado
         // normal: se corta aquí y se dice exactamente qué falta.
+        //
+        // Lo que NO corta (09/09/2026): el texto libre. Un nodo "Varios" no tiene
+        // unidad ni precio por diseño, así que nunca fue un hueco de mapeo. Antes
+        // bloqueaba el presupuesto entero; ahora sale como aviso.
         const avisos: string[] = [];
         let presupuesto: PresupuestoCalculado;
 
@@ -152,6 +179,32 @@ export async function POST(request: NextRequest) {
                     detalle: error.message,
                 },
                 { status: 422 }
+            );
+        }
+
+        // --- Avisos de mapeo --------------------------------------------------
+        // Nada de esto impide generar, pero el comercial firma con su nombre lo
+        // que envíe (DERCAS §5.1) y tiene que verlo antes, no después.
+        const auditoria = auditarPayload(payload);
+
+        if (auditoria.textoLibre.length > 0) {
+            const anotaciones = describirTextoLibre(
+                payload,
+                auditoria.textoLibre.map((t) => t.ruta)
+            );
+            avisos.push(
+                `${anotaciones.length} anotación(es) de texto libre NO se han valorado ni aparecen ` +
+                    `en el documento (no tienen unidad ni precio de tarifa):\n` +
+                    anotaciones.map((a) => `  · ${a}`).join("\n") +
+                    `\nSi hay que cobrarlas, pídelas a Advantys como partida de tarifa.`
+            );
+        }
+
+        if (auditoria.propuestas.length > 0) {
+            avisos.push(
+                `${auditoria.propuestas.length} partida(s) se han valorado con una equivalencia ` +
+                    `de tarifa PROPUESTA por Advantys y todavía no validada por dirección ` +
+                    `(DERCAS §6.3). Revisa los importes antes de enviar el presupuesto.`
             );
         }
 
