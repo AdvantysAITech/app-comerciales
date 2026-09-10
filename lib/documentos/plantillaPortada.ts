@@ -81,6 +81,24 @@ const PARRAFO_MARCADOR =
  */
 const MARKERKEY_DESGLOSE = "{{presup.DesgloseCapitulos}}";
 
+/**
+ * Markerkey retirado: repetía PEM, IVA y TOTAL justo encima del bloque que la
+ * plantilla ya maqueta con esas mismas cifras. Se elimina su párrafo entero.
+ */
+const MARKERKEY_RETIRADO = "{{presup.ResumenPresupuesto}}";
+
+/** Borra el párrafo que contiene un texto, o devuelve el XML sin tocar. */
+function eliminarParrafoQueContiene(xml: string, texto: string): string | null {
+    const pos = xml.indexOf(texto);
+    if (pos === -1) return null;
+
+    const inicio = xml.lastIndexOf("<text:p", pos);
+    const cierre = xml.indexOf("</text:p>", pos);
+    if (inicio === -1 || cierre === -1) return null;
+
+    return xml.slice(0, inicio) + xml.slice(cierre + "</text:p>".length);
+}
+
 // ---------------------------------------------------------------------------
 // Utilidades de XML
 // ---------------------------------------------------------------------------
@@ -294,6 +312,14 @@ export function prepararPlantilla(odt: ArrayBuffer): ResultadoPreparacion {
             `no se encuentra ${MARKERKEY_DESGLOSE} ni ${MARCADOR_DESGLOSE}: el documento saldrá ` +
                 `SIN desglose de partidas`
         );
+    }
+
+    const sinRetirado = eliminarParrafoQueContiene(content, MARKERKEY_RETIRADO);
+    if (sinRetirado) {
+        content = sinRetirado;
+        cambios.push(`${MARKERKEY_RETIRADO} eliminado (duplicaba el bloque de totales)`);
+    } else {
+        omitidos.push(`${MARKERKEY_RETIRADO} no estaba`);
     }
 
     entradas["content.xml"] = codificar(content);

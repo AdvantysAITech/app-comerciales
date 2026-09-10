@@ -53,7 +53,14 @@ export const RUTAS: readonly DefinicionRuta[] = [
     // calculas". Se pasan a Mapeo Directo: ~8.000 tokens menos por presupuesto
     // y ninguna cifra atraviesa un LLM.
     { markerkey: "presup.ResumenCapitulos", ruta: "resumen_capitulos", tipo: "directo", tabla: true },
-    { markerkey: "presup.ResumenPresupuesto", ruta: "resumen_presupuesto", tipo: "directo", tabla: true },
+
+    // `presup.ResumenPresupuesto` SE RETIRA (10/09/2026).
+    //
+    // Repetía PEM, IVA y TOTAL justo encima del bloque que la plantilla ya
+    // maqueta con esas mismas tres cifras ({{presup.TotalPEM}},
+    // {{presup.IVAImporte}}, {{presup.TotalConIVA}}). En el primer presupuesto
+    // real salían dos veces seguidas en la misma página. Repetir importes en un
+    // documento precontractual invita a preguntar cuál manda.
 
     // El desglose de partidas por capítulo YA NO viaja en el JSON.
     //

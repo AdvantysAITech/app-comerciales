@@ -90,6 +90,14 @@ export function estilosDesglose(): string {
         `fo:margin-top="0.05in" fo:margin-bottom="0.12in" ` +
         `style:may-break-between-rows="false"/></style:style>` +
         columnas +
+        // `may-break-between-rows` en la tabla NO basta: impide partir la tabla
+        // pero deja que una FILA se reparta entre dos páginas. En el primer
+        // presupuesto real, "Aplacado gres porcelánico" salió con el código y el
+        // importe en una página y "mortero cola C2" solo en la siguiente,
+        // pareciendo una partida sin valorar. El `keep-together` de la fila es
+        // lo que lo impide.
+        `<style:style style:name="${PREFIJO}Fila" style:family="table-row">` +
+        `<style:table-row-properties fo:keep-together="always"/></style:style>` +
         celda("CabCelda", FONDO_CABECERA) +
         celda("Celda") +
         celda("TotalCelda", FONDO_TOTAL) +
@@ -127,7 +135,7 @@ function filaXml(
     const celdas = valores
         .map((v, i) => celdaXml(v, estiloCelda, COLUMNAS[i].numerica ? estiloNumero : estiloTexto))
         .join("");
-    return `<table:table-row>${celdas}</table:table-row>`;
+    return `<table:table-row table:style-name="${PREFIJO}Fila">${celdas}</table:table-row>`;
 }
 
 function tablaCapitulo(cap: PresupuestoCalculado["capitulos"][number], indice: number): string {

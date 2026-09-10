@@ -95,7 +95,7 @@ const despues = verificarPlantilla(odt);
  * desglose sale del JSON porque la app tiene un tope de 4000 caracteres por
  * campo. Desaparecer de la lista de markerkeys es lo esperado, no una pérdida.
  */
-const CONVERTIDOS_A_PROPOSITO = ["presup.DesgloseCapitulos"];
+const CONVERTIDOS_A_PROPOSITO = ["presup.DesgloseCapitulos", "presup.ResumenPresupuesto"];
 
 const perdidos = antes.markerkeys.encontrados.filter(
     (t) => !despues.markerkeys.encontrados.includes(t) && !CONVERTIDOS_A_PROPOSITO.includes(t)

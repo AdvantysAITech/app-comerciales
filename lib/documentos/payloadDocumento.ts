@@ -63,7 +63,6 @@ export type JsonDocumento = {
     importe_IVA: string;
     total_con_IVA: string;
     resumen_capitulos: string;
-    resumen_presupuesto: string;
     modulos: ModuloDocumento[];
 };
 
@@ -160,19 +159,6 @@ export function renderResumenCapitulos(p: PresupuestoCalculado | null): string {
     ].join("\n");
 }
 
-/** Cierre económico: PEM, IVA y total. */
-export function renderResumenPresupuesto(p: PresupuestoCalculado | null): string {
-    if (!p) return "";
-
-    return [
-        fila(["CONCEPTO", "IMPORTE"]),
-        separador(2),
-        fila(["TOTAL PEM", `${formatearImporte(p.pem)} Eur`]),
-        fila([`IVA ${formatearTipoIva(p.ivaTipo)} %`, `${formatearImporte(p.ivaImporte)} Eur`]),
-        fila(["TOTAL PRESUPUESTO (IVA INCLUIDO)", `${formatearImporte(p.total)} Eur`]),
-    ].join("\n");
-}
-
 // ---------------------------------------------------------------------------
 // Módulos para los prompts de IA
 // ---------------------------------------------------------------------------
@@ -262,7 +248,6 @@ export function construirJsonDocumento(
         total_con_IVA: presupuesto ? formatearImporte(presupuesto.total) : "",
 
         resumen_capitulos: renderResumenCapitulos(presupuesto),
-        resumen_presupuesto: renderResumenPresupuesto(presupuesto),
 
         modulos: construirModulos(payload, presupuesto),
     };

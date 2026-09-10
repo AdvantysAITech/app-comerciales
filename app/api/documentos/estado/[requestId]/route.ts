@@ -99,6 +99,8 @@ function componerPortada(
     subcuenta: SubcuentaSlug,
     contexto: Contexto,
     numeroReferencia: string,
+    /** Título que ha generado la IA. Si falta, la portada usa su respaldo. */
+    titulo: string | null,
     avisos: string[]
 ): Uint8Array | null {
     try {
@@ -106,6 +108,7 @@ function componerPortada(
 
         const portada = construirPortada(presupuesto, {
             subcuenta,
+            titulo,
             comunidad: comunidad.nombreDireccion ?? payload.comunidad.nombre,
             localidad: comunidad.localidad!,
             expediente: numeroReferencia,
@@ -249,6 +252,16 @@ export async function GET(
             );
         }
 
+        // El título de la portada sale de la MISMA sección que titula el cuerpo
+        // (`presup.TituloPresupuesto`). Sin esto, la portada caía en su texto de
+        // respaldo y el documento se presentaba con dos nombres distintos en las
+        // dos primeras páginas: "Propuesta de intervención" arriba y
+        // "Rehabilitación de Fachadas, Cubiertas y Bajantes" debajo.
+        const tituloGenerado =
+            (detalle.sectionTraces ?? [])
+                .find((t) => t.markerKey === "presup.TituloPresupuesto")
+                ?.aiResponse?.trim() || null;
+
         await escribirRegistro(subcuenta, oportunidadId, { ...base, estado: "recibido" });
         const validado = await escribirRegistro(subcuenta, oportunidadId, { ...base, estado: "validado" });
 
@@ -257,7 +270,9 @@ export async function GET(
         // van en paralelo para no sumar sus tiempos.
         const [odtCrudo, portadaPng] = await Promise.all([
             descargarOdt(requestId),
-            Promise.resolve(componerPortada(subcuenta, contexto, registro.numeroReferencia, avisos)),
+            Promise.resolve(
+                componerPortada(subcuenta, contexto, registro.numeroReferencia, tituloGenerado, avisos)
+            ),
         ]);
 
         // La app genera las tablas sin bordes: se los ponemos antes de publicar.
