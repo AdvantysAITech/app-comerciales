@@ -1,9 +1,16 @@
 import { saFetch, type Subcuenta } from "@/lib/ghl/client";
 
-const CAMPO_ESTADO_POR_SUBCUENTA: Record<string, string | undefined> = {
-    "scala-valencia": process.env.SA_CAMPO_ESTADO_DOCUMENTO,
-    "vertical-projects": process.env.SA_VERTICAL_CAMPO_ESTADO_DOCUMENTO,
-};
+/** Se lee en cada llamada, no al importar. Mismo motivo que en plantilla.ts. */
+function campoEstadoDe(subcuenta: string): string | undefined {
+    const id =
+        subcuenta === "scala-valencia"
+            ? process.env.SA_CAMPO_ESTADO_DOCUMENTO
+            : subcuenta === "vertical-projects"
+              ? process.env.SA_VERTICAL_CAMPO_ESTADO_DOCUMENTO
+              : undefined;
+
+    return id?.trim() || undefined;
+}
 
 /**
  * Subcuentas con la parametrización de GHL terminada.
@@ -99,7 +106,7 @@ export class ErrorLecturaRegistro extends Error {
 }
 
 function campoConfigurado(subcuenta: Subcuenta): string {
-    const campo = CAMPO_ESTADO_POR_SUBCUENTA[subcuenta];
+    const campo = campoEstadoDe(subcuenta);
     if (!campo) {
         throw new Error(
             `No hay custom field "Estado documento" configurado para la subcuenta "${subcuenta}". ` +
@@ -112,7 +119,7 @@ function campoConfigurado(subcuenta: Subcuenta): string {
 
 /** Si la subcuenta puede generar documentos hoy. Para la UI. */
 export function documentosDisponibles(subcuenta: Subcuenta): boolean {
-    return Boolean(CAMPO_ESTADO_POR_SUBCUENTA[subcuenta]) && SUBCUENTAS_OPERATIVAS.has(subcuenta);
+    return Boolean(campoEstadoDe(subcuenta)) && SUBCUENTAS_OPERATIVAS.has(subcuenta);
 }
 
 /**

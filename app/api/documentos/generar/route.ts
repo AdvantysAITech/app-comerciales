@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { esSubcuentaValida } from "@/lib/subcuenta";
-import { saFetch } from "@/lib/ghl/client";
 import { obtenerComunidad } from "@/lib/ghl/comunidades";
 import { obtenerAdministrador } from "@/lib/ghl/administradores";
 import type { PayloadVisita } from "@/lib/visita/payload";
@@ -12,6 +11,7 @@ import { asignarReferencia } from "@/lib/documentos/contador";
 import { obtenerPlantilla } from "@/lib/documentos/plantilla";
 import { construirRequestId, generarDocumento } from "@/lib/documentos/soluciona";
 import { documentosDisponibles, escribirRegistro, leerRegistro } from "@/lib/documentos/estado";
+import { leerPayloadVisita } from "@/lib/documentos/visitaGuardada";
 
 /**
  * Encola la generación del presupuesto de una oportunidad.
@@ -24,13 +24,6 @@ import { documentosDisponibles, escribirRegistro, leerRegistro } from "@/lib/doc
 // La descarga de la plantilla (3,2 MB) más el reenvío no caben en los 10 s por
 // defecto. No se espera a la generación, pero sí a que la app acepte el 202.
 export const maxDuration = 60;
-
-/**
- * Campo LARGE_TEXT con el JSON canónico de la visita.
- * Mismo id que en lib/ghl/presupuestos.ts. Se repite aquí a propósito, como ya
- * se hace entre oportunidades.ts y presupuestos.ts, para no tocar ese fichero.
- */
-const CUSTOM_FIELD_DATOS_VISITA = "xFXns9nopnKIR4RDRf2g";
 
 type Cuerpo = {
     oportunidadId: string;
@@ -45,27 +38,6 @@ type Cuerpo = {
      */
     simular?: boolean;
 };
-
-/** Lee el payload canónico guardado en la oportunidad. */
-async function leerPayloadVisita(
-    subcuenta: "scala-valencia" | "vertical-projects",
-    oportunidadId: string
-): Promise<PayloadVisita | null> {
-    const datos = await saFetch(subcuenta, `/opportunities/${oportunidadId}`);
-    const oportunidad = datos.opportunity ?? datos;
-    const campos: Array<{ id: string; fieldValue?: unknown; field_value?: unknown }> =
-        oportunidad?.customFields ?? [];
-
-    const campo = campos.find((c) => c.id === CUSTOM_FIELD_DATOS_VISITA);
-    const valor = campo?.fieldValue ?? campo?.field_value;
-    if (typeof valor !== "string" || valor.trim() === "") return null;
-
-    try {
-        return JSON.parse(valor) as PayloadVisita;
-    } catch {
-        return null;
-    }
-}
 
 /**
  * Traduce rutas técnicas a algo que el comercial entienda.
@@ -344,8 +316,36 @@ export async function POST(request: NextRequest) {
             { forzar: Boolean(previo) }
         );
 
-        const plantilla = await obtenerPlantilla(subcuenta);
-        const encolado = await generarDocumento({ requestId, json: preparado.json, plantilla });
+        // Si la plantilla no se puede descargar o la app rechaza la petición, el
+        // registro NO puede quedarse en "solicitado": apuntaría a un requestId
+        // que al otro lado no existe, el polling recibiría 404 en cada vuelta y
+        // la oportunidad quedaría bloqueada con el botón deshabilitado. Se
+        // cierra como fallido y se devuelve el motivo.
+        let encolado;
+        try {
+            const plantilla = await obtenerPlantilla(subcuenta);
+            encolado = await generarDocumento({ requestId, json: preparado.json, plantilla });
+        } catch (error) {
+            const motivo = error instanceof Error ? error.message : "Error desconocido";
+
+            await escribirRegistro(
+                subcuenta,
+                cuerpo.oportunidadId,
+                {
+                    requestId,
+                    estado: "fallido",
+                    numeroReferencia: preparado.json.num_ref,
+                    actualizadoEn: new Date().toISOString(),
+                    errores: [motivo],
+                },
+                { forzar: true }
+            );
+
+            return NextResponse.json(
+                { error: `No se ha podido encolar la generación: ${motivo}`, errores: [motivo] },
+                { status: 502 }
+            );
+        }
 
         await escribirRegistro(subcuenta, cuerpo.oportunidadId, {
             requestId,

@@ -461,3 +461,33 @@ export function resumenPorCapitulos(
 export function capituloExiste(codigo: string): boolean {
   return obtenerCapitulo(codigo) !== undefined;
 }
+/**
+ * Todas las cifras que el documento puede contener legítimamente.
+ *
+ * Alimenta `validarCifras` (contrato.ts): si una sección de IA imprime un
+ * número que no está en esta lista, se lo ha inventado. Los prompts de
+ * `TituloPresupuesto` y `ObjetoYAlcance` describen la intervención y NO deben
+ * calcular nada, pero un modelo que ve importes en su contexto tiende a
+ * resumirlos, y un total inventado en la prosa de un documento precontractual
+ * es exactamente lo que no puede pasar.
+ *
+ * Se devuelven ya formateadas en es-ES, que es como aparecerían impresas.
+ */
+export function cifrasDelCalculo(p: PresupuestoCalculado): string[] {
+  const cifras = new Set<string>();
+
+  for (const cap of p.capitulos) {
+    cifras.add(formatearImporte(cap.total));
+    for (const l of cap.lineas) {
+      cifras.add(formatearImporte(l.importe));
+      cifras.add(formatearImporte(l.precioUnitario));
+      cifras.add(formatearCantidad(l.cantidad));
+    }
+  }
+
+  cifras.add(formatearImporte(p.pem));
+  cifras.add(formatearImporte(p.ivaImporte));
+  cifras.add(formatearImporte(p.total));
+
+  return [...cifras];
+}

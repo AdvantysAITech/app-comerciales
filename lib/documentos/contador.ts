@@ -136,17 +136,24 @@ function valorDeCampo(campo: CampoBusqueda): string | null {
     return typeof v === "string" && v.trim() !== "" ? v : null;
 }
 
-const CAMPO_ESTADO_POR_SUBCUENTA: Record<string, string | undefined> = {
-    "scala-valencia": process.env.SA_CAMPO_ESTADO_DOCUMENTO,
-    "vertical-projects": process.env.SA_VERTICAL_CAMPO_ESTADO_DOCUMENTO,
-};
+/** Se lee en cada llamada, no al importar. Mismo motivo que en plantilla.ts. */
+function campoEstadoDe(subcuenta: string): string | undefined {
+    const id =
+        subcuenta === "scala-valencia"
+            ? process.env.SA_CAMPO_ESTADO_DOCUMENTO
+            : subcuenta === "vertical-projects"
+              ? process.env.SA_VERTICAL_CAMPO_ESTADO_DOCUMENTO
+              : undefined;
+
+    return id?.trim() || undefined;
+}
 
 /**
  * Recorre las oportunidades de la subcuenta y recolecta las referencias
  * guardadas en el registro de documento.
  */
 async function recolectarReferencias(subcuenta: Subcuenta): Promise<string[]> {
-    const campoEstado = CAMPO_ESTADO_POR_SUBCUENTA[subcuenta];
+    const campoEstado = campoEstadoDe(subcuenta);
     if (!campoEstado) {
         throw new Error(
             `No hay custom field "Estado documento" configurado para "${subcuenta}". ` +

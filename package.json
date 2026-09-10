@@ -12,10 +12,20 @@
     "motor:probar": "tsx scripts/tarifa/probar-motor.ts",
     "mapeo:auditar": "tsx scripts/tarifa/auditar-mapeo.ts",
     "estado:probar": "tsx scripts/tarifa/probar-estado.ts",
-    "contador:probar": "tsx scripts/tarifa/probar-contador.ts"
+    "contador:probar": "tsx scripts/tarifa/probar-contador.ts",
+    "portada:probar": "tsx scripts/tarifa/probar-portada.ts",
+    "rasterizado:probar": "tsx scripts/tarifa/probar-rasterizado.ts",
+    "odf:probar": "tsx scripts/tarifa/probar-odf.ts",
+    "portada:demo": "tsx scripts/tarifa/demo-portada-odt.ts",
+    "plantilla:preparar": "tsx scripts/tarifa/preparar-plantilla.ts",
+    "plantilla:verificar": "tsx scripts/tarifa/verificar-plantilla.ts",
+    "soluciona:e2e": "tsx scripts/tarifa/soluciona-e2e.ts",
+    "soluciona:consultar": "tsx scripts/tarifa/soluciona-consultar.ts"
   },
   "dependencies": {
+    "@resvg/resvg-js": "^2.6.2",
     "bcryptjs": "^3.0.3",
+    "dejavu-fonts-ttf": "^2.37.3",
     "fflate": "^0.8.3",
     "next": "16.2.10",
     "next-auth": "^5.0.0-beta.31",

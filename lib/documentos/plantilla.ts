@@ -20,10 +20,26 @@ import type { SubcuentaSlug } from "@/lib/subcuenta";
  * partido en tres runs. Si hay que retocarla, se retoca y luego se verifica.
  */
 
-const URL_PLANTILLA: Record<string, string | undefined> = {
-    "scala-valencia": process.env.SOLUCIONA_PLANTILLA_SCALA_URL,
-    "vertical-projects": process.env.SOLUCIONA_PLANTILLA_VERTICAL_URL,
-};
+/**
+ * La URL se lee en CADA llamada, no al importar el módulo.
+ *
+ * Con una constante de módulo, el valor queda congelado en el instante en que
+ * se importa este fichero. En Next.js da igual, porque el entorno ya está
+ * cargado; en un script no: `import` se evalúa ANTES que el `dotenv.config()`
+ * del propio script, aunque en el código aparezca después. El resultado era
+ * "No hay plantilla configurada" con la variable perfectamente puesta en
+ * .env.local.
+ */
+function urlPlantilla(subcuenta: string): string | undefined {
+    const url =
+        subcuenta === "scala-valencia"
+            ? process.env.SOLUCIONA_PLANTILLA_SCALA_URL
+            : subcuenta === "vertical-projects"
+              ? process.env.SOLUCIONA_PLANTILLA_VERTICAL_URL
+              : undefined;
+
+    return url?.trim() || undefined;
+}
 
 const NOMBRE_PLANTILLA: Record<string, string> = {
     "scala-valencia": "Plantilla_Presupuesto_Scala.odt",
@@ -45,7 +61,7 @@ export async function obtenerPlantilla(subcuenta: SubcuentaSlug): Promise<Planti
     const cacheada = cache.get(subcuenta);
     if (cacheada) return cacheada;
 
-    const url = URL_PLANTILLA[subcuenta];
+    const url = urlPlantilla(subcuenta);
     if (!url) {
         throw new Error(
             `No hay plantilla configurada para "${subcuenta}". Sube el .odt a GHL Media Storage ` +

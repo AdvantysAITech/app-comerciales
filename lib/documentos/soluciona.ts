@@ -16,7 +16,10 @@ import { validarContenido, validarCifras, validarMapeoDirecto, type TrazaSeccion
  * código, no la plataforma. De ahí el prefijo de subcuenta en el RequestId.
  */
 
-const BASE_URL = process.env.SOLUCIONA_BASE_URL ?? "https://prlia.solucionait.es";
+/** Se lee en cada llamada, no al importar. Mismo motivo que en plantilla.ts. */
+function baseUrl(): string {
+    return process.env.SOLUCIONA_BASE_URL?.trim() || "https://prlia.solucionait.es";
+}
 
 /** Estados observados. 4 y 5 existen en el enum pero no se han provocado. */
 export const ESTADO = {
@@ -32,6 +35,24 @@ export function esCompletado(estado: number): boolean {
 
 export function esTerminal(detalle: DetalleInforme): boolean {
     return Boolean(detalle.completedUtc) || Boolean(detalle.failureReason);
+}
+
+/**
+ * La petición no existe en la app.
+ *
+ * Pasa cuando el registro de GHL quedó escrito pero la generación nunca llegó a
+ * encolarse: si `obtenerPlantilla` o el POST fallan, el registro se queda con
+ * un requestId que al otro lado no existe. Sin distinguir este caso, el polling
+ * devolvía 500 en cada vuelta y la oportunidad quedaba bloqueada para siempre.
+ */
+export class PeticionNoEncontradaError extends Error {
+    constructor(requestId: string) {
+        super(
+            `La petición "${requestId}" no existe en la app de documentos. La generación no llegó ` +
+                `a encolarse: vuelve a generar el presupuesto.`
+        );
+        this.name = "PeticionNoEncontradaError";
+    }
 }
 
 export type DetalleInforme = {
@@ -78,7 +99,7 @@ function credenciales(): { email: string; password: string } {
 }
 
 async function pedirToken(): Promise<TokenCacheado> {
-    const respuesta = await fetch(`${BASE_URL}/api/auth/token`, {
+    const respuesta = await fetch(`${baseUrl()}/api/auth/token`, {
         method: "POST",
         cache: "no-store",
         headers: { "Content-Type": "application/json" },
@@ -186,7 +207,7 @@ export async function generarDocumento(peticion: PeticionGeneracion): Promise<Re
     );
 
     const respuesta = await conAutenticacion((cabeceras) =>
-        fetch(`${BASE_URL}/api/Reports/generate`, {
+        fetch(`${baseUrl()}/api/Reports/generate`, {
             method: "POST",
             // OBLIGATORIO. El fetch parcheado de Next.js corrompe el stream
             // binario del FormData al intentar cachear la peticion. Ya nos costo
@@ -207,11 +228,15 @@ export async function generarDocumento(peticion: PeticionGeneracion): Promise<Re
 
 export async function consultarEstado(requestId: string): Promise<DetalleInforme> {
     const respuesta = await conAutenticacion((cabeceras) =>
-        fetch(`${BASE_URL}/api/Reports/${encodeURIComponent(requestId)}`, {
+        fetch(`${baseUrl()}/api/Reports/${encodeURIComponent(requestId)}`, {
             cache: "no-store",
             headers: cabeceras,
         })
     );
+
+    if (respuesta.status === 404) {
+        throw new PeticionNoEncontradaError(requestId);
+    }
 
     if (!respuesta.ok) {
         throw new Error(`No se pudo consultar el estado de ${requestId} (${respuesta.status}).`);
@@ -222,7 +247,7 @@ export async function consultarEstado(requestId: string): Promise<DetalleInforme
 
 export async function descargarOdt(requestId: string): Promise<ArrayBuffer> {
     const respuesta = await conAutenticacion((cabeceras) =>
-        fetch(`${BASE_URL}/api/Reports/${encodeURIComponent(requestId)}/odt`, {
+        fetch(`${baseUrl()}/api/Reports/${encodeURIComponent(requestId)}/odt`, {
             cache: "no-store",
             headers: cabeceras,
         })

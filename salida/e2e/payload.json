@@ -1,0 +1,175 @@
+{
+  "num_ref": "E2E-2026-09-10",
+  "fechaVisita": "16/09/2026",
+  "fecha_validez": "16/10/2026",
+  "localidad_visita": "Náquera",
+  "comunidad": {
+    "nombre": "C/ Islas Canarias, 180",
+    "localidad": "Náquera",
+    "provincia": "Valencia"
+  },
+  "administrador": {
+    "nombre": "Fincas Turia Gestión",
+    "localidad": "Náquera"
+  },
+  "total_PEM": "20.090,81",
+  "porcentaje_IVA": "10",
+  "importe_IVA": "2.009,08",
+  "total_con_IVA": "22.099,89",
+  "resumen_capitulos": "| CAPÍTULO | IMPORTE |\n| --- | --- |\n| 1.01  DEMOLICIONES Y ACTUACIONES PREVIAS | 2.103,38 Eur |\n| 1.02  ANDAMIOS Y MEDIOS DE ELEVACION | 1.944,00 Eur |\n| 1.03  CERRAMIENTOS Y FACHADAS | 3.329,01 Eur |\n| 1.04  REVESTIMIENTOS CERAMICOS Y PETREOS | 5.850,00 Eur |\n| 1.05  PINTURAS Y TRATAMIENTOS SUPERFICIALES | 4.372,42 Eur |\n| 1.06  IMPERMEABILIZACIONES Y CUBIERTAS | 2.492,00 Eur |",
+  "resumen_presupuesto": "| CONCEPTO | IMPORTE |\n| --- | --- |\n| TOTAL PEM | 20.090,81 Eur |\n| IVA 10 % | 2.009,08 Eur |\n| TOTAL PRESUPUESTO (IVA INCLUIDO) | 22.099,89 Eur |",
+  "desglose_capitulos": "#### 1.01  DEMOLICIONES Y ACTUACIONES PREVIAS\n\n| CÓDIGO | RESUMEN | UD | CANT. | PRECIO | IMPORTE |\n| --- | --- | --- | --- | --- | --- |\n| 1.01.08 | Demolicion revestimiento continuo mortero medios manuales ext. | m² | 20,00 | 11,50 | 230,00 |\n| 1.01.09 | Picado de enfoscado paramento vertical exterior manual | m² | 36,00 | 10,63 | 382,68 |\n| 1.01.16 | Lavado hidrodinamico fachada agua presion | m² | 90,00 | 2,91 | 261,90 |\n| 1.01.18 | Limpieza juntas chapado piedra natural manual con cepillo | m² | 120,00 | 10,24 | 1.228,80 |\n|  | TOTAL 1.01 |  |  |  | 2.103,38 |\n\n#### 1.02  ANDAMIOS Y MEDIOS DE ELEVACION\n\n| CÓDIGO | RESUMEN | UD | CANT. | PRECIO | IMPORTE |\n| --- | --- | --- | --- | --- | --- |\n| 1.02.02 | Montaje desmontaje andamio tubular multidireccional h=10-20m | m² | 160,00 | 12,15 | 1.944,00 |\n|  | TOTAL 1.02 |  |  |  | 1.944,00 |\n\n#### 1.03  CERRAMIENTOS Y FACHADAS\n\n| CÓDIGO | RESUMEN | UD | CANT. | PRECIO | IMPORTE |\n| --- | --- | --- | --- | --- | --- |\n| 1.03.02 | Enfoscado cemento maestreado fratasado ext. 20mm vertical | m² | 27,00 | 29,38 | 793,26 |\n| 1.03.09 | Reparacion grieta mortero con masilla elastica | m | 30,00 | 23,13 | 693,90 |\n| 1.03.16 | Reparacion canto forjado hormigon deteriorado con mortero R4 | m² | 15,00 | 122,79 | 1.841,85 |\n|  | TOTAL 1.03 |  |  |  | 3.329,01 |\n\n#### 1.04  REVESTIMIENTOS CERAMICOS Y PETREOS\n\n| CÓDIGO | RESUMEN | UD | CANT. | PRECIO | IMPORTE |\n| --- | --- | --- | --- | --- | --- |\n| 1.04.14 | Pavimento terrazas gres porcelanico antideslizante 60x60 | m² | 90,00 | 65,00 | 5.850,00 |\n|  | TOTAL 1.04 |  |  |  | 5.850,00 |\n\n#### 1.05  PINTURAS Y TRATAMIENTOS SUPERFICIALES\n\n| CÓDIGO | RESUMEN | UD | CANT. | PRECIO | IMPORTE |\n| --- | --- | --- | --- | --- | --- |\n| 1.05.01 | Pintura plastica acrilica exterior dos manos + imprimacion | m² | 23,00 | 20,54 | 472,42 |\n| 1.05.08 | Revestimiento elastico antifisuras armado malla fachada exterior | m² | 120,00 | 32,50 | 3.900,00 |\n|  | TOTAL 1.05 |  |  |  | 4.372,42 |\n\n#### 1.06  IMPERMEABILIZACIONES Y CUBIERTAS\n\n| CÓDIGO | RESUMEN | UD | CANT. | PRECIO | IMPORTE |\n| --- | --- | --- | --- | --- | --- |\n| 1.06.01 | Sustitucion lamina bituminosa autoprotegida monocapa cubierta plana | m² | 6,00 | 29,38 | 176,28 |\n| 1.06.09 | Impermeabilizacion murete perimetral cubierta lamina asfaltica | m | 38,00 | 60,94 | 2.315,72 |\n|  | TOTAL 1.06 |  |  |  | 2.492,00 |",
+  "modulos": [
+    {
+      "label": "Medianeras",
+      "partidas": [
+        {
+          "codigo": "1.02.02",
+          "descripcion": "Montaje desmontaje andamio tubular multidireccional h=10-20m",
+          "unidad": "m²",
+          "cantidadFormateada": "120,00",
+          "precioFormateado": "12,15",
+          "importeFormateado": "1.458,00"
+        },
+        {
+          "codigo": "1.01.18",
+          "descripcion": "Limpieza juntas chapado piedra natural manual con cepillo",
+          "unidad": "m²",
+          "cantidadFormateada": "120,00",
+          "precioFormateado": "10,24",
+          "importeFormateado": "1.228,80"
+        },
+        {
+          "codigo": "1.01.09",
+          "descripcion": "Picado de enfoscado paramento vertical exterior manual",
+          "unidad": "ml",
+          "cantidadFormateada": "24,00",
+          "precioFormateado": "10,63",
+          "importeFormateado": "255,12"
+        },
+        {
+          "codigo": "1.03.09",
+          "descripcion": "Reparacion grieta mortero con masilla elastica",
+          "unidad": "ml",
+          "cantidadFormateada": "18,00",
+          "precioFormateado": "23,13",
+          "importeFormateado": "416,34"
+        },
+        {
+          "codigo": "1.03.16",
+          "descripcion": "Reparacion canto forjado hormigon deteriorado con mortero R4",
+          "unidad": "m²",
+          "cantidadFormateada": "15,00",
+          "precioFormateado": "122,79",
+          "importeFormateado": "1.841,85"
+        },
+        {
+          "codigo": "1.05.08",
+          "descripcion": "Revestimiento elastico antifisuras armado malla fachada exterior",
+          "unidad": "m²",
+          "cantidadFormateada": "120,00",
+          "precioFormateado": "32,50",
+          "importeFormateado": "3.900,00"
+        }
+      ]
+    },
+    {
+      "label": "Cubiertas",
+      "partidas": [
+        {
+          "codigo": "1.02.02",
+          "descripcion": "Montaje desmontaje andamio tubular multidireccional h=10-20m",
+          "unidad": "m²",
+          "cantidadFormateada": "40,00",
+          "precioFormateado": "12,15",
+          "importeFormateado": "486,00"
+        },
+        {
+          "codigo": "1.01.08",
+          "descripcion": "Demolicion revestimiento continuo mortero medios manuales ext.",
+          "unidad": "m²",
+          "cantidadFormateada": "20,00",
+          "precioFormateado": "11,50",
+          "importeFormateado": "230,00"
+        },
+        {
+          "codigo": "1.03.02",
+          "descripcion": "Enfoscado cemento maestreado fratasado ext. 20mm vertical",
+          "unidad": "m²",
+          "cantidadFormateada": "12,00",
+          "precioFormateado": "29,38",
+          "importeFormateado": "352,56"
+        },
+        {
+          "codigo": "1.04.14",
+          "descripcion": "Pavimento terrazas gres porcelanico antideslizante 60x60",
+          "unidad": "m²",
+          "cantidadFormateada": "90,00",
+          "precioFormateado": "65,00",
+          "importeFormateado": "5.850,00"
+        },
+        {
+          "codigo": "1.01.16",
+          "descripcion": "Lavado hidrodinamico fachada agua presion",
+          "unidad": "m²",
+          "cantidadFormateada": "90,00",
+          "precioFormateado": "2,91",
+          "importeFormateado": "261,90"
+        },
+        {
+          "codigo": "1.06.09",
+          "descripcion": "Impermeabilizacion murete perimetral cubierta lamina asfaltica",
+          "unidad": "ml",
+          "cantidadFormateada": "38,00",
+          "precioFormateado": "60,94",
+          "importeFormateado": "2.315,72"
+        },
+        {
+          "codigo": "1.06.01",
+          "descripcion": "Sustitucion lamina bituminosa autoprotegida monocapa cubierta plana",
+          "unidad": "m²",
+          "cantidadFormateada": "6,00",
+          "precioFormateado": "29,38",
+          "importeFormateado": "176,28"
+        }
+      ]
+    },
+    {
+      "label": "Reparaciones puntuales",
+      "partidas": [
+        {
+          "codigo": "1.01.09",
+          "descripcion": "Picado de enfoscado paramento vertical exterior manual",
+          "unidad": "ml",
+          "cantidadFormateada": "12,00",
+          "precioFormateado": "10,63",
+          "importeFormateado": "127,56"
+        },
+        {
+          "codigo": "1.03.09",
+          "descripcion": "Reparacion grieta mortero con masilla elastica",
+          "unidad": "ml",
+          "cantidadFormateada": "12,00",
+          "precioFormateado": "23,13",
+          "importeFormateado": "277,56"
+        },
+        {
+          "codigo": "1.03.02",
+          "descripcion": "Enfoscado cemento maestreado fratasado ext. 20mm vertical",
+          "unidad": "m²",
+          "cantidadFormateada": "15,00",
+          "precioFormateado": "29,38",
+          "importeFormateado": "440,70"
+        },
+        {
+          "codigo": "1.05.01",
+          "descripcion": "Pintura plastica acrilica exterior dos manos + imprimacion",
+          "unidad": "m²",
+          "cantidadFormateada": "23,00",
+          "precioFormateado": "20,54",
+          "importeFormateado": "472,42"
+        }
+      ]
+    }
+  ]
+}

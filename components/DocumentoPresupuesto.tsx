@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { RegistroDocumento } from "@/lib/documentos/estado";
 
 /**
@@ -23,6 +23,8 @@ type Props = {
 
 type Respuesta = {
     requestId?: string;
+    /** `false` si el documento se publicó sin la infografía de portada. */
+    conPortada?: boolean;
     estado?: string;
     borrador?: boolean;
     urlDocumento?: string;
@@ -51,8 +53,20 @@ export function DocumentoPresupuesto({ oportunidadId, registroInicial, disponibl
     const [error, setError] = useState<string | null>(null);
     const [avisos, setAvisos] = useState<string[]>([]);
     const cancelado = useRef(false);
+    const siguiendo = useRef(false);
 
     async function seguir(requestId: string) {
+        if (siguiendo.current) return;
+        siguiendo.current = true;
+
+        try {
+            await bucleDeSeguimiento(requestId);
+        } finally {
+            siguiendo.current = false;
+        }
+    }
+
+    async function bucleDeSeguimiento(requestId: string) {
         for (let i = 0; i < INTENTOS_MAXIMOS; i++) {
             if (cancelado.current) return;
 
@@ -65,6 +79,7 @@ export function DocumentoPresupuesto({ oportunidadId, registroInicial, disponibl
             }
 
             setRegistro(datos);
+            if (datos.avisos?.length) setAvisos(datos.avisos);
             if (datos.estado !== "generando") return;
 
             await new Promise((r) => setTimeout(r, INTERVALO_MS));
@@ -72,6 +87,32 @@ export function DocumentoPresupuesto({ oportunidadId, registroInicial, disponibl
 
         setError("La generación está tardando más de lo normal. Vuelve a abrir la ficha en unos minutos.");
     }
+
+    /**
+     * Reanuda el seguimiento al abrir la ficha.
+     *
+     * Sin esto, un registro que se quedó en un estado no terminal -- porque la
+     * ruta reventó, o porque el comercial cerró la ficha mientras generaba --
+     * dejaba la UI en "Generando..." PARA SIEMPRE: el botón queda deshabilitado
+     * y nadie vuelve a preguntar por el estado. Ya pasó con una oportunidad
+     * atascada en `generando` cuyo documento estaba listo en la app desde hacía
+     * rato.
+     */
+    useEffect(() => {
+        const estadoInicial = registroInicial?.estado;
+        const enCurso = estadoInicial === "generando" || estadoInicial === "solicitado";
+
+        if (!disponible || !enCurso || !registroInicial?.requestId) return;
+
+        cancelado.current = false;
+        void seguir(registroInicial.requestId);
+
+        return () => {
+            cancelado.current = true;
+        };
+        // Solo al montar: el resto del ciclo lo gobierna `generar()`.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     async function generar() {
         setTrabajando(true);
@@ -136,6 +177,12 @@ export function DocumentoPresupuesto({ oportunidadId, registroInicial, disponibl
                         </span>
                     )}
                 </div>
+            )}
+
+            {registro?.estado === "publicado" && registro.conPortada === false && (
+                <p className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-700 dark:text-amber-400">
+                    El presupuesto se ha generado sin la infografía de portada.
+                </p>
             )}
 
             {registro?.urlDocumento && (
