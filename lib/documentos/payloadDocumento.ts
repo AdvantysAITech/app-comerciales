@@ -31,16 +31,14 @@ import { validarPreVuelo } from "./contrato";
  * Cambio de contrato: `DatosDocumento.economia` pasa a `DatosDocumento.presupuesto`,
  * de tipo `PresupuestoCalculado | null`. `null` significa borrador.
  *
- * Se añade `desglose_capitulos`: la tabla de partidas por capítulo renderizada
- * de forma DETERMINISTA en TypeScript. Hasta ahora la generaba la IA
- * (`presup.DesgloseCapitulos`), lo que era una desviación registrada: un LLM no
- * debe producir importes de un documento precontractual.
- *
- * !! REQUIERE UN CAMBIO EN SOLUCIONA !!
- * El markerkey `presup.DesgloseCapitulos` está configurado allí como sección de
- * IA con su prompt template. Hay que reconfigurarlo para que lea el campo plano
- * `desglose_capitulos` del JSON, igual que `resumen_capitulos`. Mientras no se
- * haga, este campo viaja en el JSON pero la plantilla lo ignora.
+ * ---------------------------------------------------------------------------
+ * EL DESGLOSE YA NO VIAJA AQUÍ (10/09/2026)
+ * ---------------------------------------------------------------------------
+ * Pasó por tres manos: primero lo generaba la IA, luego se envió como campo
+ * plano `desglose_capitulos`, y ahora sale del JSON por completo. La app tiene
+ * un tope de 4000 caracteres por campo y el desglose lo supera a partir de 36
+ * partidas. Se construye como tablas ODF en `desgloseOdf.ts` y lo inyecta
+ * `odf.ts` sobre el marcador [[DESGLOSE]].
  */
 
 /** Días de validez del presupuesto. La plantilla ya lo dice impreso: 30 días. */
@@ -66,8 +64,6 @@ export type JsonDocumento = {
     total_con_IVA: string;
     resumen_capitulos: string;
     resumen_presupuesto: string;
-    /** Tabla de partidas por capítulo. Determinista, no generada por IA. */
-    desglose_capitulos: string;
     modulos: ModuloDocumento[];
 };
 
@@ -149,51 +145,6 @@ function separador(n: number): string {
 /** Escapa la barra vertical: partiría la celda en dos. */
 function celda(texto: string): string {
     return texto.replace(/\|/g, "/").replace(/\s+/g, " ").trim();
-}
-
-/**
- * Desglose de partidas por capítulo. DETERMINISTA.
- *
- * Replica la estructura del presupuesto de referencia del cliente: una tabla
- * por capítulo, con fila de total al pie.
- */
-export function renderDesgloseCapitulos(p: PresupuestoCalculado | null): string {
-    if (!p) return "";
-
-    const bloques: string[] = [];
-
-    for (const cap of p.capitulos) {
-        const lineas: string[] = [
-            `#### ${cap.codigoJerarquico}  ${cap.nombre}`,
-            "",
-            fila(["CÓDIGO", "RESUMEN", "UD", "CANT.", "PRECIO", "IMPORTE"]),
-            separador(6),
-        ];
-
-        for (const l of cap.lineas) {
-            const resumen = l.descripcionLarga
-                ? `${celda(l.resumen)}. ${celda(l.descripcionLarga)}`
-                : celda(l.resumen);
-
-            lineas.push(
-                fila([
-                    l.codigoJerarquico,
-                    resumen,
-                    l.unidad,
-                    formatearCantidad(l.cantidad),
-                    formatearImporte(l.precioUnitario),
-                    formatearImporte(l.importe),
-                ])
-            );
-        }
-
-        lineas.push(
-            fila(["", `TOTAL ${cap.codigoJerarquico}`, "", "", "", formatearImporte(cap.total)])
-        );
-        bloques.push(lineas.join("\n"));
-    }
-
-    return bloques.join("\n\n");
 }
 
 /** Listado capítulo -> importe. Alimenta el bloque "RESUMEN PRESUPUESTO". */
@@ -312,7 +263,6 @@ export function construirJsonDocumento(
 
         resumen_capitulos: renderResumenCapitulos(presupuesto),
         resumen_presupuesto: renderResumenPresupuesto(presupuesto),
-        desglose_capitulos: renderDesgloseCapitulos(presupuesto),
 
         modulos: construirModulos(payload, presupuesto),
     };

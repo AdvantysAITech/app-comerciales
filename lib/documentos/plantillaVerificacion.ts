@@ -1,6 +1,6 @@
 import { unzipSync } from "fflate";
 import { RUTAS } from "./contrato";
-import { MARCADOR_PORTADA } from "./odf";
+import { MARCADOR_DESGLOSE, MARCADOR_PORTADA } from "./odf";
 import { ESTILO_PARRAFO_PORTADA, MASTER_PAGE_PORTADA } from "./plantillaPortada";
 
 /**
@@ -62,6 +62,10 @@ export interface InformeMarkerkeys {
 
 export interface InformePlantilla {
     markerkeys: InformeMarkerkeys;
+    desglose: {
+        marcadorPresente: boolean;
+        marcadorFragmentado: boolean;
+    };
     portada: {
         marcadorPresente: boolean;
         marcadorFragmentado: boolean;
@@ -185,6 +189,20 @@ export function verificarPlantilla(odt: ArrayBuffer): InformePlantilla {
         }
     }
 
+    // --- Desglose ---------------------------------------------------------
+    const desglosePresente = xml.includes(MARCADOR_DESGLOSE);
+    const desgloseFragmentado = !desglosePresente && sinEtiquetas(xml).includes(MARCADOR_DESGLOSE);
+
+    if (!desglosePresente) {
+        hallazgos.push({
+            nivel: "error",
+            mensaje: desgloseFragmentado
+                ? `${MARCADOR_DESGLOSE} está PARTIDO entre etiquetas. El desglose no se inyectará.`
+                : `Falta ${MARCADOR_DESGLOSE}. Sin él, el presupuesto sale SIN las partidas. ` +
+                  `Pasa la plantilla por "plantilla:preparar".`,
+        });
+    }
+
     const masterPagePortada = styles.includes(`style:name="${MASTER_PAGE_PORTADA}"`);
 
     // Márgenes a cero en el page-layout que usa la maestra de portada.
@@ -265,6 +283,10 @@ export function verificarPlantilla(odt: ArrayBuffer): InformePlantilla {
             fragmentados,
             desconocidos,
             ausentes,
+        },
+        desglose: {
+            marcadorPresente: desglosePresente,
+            marcadorFragmentado: desgloseFragmentado,
         },
         portada: {
             marcadorPresente,

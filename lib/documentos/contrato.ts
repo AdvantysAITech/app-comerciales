@@ -55,14 +55,17 @@ export const RUTAS: readonly DefinicionRuta[] = [
     { markerkey: "presup.ResumenCapitulos", ruta: "resumen_capitulos", tipo: "directo", tabla: true },
     { markerkey: "presup.ResumenPresupuesto", ruta: "resumen_presupuesto", tipo: "directo", tabla: true },
 
-    // El desglose de partidas por capítulo era la última sección de IA que
-    // producía importes. Se pasa a Mapeo Directo sobre `desglose_capitulos`,
-    // que `payloadDocumento.renderDesgloseCapitulos()` genera de forma
-    // determinista. Verificado en Soluciona el 09/09/2026: los encabezados del
-    // ODT pasan de zona ("· MEDIANERAS") a capítulo ("1.01 DEMOLICIONES...").
+    // El desglose de partidas por capítulo YA NO viaja en el JSON.
     //
-    // Va con `tablas` y no con `tabla`: son N tablas, una por capítulo.
-    { markerkey: "presup.DesgloseCapitulos", ruta: "desglose_capitulos", tipo: "directo", tablas: true },
+    // La app impone un tope de 4000 caracteres por campo, y el desglose ocupa
+    // unos 100 por partida: a partir de 36 la generación termina en estado 5
+    // con "supera la longitud máxima permitida". Un presupuesto normal ya no
+    // cabía. Se construye en ODF nativo y se inyecta en `odf.ts` sobre el
+    // marcador [[DESGLOSE]] de la plantilla (10/09/2026).
+    //
+    // Si algún día suben el límite, esto NO se revierte sin más: al pasarlo a
+    // ODF ganamos bordes reales, anchos de columna fijos y cabecera repetida en
+    // los saltos de página, que su conversor de Markdown no daba.
 
     // --- Actividad "presup": prosa generada ------------------------------
     // Lo único que sigue produciendo un LLM. Describen la intervención; no

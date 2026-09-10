@@ -4,6 +4,7 @@ import { esSubcuentaValida, type SubcuentaSlug } from "@/lib/subcuenta";
 import { subirArchivoSa } from "@/lib/ghl/media";
 import { obtenerComunidad } from "@/lib/ghl/comunidades";
 import { obtenerAdministrador } from "@/lib/ghl/administradores";
+import { adjuntarPresupuesto } from "@/lib/ghl/oportunidades";
 import {
     consultarEstado,
     descargarOdt,
@@ -21,6 +22,7 @@ import { prepararDocumento } from "@/lib/documentos/payloadDocumento";
 import { assertPortada, construirPortada } from "@/lib/documentos/portada";
 import { renderizarPortada } from "@/lib/documentos/portada.svg";
 import { rasterizarSvg } from "@/lib/documentos/rasterizar";
+import { convertirAPdf, conversionDisponible, MIMETYPE_PDF, nombrePdf } from "@/lib/documentos/pdf";
 
 /**
  * Estado de una generación en curso. El cliente llama a esto en bucle.
@@ -209,17 +211,29 @@ export async function GET(
             avisos.push(`No se ha podido recalcular el presupuesto para verificar el documento: ${motivo}`);
         }
 
+        // Sin contexto no hay presupuesto, y sin presupuesto no hay desglose de
+        // partidas. La portada es prescindible; el desglose NO: un presupuesto
+        // sin sus partidas no es un presupuesto. Se cierra como fallido en lugar
+        // de publicar un documento incompleto que alguien podría enviar.
         if (!contexto) {
-            avisos.push(
-                "El documento se ha publicado sin verificar las cifras ni la portada: no se ha " +
-                    "podido reconstruir el contexto de la visita."
+            const motivo =
+                "No se ha podido reconstruir el presupuesto para componer el desglose de " +
+                "partidas. El documento no se publica: saldría sin las partidas.";
+            const guardado = await escribirRegistro(subcuenta, oportunidadId, {
+                ...base,
+                estado: "fallido",
+                errores: [motivo, ...avisos],
+            });
+            return NextResponse.json(
+                { requestId, estado: guardado.estado, errores: [motivo], avisos },
+                { status: 200 }
             );
         }
 
         const veredicto = verificarResultado(
             detalle,
-            contexto ? cifrasDelCalculo(contexto.presupuesto as PresupuestoCalculado) : [],
-            contexto?.json ?? undefined
+            cifrasDelCalculo(contexto.presupuesto as PresupuestoCalculado),
+            contexto.json ?? undefined
         );
 
         if (!veredicto.ok) {
@@ -243,23 +257,78 @@ export async function GET(
         // van en paralelo para no sumar sus tiempos.
         const [odtCrudo, portadaPng] = await Promise.all([
             descargarOdt(requestId),
-            Promise.resolve(
-                contexto ? componerPortada(subcuenta, contexto, registro.numeroReferencia, avisos) : null
-            ),
+            Promise.resolve(componerPortada(subcuenta, contexto, registro.numeroReferencia, avisos)),
         ]);
 
         // La app genera las tablas sin bordes: se los ponemos antes de publicar.
         // Y aquí entra la portada, sustituyendo el marcador de la plantilla. Sin
         // PNG el marcador se elimina y el documento sale sin portada, que es la
         // degradación buscada.
-        const odt = postprocesarOdt(odtCrudo, { portadaPng });
-
-        const nombre = `${registro.numeroReferencia}.odt`;
-        const archivo = new File([odt], nombre, {
-            type: "application/vnd.oasis.opendocument.text",
+        // El desglose de partidas se construye aquí, no lo trae la app: su tope
+        // de 4000 caracteres por campo lo hacía imposible a partir de 36
+        // partidas.
+        const odt = postprocesarOdt(odtCrudo, {
+            portadaPng,
+            desglose: contexto.presupuesto,
         });
 
+        const nombreOdt = `${registro.numeroReferencia}.odt`;
+
+        // --- Conversión a PDF ------------------------------------------------
+        // El ODT es correcto pero cada visor lo renderiza distinto: en Google
+        // Docs aparece una página fantasma que en LibreOffice no está. El PDF se
+        // ve igual en todas partes, y es lo que Miguel valida.
+        //
+        // Va DESPUÉS de postprocesarOdt: convertir antes produciría un PDF sin
+        // la infografía de portada.
+        //
+        // Si la conversión falla, se publica el ODT. Un presupuesto en ODT es
+        // peor que en PDF, pero infinitamente mejor que ningún presupuesto con
+        // el comercial esperando en obra.
+        let contenido: ArrayBuffer = odt;
+        let nombre = nombreOdt;
+        let mimetype = "application/vnd.oasis.opendocument.text";
+
+        if (conversionDisponible()) {
+            try {
+                contenido = await convertirAPdf(odt, nombreOdt);
+                nombre = nombrePdf(nombreOdt);
+                mimetype = MIMETYPE_PDF;
+            } catch (error) {
+                const motivo = error instanceof Error ? error.message : "error desconocido";
+                avisos.push(
+                    `El presupuesto se ha publicado en ODT porque la conversión a PDF ha fallado: ${motivo}`
+                );
+            }
+        } else {
+            avisos.push(
+                "El presupuesto se ha publicado en ODT: no hay servicio de conversión configurado " +
+                    "(GOTENBERG_URL)."
+            );
+        }
+
+        const archivo = new File([contenido], nombre, { type: mimetype });
+
         const subido = await subirArchivoSa(subcuenta, archivo);
+
+        // Adjuntar al campo "Presupuesto" de la oportunidad. Sin esto, la URL
+        // solo vive dentro del JSON del registro de estado y nadie la ve desde
+        // GHL. No bloquea la publicación: el documento ya está en Media Storage
+        // y el comercial puede descargarlo desde la app.
+        try {
+            await adjuntarPresupuesto(subcuenta, oportunidadId, {
+                url: subido.url,
+                nombre,
+                mimetype,
+                bytes: contenido.byteLength,
+            });
+        } catch (error) {
+            const motivo = error instanceof Error ? error.message : "error desconocido";
+            avisos.push(
+                `El documento se ha publicado pero NO se ha podido adjuntar a la ficha de la ` +
+                    `oportunidad en el Sistema Advantys: ${motivo}`
+            );
+        }
 
         const publicado = await escribirRegistro(subcuenta, oportunidadId, {
             ...validado,
@@ -273,6 +342,7 @@ export async function GET(
             urlDocumento: publicado.urlDocumento,
             tokens: publicado.tokens,
             conPortada: Boolean(portadaPng),
+            formato: mimetype === MIMETYPE_PDF ? "pdf" : "odt",
             avisos,
         });
     } catch (error) {

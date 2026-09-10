@@ -11,6 +11,7 @@ import {
     inyectarPortada,
     postprocesarOdt,
 } from "../../lib/documentos/odf";
+import { MARCADOR_DESGLOSE } from "../../lib/documentos/odf";
 
 let fallos = 0;
 function check(nombre: string, cond: boolean, detalle = "") {
@@ -105,6 +106,7 @@ function contenido(opciones: { marcador?: string } = {}): string {
         `<office:body><office:text>` +
         marcador +
         `<text:p>Presupuesto de prueba</text:p>` +
+        `<text:p>${MARCADOR_DESGLOSE}</text:p>` +
         TABLA_PLANTILLA +
         TABLA_GENERADA +
         `</office:text></office:body></office:document-content>`
@@ -264,6 +266,10 @@ const sinImagen = postprocesarOdt(construirOdt());
 const entradasSin = unzipSync(new Uint8Array(sinImagen));
 check("no se añade imagen", !entradasSin[RUTA_PORTADA]);
 check("el marcador no se imprime", !decodificar(entradasSin["content.xml"]).includes(MARCADOR_PORTADA));
+check(
+    "sin presupuesto, el marcador de desglose tampoco se imprime",
+    !decodificar(entradasSin["content.xml"]).includes(MARCADOR_DESGLOSE)
+);
 check("no hay marco huérfano", !decodificar(entradasSin["content.xml"]).includes("<draw:frame"));
 check(
     "el manifiesto no declara nada de más",

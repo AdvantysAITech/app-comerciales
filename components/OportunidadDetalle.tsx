@@ -107,7 +107,10 @@ export async function OportunidadDetalle({ id }: { id: string }) {
                 {oportunidad.descripcionVisita && (
                     <div>
                         <p className="mb-1.5 text-[11px] text-muted">Descripción de la visita</p>
-                        <p className="whitespace-pre-line rounded-2xl bg-canvas p-3 text-xs leading-relaxed text-ink">
+                        {/* `max-h` con scroll propio: una visita de diez
+                            módulos son cientos de líneas, y sin tope empuja el
+                            resto de la ficha fuera de la pantalla. */}
+                        <p className="max-h-80 overflow-y-auto overscroll-contain whitespace-pre-line rounded-2xl bg-canvas p-3 text-xs leading-relaxed text-ink">
                             {oportunidad.descripcionVisita}
                         </p>
                     </div>

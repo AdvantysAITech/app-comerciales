@@ -1,5 +1,5 @@
 import { unzipSync, zipSync } from "fflate";
-import { MARCADOR_PORTADA } from "./odf";
+import { MARCADOR_DESGLOSE, MARCADOR_PORTADA } from "./odf";
 
 /**
  * lib/documentos/plantillaPortada.ts
@@ -71,6 +71,15 @@ const ESTILO_PARRAFO =
 
 const PARRAFO_MARCADOR =
     `<text:p text:style-name="${ESTILO_PARRAFO_PORTADA}">${MARCADOR_PORTADA}</text:p>`;
+
+/**
+ * Markerkey que ocupaba el desglose antes de salir del JSON.
+ *
+ * Se sustituye por el marcador, conservando el párrafo y su estilo: así el
+ * desglose aterriza EXACTAMENTE donde la plantilla lo tenía colocado, sin que
+ * nadie tenga que reposicionar nada a mano.
+ */
+const MARKERKEY_DESGLOSE = "{{presup.DesgloseCapitulos}}";
 
 // ---------------------------------------------------------------------------
 // Utilidades de XML
@@ -273,6 +282,18 @@ export function prepararPlantilla(odt: ArrayBuffer): ResultadoPreparacion {
         }
         content = conMarcador;
         cambios.push(`párrafo con ${MARCADOR_PORTADA} al inicio del cuerpo`);
+    }
+
+    if (content.includes(MARCADOR_DESGLOSE)) {
+        omitidos.push(`marcador ${MARCADOR_DESGLOSE} ya existía`);
+    } else if (content.includes(MARKERKEY_DESGLOSE)) {
+        content = content.replace(MARKERKEY_DESGLOSE, MARCADOR_DESGLOSE);
+        cambios.push(`${MARKERKEY_DESGLOSE} -> ${MARCADOR_DESGLOSE} (sale del JSON: tope de 4000 car.)`);
+    } else {
+        irreparables.push(
+            `no se encuentra ${MARKERKEY_DESGLOSE} ni ${MARCADOR_DESGLOSE}: el documento saldrá ` +
+                `SIN desglose de partidas`
+        );
     }
 
     entradas["content.xml"] = codificar(content);

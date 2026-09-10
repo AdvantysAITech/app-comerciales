@@ -90,8 +90,15 @@ if (cambios.length === 0) console.log("  =  nada que hacer: ya estaba preparada"
 // --- Verificación del resultado -------------------------------------------
 const despues = verificarPlantilla(odt);
 
+/**
+ * `presup.DesgloseCapitulos` se convierte a [[DESGLOSE]] a propósito: el
+ * desglose sale del JSON porque la app tiene un tope de 4000 caracteres por
+ * campo. Desaparecer de la lista de markerkeys es lo esperado, no una pérdida.
+ */
+const CONVERTIDOS_A_PROPOSITO = ["presup.DesgloseCapitulos"];
+
 const perdidos = antes.markerkeys.encontrados.filter(
-    (t) => !despues.markerkeys.encontrados.includes(t)
+    (t) => !despues.markerkeys.encontrados.includes(t) && !CONVERTIDOS_A_PROPOSITO.includes(t)
 );
 
 console.log("\n  == Verificación ==");

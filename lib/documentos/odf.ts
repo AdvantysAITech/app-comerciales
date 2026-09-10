@@ -1,4 +1,6 @@
 import { unzipSync, zipSync } from "fflate";
+import { desgloseXml, estilosDesglose } from "./desgloseOdf";
+import type { PresupuestoCalculado } from "./motor";
 
 /**
  * Post-proceso del ODT devuelto por la app de documentos.
@@ -47,6 +49,15 @@ export const RUTA_PORTADA = "Pictures/portada.png";
  */
 export const MARCADOR_PORTADA = "[[PORTADA]]";
 
+/**
+ * Marcador del desglose de partidas por capítulo.
+ *
+ * Sustituye al markerkey `{{presup.DesgloseCapitulos}}`: la app impone un tope
+ * de 4000 caracteres por campo y el desglose lo revienta a partir de 36
+ * partidas. Se construye aquí, en ODF nativo, sin límite de tamaño.
+ */
+export const MARCADOR_DESGLOSE = "[[DESGLOSE]]";
+
 /** A4. La página de portada de la plantilla va con márgenes a cero. */
 const PORTADA_ANCHO = "210mm";
 const PORTADA_ALTO = "297mm";
@@ -64,9 +75,9 @@ const PORTADA_ALTO = "297mm";
  * vista siga ahí. Por eso el mensaje apunta a la causa probable.
  */
 export class MarcadorPortadaAusenteError extends Error {
-    constructor() {
+    constructor(marcador: string = MARCADOR_PORTADA) {
         super(
-            `El ODT no contiene el marcador "${MARCADOR_PORTADA}". O la plantilla no lo lleva, ` +
+            `El ODT no contiene el marcador "${marcador}". O la plantilla no lo lleva, ` +
                 `o se abrió y se volvió a guardar en un editor y el token quedó partido entre ` +
                 `varios <text:span>. Vuelve a subir la plantilla y verifica los markerkeys.`
         );
@@ -192,9 +203,10 @@ export function darEstiloATablas(contentXml: string): string {
  * sobre un documento entero es frágil y mucho más lenta.
  */
 function localizarParrafoDelMarcador(
-    contentXml: string
+    contentXml: string,
+    marcadorBuscado: string = MARCADOR_PORTADA
 ): { inicio: number; fin: number; estilo: string | null } | null {
-    const marcador = contentXml.indexOf(MARCADOR_PORTADA);
+    const marcador = contentXml.indexOf(marcadorBuscado);
     if (marcador === -1) return null;
 
     const inicio = contentXml.lastIndexOf("<text:p", marcador);
@@ -270,6 +282,40 @@ export function eliminarMarcadorPortada(contentXml: string): string {
 }
 
 /**
+ * Sustituye el párrafo del marcador por las tablas del desglose.
+ *
+ * El párrafo original desaparece entero, estilo incluido: aquí no se hereda
+ * nada, a diferencia de la portada. El bloque que entra son N tablas con sus
+ * propios encabezados de capítulo, y el estilo del párrafo que ocupaba el
+ * marcador no le aporta nada.
+ */
+export function inyectarDesglose(contentXml: string, presupuesto: PresupuestoCalculado): string {
+    const limites = localizarParrafoDelMarcador(contentXml, MARCADOR_DESGLOSE);
+    if (!limites) throw new MarcadorPortadaAusenteError(MARCADOR_DESGLOSE);
+
+    const bloque = desgloseXml(presupuesto);
+    if (!bloque) {
+        throw new Error(
+            "El presupuesto no tiene ningún capítulo: no hay desglose que imprimir. " +
+                "No debería llegar aquí: `calcularPresupuesto` rechaza un presupuesto sin líneas."
+        );
+    }
+
+    const conDesglose =
+        contentXml.slice(0, limites.inicio) + bloque + contentXml.slice(limites.fin);
+
+    return inyectarEstilos(conDesglose, estilosDesglose());
+}
+
+/** Quita el párrafo del marcador. Vía de degradación, igual que en la portada. */
+export function eliminarMarcadorDesglose(contentXml: string): string {
+    const limites = localizarParrafoDelMarcador(contentXml, MARCADOR_DESGLOSE);
+    if (!limites) return contentXml;
+
+    return contentXml.slice(0, limites.inicio) + contentXml.slice(limites.fin);
+}
+
+/**
  * Declara la imagen en el manifiesto.
  *
  * Sin esta entrada el PNG está dentro del ZIP pero NINGÚN lector ODF lo
@@ -300,6 +346,14 @@ export type OpcionesPostproceso = {
      * sale sin portada. Un presupuesto sin infografía sigue siendo válido.
      */
     portadaPng?: Uint8Array | null;
+    /**
+     * Presupuesto con el que construir el desglose de partidas.
+     *
+     * Si falta, el marcador se elimina y el documento sale SIN desglose. Quien
+     * llama tiene que decidir si eso es publicable: a diferencia de la portada,
+     * el desglose no es un adorno.
+     */
+    desglose?: PresupuestoCalculado | null;
 };
 
 /**
@@ -345,6 +399,13 @@ export function postprocesarOdt(odt: ArrayBuffer, opciones: OpcionesPostproceso 
     } else {
         contentXml = eliminarMarcadorPortada(contentXml);
     }
+
+    // El desglose de partidas: se construye en ODF nativo porque la app impone
+    // un tope de 4000 caracteres por campo del JSON y el desglose lo supera a
+    // partir de 36 partidas.
+    contentXml = opciones.desglose
+        ? inyectarDesglose(contentXml, opciones.desglose)
+        : eliminarMarcadorDesglose(contentXml);
 
     entradas["content.xml"] = codificador.encode(contentXml);
 

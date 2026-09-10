@@ -343,3 +343,79 @@ export async function adjuntarDatosVisita(
 
     return data.opportunity ?? data;
 }
+/**
+ * Campo FILE_UPLOAD "Presupuesto" de la oportunidad.
+ *
+ * Es donde Miguel y el comercial ven el documento desde GHL. Hasta ahora la URL
+ * solo vivía dentro del JSON del registro de estado, que nadie va a abrir para
+ * sacar un enlace.
+ */
+const CUSTOM_FIELD_PRESUPUESTO = "BYt6QSQIz4jpDtDtL6J0";
+
+export type DocumentoAdjunto = {
+    url: string;
+    /** Nombre visible en GHL. Se usa la referencia: "SV-2026-0005.odt". */
+    nombre: string;
+    mimetype: string;
+    /** Tamaño REAL en bytes. Ver la nota de abajo: un 0 hace fallar el PUT. */
+    bytes: number;
+};
+
+/**
+ * Adjunta el documento generado al campo "Presupuesto" de la oportunidad.
+ *
+ * ---------------------------------------------------------------------------
+ * COMPORTAMIENTO DE GHL VERIFICADO POR API (10/09/2026)
+ * ---------------------------------------------------------------------------
+ *  - El valor de un FILE_UPLOAD es un ARRAY de objetos
+ *    `{ url, meta: { mimetype, name, size }, deleted }`.
+ *  - `meta.size` es OBLIGATORIO y tiene que ser el tamaño real. Con `size: 0`
+ *    la API responde 400 "Invalid Custom Field Value" sin decir qué campo está
+ *    mal. Fue media hora de búsqueda.
+ *  - La URL NO tiene por qué estar en el bucket privado de GHL: acepta una de
+ *    Media Storage sin problema.
+ *  - En el PUT, `customFields` se FUSIONA, no reemplaza. Enviar solo este campo
+ *    deja intactos el registro de estado y el JSON de la visita. Comprobado en
+ *    la ficha después de escribir.
+ *  - `locationId` se omite: la API lo exige en POST y lo rechaza en PUT.
+ *
+ * Se envía un único elemento a propósito: cada regeneración PISA la anterior.
+ * El campo admite varios, pero un administrador que ve tres presupuestos
+ * adjuntos no sabe cuál vale. El histórico de versiones vive en el registro.
+ */
+export async function adjuntarPresupuesto(
+    subcuenta: Subcuenta,
+    oportunidadId: string,
+    documento: DocumentoAdjunto
+) {
+    if (!Number.isInteger(documento.bytes) || documento.bytes <= 0) {
+        throw new Error(
+            `El tamaño del documento debe ser un entero positivo (recibido: ${documento.bytes}). ` +
+                `GHL rechaza el campo con un 400 genérico si meta.size no es real.`
+        );
+    }
+
+    const data = await saFetch(subcuenta, `/opportunities/${oportunidadId}`, {
+        method: "PUT",
+        body: JSON.stringify({
+            customFields: [
+                {
+                    id: CUSTOM_FIELD_PRESUPUESTO,
+                    field_value: [
+                        {
+                            url: documento.url,
+                            meta: {
+                                mimetype: documento.mimetype,
+                                name: documento.nombre,
+                                size: documento.bytes,
+                            },
+                            deleted: false,
+                        },
+                    ],
+                },
+            ],
+        }),
+    });
+
+    return data.opportunity ?? data;
+}
