@@ -7,7 +7,7 @@ import {
     formatearTipoIva,
     type PresupuestoCalculado,
 } from "./motor";
-import { partidaDeRuta } from "./mapeo-capitulos";
+import { auditarPayload, partidaDeRuta } from "./mapeo-capitulos";
 import { validarPreVuelo } from "./contrato";
 
 /**
@@ -238,7 +238,21 @@ function construirModulos(
     payload: PayloadVisita,
     presupuesto: PresupuestoCalculado | null
 ): ModuloDocumento[] {
+    // Los nodos de texto libre ("Varios", "Otros") no tienen unidad ni precio
+    // por diseño, así que salían aquí con los seis campos en cadena vacía. La
+    // IA los pintaba como una fila hueca ("| | VARIOS. | | | | |") y son el
+    // principal sospechoso de las secciones que volvían sin `aiModel`.
+    //
+    // Se excluyen del JSON, no de la vida del comercial: `/api/documentos/generar`
+    // los sigue sacando como aviso con la nota que escribió, para que sepa qué
+    // se ha quedado fuera del documento.
+    const textoLibre = new Set(auditarPayload(payload).textoLibre.map((t) => t.ruta));
+
     return payload.modulos
+        .map((modulo) => ({
+            ...modulo,
+            partidas: modulo.partidas.filter((partida) => !textoLibre.has(partida.ruta)),
+        }))
         .filter((modulo) => modulo.partidas.length > 0)
         .map((modulo) => ({
             label: modulo.label,

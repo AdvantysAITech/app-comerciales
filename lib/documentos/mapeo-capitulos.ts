@@ -7,6 +7,7 @@ import {
     ETIQUETA_UNIDAD,
     type NodoCatalogo,
 } from "@/lib/catalogo";
+import { SUBRUTAS_SIN_PRECIO } from "@/lib/catalogo/disponibilidad";
 import {
     obtenerPartida,
     UNIDADES_SELECCIONABLES,
@@ -1025,6 +1026,43 @@ export function validarMapeo(): string[] {
             fallos.push(
                 `${p.subruta}: es texto libre (sin medición) pero tiene mapeo. ` +
                     `No puede llevar partida: no hay cantidad que multiplicar.`
+            );
+        }
+    }
+
+    // --- Coherencia con lo que se oculta en el formulario -------------------
+    //
+    // `lib/catalogo/disponibilidad.ts` mantiene la lista de subrutas que NO se
+    // le ofrecen al comercial. Se duplica a propósito, para no arrastrar la
+    // tarifa entera al bundle de cliente, y por eso hay que comprobar que las
+    // dos dicen lo mismo. Si divergen pasa una de dos cosas, ambas malas:
+    // se oculta un trabajo que sí se puede valorar (venta perdida), o se ofrece
+    // uno que no (el comercial vuelve de la visita y se come un 422).
+    const sinEquivalencia = new Set(
+        delCatalogo.filter((p) => p.mapeo?.estado === "sin_equivalencia").map((p) => p.subruta)
+    );
+
+    for (const subruta of sinEquivalencia) {
+        if (!SUBRUTAS_SIN_PRECIO.has(subruta)) {
+            fallos.push(
+                `${subruta}: no tiene partida en la tarifa pero SIGUE VISIBLE en el ` +
+                    `formulario. Añádela a SUBRUTAS_SIN_PRECIO en lib/catalogo/disponibilidad.ts.`
+            );
+        }
+    }
+
+    for (const subruta of SUBRUTAS_SIN_PRECIO) {
+        if (!subrutasCatalogo.has(subruta)) {
+            fallos.push(
+                `${subruta}: está oculta en el formulario pero no existe en el catálogo ` +
+                    `de captura. Bórrala de SUBRUTAS_SIN_PRECIO.`
+            );
+            continue;
+        }
+        if (!sinEquivalencia.has(subruta)) {
+            fallos.push(
+                `${subruta}: está oculta en el formulario pero SÍ tiene partida de tarifa. ` +
+                    `Bórrala de SUBRUTAS_SIN_PRECIO: se está perdiendo trabajo presupuestable.`
             );
         }
     }

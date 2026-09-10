@@ -10,10 +10,20 @@ export type DefinicionRuta = {
     economico?: boolean;
     /** Se espera una tabla Markdown como valor. */
     tabla?: boolean;
+    /**
+     * Se esperan VARIAS tablas Markdown, cada una precedida de un encabezado
+     * `#### `. No es lo mismo que `tabla`: `validarTablaMarkdown` da por hecho
+     * que todo el texto es una sola tabla y contaría el encabezado como
+     * cabecera, produciendo un error por cada fila del bloque.
+     */
+    tablas?: boolean;
 };
 
 /**
- * Las 18 rutas. El orden es el del listado de content types de la app.
+ * Las 18 rutas, agrupadas por actividad y, dentro de cada una, por tipo de
+ * resolución. Ya no sigue el orden del listado de content types de la app:
+ * desde que `DesgloseCapitulos` pasó a mapeo directo, agrupar por tipo dice de
+ * un vistazo qué atraviesa un LLM y qué no, que es la propiedad que importa.
  *
  * Si alguien añade un markerkey a la plantilla, hay que añadirlo AQUÍ y crear
  * su content type + prompt template en la app. Si no, saldrá vacío en silencio.
@@ -45,10 +55,20 @@ export const RUTAS: readonly DefinicionRuta[] = [
     { markerkey: "presup.ResumenCapitulos", ruta: "resumen_capitulos", tipo: "directo", tabla: true },
     { markerkey: "presup.ResumenPresupuesto", ruta: "resumen_presupuesto", tipo: "directo", tabla: true },
 
+    // El desglose de partidas por capítulo era la última sección de IA que
+    // producía importes. Se pasa a Mapeo Directo sobre `desglose_capitulos`,
+    // que `payloadDocumento.renderDesgloseCapitulos()` genera de forma
+    // determinista. Verificado en Soluciona el 09/09/2026: los encabezados del
+    // ODT pasan de zona ("· MEDIANERAS") a capítulo ("1.01 DEMOLICIONES...").
+    //
+    // Va con `tablas` y no con `tabla`: son N tablas, una por capítulo.
+    { markerkey: "presup.DesgloseCapitulos", ruta: "desglose_capitulos", tipo: "directo", tablas: true },
+
     // --- Actividad "presup": prosa generada ------------------------------
+    // Lo único que sigue produciendo un LLM. Describen la intervención; no
+    // calculan nada y ninguna cifra del documento depende de ellas.
     { markerkey: "presup.TituloPresupuesto", ruta: "modulos", tipo: "ia" },
     { markerkey: "presup.ObjetoYAlcance", ruta: "modulos", tipo: "ia" },
-    { markerkey: "presup.DesgloseCapitulos", ruta: "modulos", tipo: "ia" },
 ];
 
 /** Rutas distintas que el JSON tiene que poder resolver. */
@@ -104,6 +124,10 @@ export function validarPreVuelo(json: unknown): string[] {
         if (definicion.tabla && typeof valor === "string") {
             errores.push(...validarTablaMarkdown(definicion.markerkey, valor));
         }
+
+        if (definicion.tablas && typeof valor === "string") {
+            errores.push(...validarBloquesDeTablas(definicion.markerkey, valor));
+        }
     }
 
     return errores;
@@ -147,6 +171,61 @@ export function validarTablaMarkdown(etiqueta: string, texto: string): string[] 
             `${etiqueta}: ${sinCierre.length} fila(s) sin pipe de cierre. El conversor no las ` +
                 `reconocera como tabla y saldran impresas como texto.`
         );
+    }
+
+    return errores;
+}
+
+/**
+ * Varias tablas Markdown en un solo valor, cada una precedida de `#### Título`.
+ *
+ * Es la forma de `desglose_capitulos`: un bloque por capítulo. Se parte por los
+ * encabezados y se valida cada tabla por separado con `validarTablaMarkdown`,
+ * que es donde vive el conocimiento sobre el conversor de la app.
+ *
+ * Pasarle el bloque entero a `validarTablaMarkdown` NO funciona: tomaría el
+ * primer `####` como cabecera y marcaría todas las filas como desalineadas.
+ * Se comprobó el 09/09/2026: 14 errores falsos sobre un desglose correcto.
+ */
+export function validarBloquesDeTablas(etiqueta: string, texto: string): string[] {
+    const errores: string[] = [];
+    const lineas = texto.split("\n");
+    const esEncabezado = (linea: string) => /^\s*#{4}\s+\S/.test(linea);
+
+    const primero = lineas.findIndex(esEncabezado);
+
+    if (primero === -1) {
+        errores.push(
+            `${etiqueta}: no hay ningún encabezado "#### ". Se espera una tabla por capítulo, ` +
+                `cada una con su título.`
+        );
+        return errores;
+    }
+
+    if (lineas.slice(0, primero).some((l) => l.trim() !== "")) {
+        errores.push(
+            `${etiqueta}: hay texto antes del primer encabezado. Saldría impreso suelto, ` +
+                `fuera de toda tabla.`
+        );
+    }
+
+    // Corte por encabezado: cada bloque es [título, ...filas].
+    const bloques: string[][] = [];
+    for (const linea of lineas.slice(primero)) {
+        if (esEncabezado(linea)) bloques.push([linea]);
+        else bloques[bloques.length - 1].push(linea);
+    }
+
+    for (const bloque of bloques) {
+        const titulo = bloque[0].replace(/^\s*#{4}\s+/, "").trim();
+        const cuerpo = bloque.slice(1).join("\n");
+
+        if (cuerpo.trim() === "") {
+            errores.push(`${etiqueta}: el bloque "${titulo}" no tiene tabla debajo del título.`);
+            continue;
+        }
+
+        errores.push(...validarTablaMarkdown(`${etiqueta} · ${titulo}`, cuerpo));
     }
 
     return errores;

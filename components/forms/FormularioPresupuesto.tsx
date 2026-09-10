@@ -6,6 +6,7 @@ import { SubidorFotos } from "@/components/forms/SubidorFotos";
 import { SubidorDocumentos } from "@/components/forms/SubidorDocumentos";
 import { GrabadorVoz } from "@/components/forms/GrabadorVoz";
 import { getModulos, type ModuloTrabajo } from "@/lib/catalogo";
+import { filtrarSinPrecio } from "@/lib/catalogo/disponibilidad";
 import type { DocumentoAdjunto } from "@/lib/documentos/tipos";
 import { normalizarNombre } from "@/lib/texto";
 import {
@@ -86,7 +87,11 @@ export function FormularioPresupuesto({ subcuenta, comunidades, administradores 
     // el primer render, antes de haber intentado recuperarlo.
     const rehidratado = useRef(false);
 
-    const modulos = useMemo(() => getModulos(subcuenta), [subcuenta]);
+    // `filtrarSinPrecio` esconde las opciones que la tarifa 2026 no sabe valorar.
+    // Si el comercial no las ve, no puede marcarlas, y el 422 al generar deja de
+    // ocurrir. Lo que se salga del catálogo va al nodo "Varios" como texto libre.
+    // Es temporal: en cuanto Miguel decida esas partidas, vuelven solas.
+    const modulos = useMemo(() => getModulos(subcuenta).map(filtrarSinPrecio), [subcuenta]);
 
     // Las dependencias son TODOS los campos. Con el array vacio, `datosActuales`
     // se congela en el primer render y el autoguardado acaba escribiendo el

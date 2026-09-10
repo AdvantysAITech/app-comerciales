@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { esSubcuentaValida } from "@/lib/subcuenta";
 import { saFetch } from "@/lib/ghl/client";
+import { obtenerComunidad } from "@/lib/ghl/comunidades";
+import { obtenerAdministrador } from "@/lib/ghl/administradores";
 import type { PayloadVisita } from "@/lib/visita/payload";
 import { auditarPayload, presupuestar, RutasSinMapearError } from "@/lib/documentos/mapeo-capitulos";
 import type { PresupuestoCalculado } from "@/lib/documentos/motor";
@@ -208,12 +210,84 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        // --- Datos que todavía no se capturan -------------------------------
-        // Localidad y provincia deberían vivir en la ficha de comunidad de GHL.
-        // Mientras no existan esos campos, se marcan visiblemente en lugar de
-        // dejarlos en blanco: un hueco pasa desapercibido, "(pendiente)" no.
-        const marcador = "(pendiente)";
-        avisos.push("Localidad y provincia no se capturan todavía: revísalas antes de enviar.");
+        // --- Localidad y provincia -------------------------------------------
+        // Antes se enviaba el literal "(pendiente)" porque los campos no
+        // existían en GHL. Existen desde el 31/08/2026 en Comunidades y desde el
+        // 09/09/2026 en Administradores, así que se leen de la ficha.
+        //
+        // Se lee AQUÍ y no del payload de la visita a propósito: así funciona
+        // también con las visitas ya capturadas. Congelar el dato en el payload
+        // habría obligado a recapturar toda visita anterior a este cambio.
+        //
+        // Si falta, se corta. Un presupuesto es precontractual y la localidad va
+        // en la línea de firma ("En ______, a 16/09/2026"): un hueco ahí llega
+        // firmado al administrador sin que nadie lo note. El mensaje dice qué
+        // ficha y qué campo, para que sea accionable sin abrir un ticket.
+        const faltan: string[] = [];
+
+        if (!payload.comunidad.id) {
+            faltan.push(
+                `La visita no tiene la comunidad enlazada en el Sistema Advantys. ` +
+                    `Sin ficha no hay localidad ni provincia.`
+            );
+        }
+        if (!payload.administrador.id) {
+            faltan.push(`La visita no tiene el administrador enlazado en el Sistema Advantys.`);
+        }
+        if (faltan.length > 0) {
+            return NextResponse.json(
+                { error: faltan.join("\n"), errores: faltan },
+                { status: 422 }
+            );
+        }
+
+        const [comunidad, administrador] = await Promise.all([
+            obtenerComunidad(subcuenta, payload.comunidad.id!),
+            obtenerAdministrador(subcuenta, payload.administrador.id!),
+        ]);
+
+        if (!comunidad) {
+            faltan.push(
+                `No existe la ficha de comunidad ${payload.comunidad.id} en el Sistema Advantys.`
+            );
+        }
+        if (!administrador) {
+            faltan.push(
+                `No existe la ficha de administrador ${payload.administrador.id} en el Sistema Advantys.`
+            );
+        }
+
+        // GHL omite las propiedades vacías, así que `undefined` aquí significa
+        // "el campo está en blanco en esa ficha", no "el campo no existe".
+        const nombreComunidad = comunidad?.nombreDireccion ?? payload.comunidad.nombre;
+        const nombreAdministrador =
+            administrador?.nombreDespacho ?? payload.administrador.nombre ?? "el administrador";
+
+        if (comunidad && !comunidad.localidad) {
+            faltan.push(`La comunidad "${nombreComunidad}" no tiene Localidad rellena en su ficha.`);
+        }
+        if (comunidad && !comunidad.provincia) {
+            faltan.push(`La comunidad "${nombreComunidad}" no tiene Provincia rellena en su ficha.`);
+        }
+        if (administrador && !administrador.localidad) {
+            faltan.push(
+                `El administrador "${nombreAdministrador}" no tiene Localidad rellena en su ficha.`
+            );
+        }
+
+        if (faltan.length > 0) {
+            return NextResponse.json(
+                {
+                    error:
+                        `Faltan datos de la ficha para poder emitir el presupuesto ` +
+                        `(${faltan.length}):\n\n` +
+                        faltan.map((f) => `  · ${f}`).join("\n") +
+                        `\n\nRellénalos en el Sistema Advantys y vuelve a generar.`,
+                    errores: faltan,
+                },
+                { status: 422 }
+            );
+        }
 
         const version = cuerpo.version ?? 1;
 
@@ -223,9 +297,9 @@ export async function POST(request: NextRequest) {
 
         const preparado = prepararDocumento(payload, {
             numeroReferencia,
-            comunidadLocalidad: marcador,
-            comunidadProvincia: marcador,
-            administradorLocalidad: marcador,
+            comunidadLocalidad: comunidad!.localidad!,
+            comunidadProvincia: comunidad!.provincia!,
+            administradorLocalidad: administrador!.localidad!,
             presupuesto,
         });
 
