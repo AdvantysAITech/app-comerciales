@@ -8,7 +8,10 @@ import {
     type NodoCatalogo,
 } from "@/lib/catalogo";
 import { SUBRUTAS_SIN_PRECIO } from "@/lib/catalogo/disponibilidad";
+import { codigoDeRutaBuscador, unidadFormularioDeTarifa } from "@/lib/catalogo/buscador";
+import { CAPITULOS_INDICE, PARTIDAS_INDICE } from "@/lib/catalogo/indiceTarifa.generado";
 import {
+    catalogo as catalogoTarifa,
     obtenerPartida,
     UNIDADES_SELECCIONABLES,
     type PartidaTarifa,
@@ -542,8 +545,8 @@ export const MAPA_SUBRUTAS: Record<string, MapeoPartida> = {
         nota:
             "AMI003, retirada de tuberías de fibrocemento de saneamiento por empresa RERA " +
             "(40,24 €/m). Solo Scala: Vertical Projects no tiene licencia (DERCAS §4.1). " +
-            "El presupuesto debería arrastrar también AMI008 (plan de trabajo) y AMI007 " +
-            "(transporte a vertedero), que hoy no se capturan.",
+            "AMI008 (plan de trabajo) y AMI007 (transporte) se capturan desde el 15/09/2026 " +
+            "en Gestión de residuos; la alerta del nodo pide al comercial que lo añada.",
     },
     "interior.retirada.fibrocemento.normal": {
         codigo: "AMI003",
@@ -596,6 +599,38 @@ export const MAPA_SUBRUTAS: Record<string, MapeoPartida> = {
         estado: "propuesto",
         nota: "INS004, bajante de PVC serie B D=110 mm (49,18 €/m).",
     },
+
+    // --- Gestión de residuos (15/09/2026) -----------------------------------
+    // Cada hoja se creó a partir de una partida literal de la tarifa, así que la
+    // equivalencia es "confirmado". Lo que queda por validar con Miguel es la
+    // composición del módulo (TODO en modulos.ts), no estos códigos.
+    "escombro.contenedor.contenedor_5m3": { codigo: "RCD002", estado: "confirmado" },
+    "escombro.contenedor.contenedor_7m3": { codigo: "RCD001", estado: "confirmado" },
+    "escombro.contenedor.contenedor_12m3": { codigo: "RCD003", estado: "confirmado" },
+    "escombro.carga_sacos": { codigo: "RCD005", estado: "confirmado" },
+    "escombro.clasificacion": { codigo: "RCD004", estado: "confirmado" },
+    "escombro.transporte_vertedero": { codigo: "RCD006", estado: "confirmado" },
+    "escombro.canon_vertedero": { codigo: "RCD007", estado: "confirmado" },
+    "escombro.residuos_peligrosos": { codigo: "RCD008", estado: "confirmado" },
+    "amianto.placas_cubierta": { codigo: "AMI002", estado: "confirmado" },
+    "amianto.paneles_fachada": { codigo: "AMI005", estado: "confirmado" },
+    "amianto.calorifugado_tuberias": { codigo: "AMI004", estado: "confirmado" },
+    "amianto.encapsulamiento": {
+        codigo: "AMI006",
+        estado: "propuesto",
+        nota:
+            "AMI006 es encapsulamiento de amianto no friable en TECHOS (27,50 €/m²). El formulario no " +
+            "distingue el elemento: si se encapsula una fachada o una cubierta, el precio puede no servir.",
+    },
+    "amianto.transporte_amianto": { codigo: "AMI007", estado: "confirmado" },
+    "planes.plan_gestion_residuos": { codigo: "RCD009", estado: "confirmado" },
+    "planes.plan_trabajo_amianto": { codigo: "AMI008", estado: "confirmado" },
+    "planes.mediciones_higienicas": { codigo: "AMI009", estado: "confirmado" },
+
+    // --- Documentación (15/09/2026) -----------------------------------------
+    "seguridad_salud.estudio_basico": { codigo: "SSO001", estado: "confirmado" },
+    "seguridad_salud.plan_seguridad": { codigo: "SSO002", estado: "confirmado" },
+    "seguridad_salud.coordinacion": { codigo: "SSO003", estado: "confirmado" },
 };
 
 /**
@@ -646,6 +681,17 @@ export function esRutaTextoLibre(ruta: string, subcuenta: Subcuenta = "scala-val
 // ---------------------------------------------------------------------------
 
 export function mapearRuta(ruta: string): MapeoPartida | undefined {
+    // Buscador de Varios: la hoja ya ES la partida de tarifa (la clave lleva el
+    // código). No pasa por MAPA_SUBRUTAS: serían 199 entradas que repiten lo
+    // que dice la propia ruta. Si el código no existe en la tarifa, se devuelve
+    // undefined y `auditarPayload` bloquea como ruta desconocida.
+    const codigoBuscador = codigoDeRutaBuscador(ruta);
+    if (codigoBuscador) {
+        return obtenerPartida(codigoBuscador)
+            ? { codigo: codigoBuscador, estado: "confirmado" }
+            : undefined;
+    }
+
     const modulo = moduloDeRuta(ruta);
     const subruta = canonizarSubruta(subrutaDe(ruta));
     return EXCEPCIONES_MODULO[modulo]?.[subruta] ?? MAPA_SUBRUTAS[subruta];
@@ -1064,6 +1110,51 @@ export function validarMapeo(): string[] {
                 `${subruta}: está oculta en el formulario pero SÍ tiene partida de tarifa. ` +
                     `Bórrala de SUBRUTAS_SIN_PRECIO: se está perdiendo trabajo presupuestable.`
             );
+        }
+    }
+
+    // --- Índice del buscador de Varios --------------------------------------
+    //
+    // `lib/catalogo/indiceTarifa.generado.ts` es una copia ligera de la tarifa
+    // para no meter el JSON completo en el bundle del formulario. Si la tarifa
+    // cambia y nadie regenera el índice, el comercial buscaría partidas que ya
+    // no existen o no encontraría las nuevas.
+    fallos.push(...validarIndiceBuscador());
+
+    return fallos;
+}
+
+/** Compara el índice del buscador con la tarifa. Vacío si coinciden. */
+export function validarIndiceBuscador(): string[] {
+    const fallos: string[] = [];
+    const regenerar = "Ejecuta `npm run buscador:indice`.";
+
+    if (PARTIDAS_INDICE.length !== catalogoTarifa.partidas.length) {
+        fallos.push(
+            `Índice del buscador: ${PARTIDAS_INDICE.length} partidas y la tarifa tiene ` +
+                `${catalogoTarifa.partidas.length}. ${regenerar}`
+        );
+    }
+    if (CAPITULOS_INDICE.length !== catalogoTarifa.capitulos.length) {
+        fallos.push(
+            `Índice del buscador: ${CAPITULOS_INDICE.length} capítulos y la tarifa tiene ` +
+                `${catalogoTarifa.capitulos.length}. ${regenerar}`
+        );
+    }
+
+    for (const p of PARTIDAS_INDICE) {
+        const real = obtenerPartida(p.codigo);
+        if (!real) {
+            fallos.push(`Índice del buscador: ${p.codigo} no existe en la tarifa. ${regenerar}`);
+            continue;
+        }
+        if (real.descripcionCorta !== p.descripcion || real.unidad !== p.unidad || real.capitulo !== p.capitulo) {
+            fallos.push(`Índice del buscador: ${p.codigo} difiere de la tarifa. ${regenerar}`);
+        }
+        try {
+            unidadFormularioDeTarifa(p.unidad);
+        } catch (error) {
+            fallos.push(error instanceof Error ? error.message : String(error));
         }
     }
 

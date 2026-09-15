@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SelectorArbol } from "@/components/forms/SelectorArbol";
+import { BuscadorPartidas } from "@/components/forms/BuscadorPartidas";
 import { SubidorFotos } from "@/components/forms/SubidorFotos";
 import { SubidorDocumentos } from "@/components/forms/SubidorDocumentos";
 import { GrabadorVoz } from "@/components/forms/GrabadorVoz";
@@ -528,6 +529,13 @@ export function FormularioPresupuesto({ subcuenta, comunidades, administradores 
 
                             {modulo.captura === "arbol" ? (
                                 <SelectorArbol
+                                    subcuenta={subcuenta}
+                                    modulo={modulo}
+                                    seleccion={seleccion}
+                                    onSeleccionChange={setSeleccion}
+                                />
+                            ) : modulo.captura === "buscador" ? (
+                                <BuscadorPartidas
                                     subcuenta={subcuenta}
                                     modulo={modulo}
                                     seleccion={seleccion}

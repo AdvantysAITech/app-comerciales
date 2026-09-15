@@ -9,14 +9,29 @@
  * concreto, así que nunca hay que tocarlo para ampliar el catálogo.
  */
 
-/** Unidades de medición admitidas por partida. */
-export type Unidad = "m2" | "ml" | "ud" | "pa";
+/**
+ * Unidades de medición admitidas por partida.
+ *
+ * `m3`, `kg`, `h`, `dia` y `mes` entran el 15/09/2026 con los módulos de
+ * Gestión de residuos, Documentación y Varios: la tarifa mide en ellas (canon
+ * de vertedero en m³, residuos peligrosos en kg, coordinación de seguridad en h)
+ * y el comercial tiene que ver la misma unidad con la que se va a valorar.
+ *
+ * Es solo la etiqueta del formulario: el motor calcula siempre con la unidad
+ * nativa de la partida de tarifa.
+ */
+export type Unidad = "m2" | "ml" | "ud" | "pa" | "m3" | "kg" | "h" | "dia" | "mes";
 
 export const ETIQUETA_UNIDAD: Record<Unidad, string> = {
     m2: "m²",
     ml: "ml",
     ud: "ud",
     pa: "partida alzada",
+    m3: "m³",
+    kg: "kg",
+    h: "h",
+    dia: "día",
+    mes: "mes",
 };
 
 /** Modelos de negocio del DERCAS §4.1. Se conservan para no romper el reporting. */
@@ -59,6 +74,13 @@ export type TipoCaptura =
     | "arbol"
     /** Importación de documentos del arquitecto (Excel / BC3 / PDF). Ver B6. */
     | "importacion"
+    /**
+     * Buscador sobre la tarifa. La estructura sigue siendo un árbol (capítulo ->
+     * partida) para que selección, payload y mapeo funcionen igual que en
+     * `arbol`; lo que cambia es cómo se pinta: un campo de búsqueda en lugar de
+     * 199 casillas. Ver lib/catalogo/buscador.ts.
+     */
+    | "buscador"
     /** Módulo sin estructura definida todavía: texto libre + partidas manuales + adjuntos. */
     | "libre";
 

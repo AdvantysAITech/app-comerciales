@@ -11,6 +11,7 @@ import {
     pinturaFachada,
     varios,
 } from "./estructuras";
+import { estructuraBuscador } from "./buscador";
 
 /**
  * Los 12 módulos de trabajo (apartado 2 del brief del cliente).
@@ -199,7 +200,8 @@ function estructuraBajantes(): NodoCatalogo[] {
                         // El fibrocemento con documentación es amianto: requiere licencia
                         // que Vertical Projects no tiene (DERCAS §4.1 y §5.4).
                         alerta:
-                            "Trabajo con amianto: requiere licencia y gestión documental de residuos.",
+                            "Trabajo con amianto: requiere licencia RERA. Añade el módulo Gestión de " +
+                            "residuos para el plan de trabajo y el transporte de los residuos.",
                     },
                     { key: "normal", label: "Normal", medicion: { unidad: "ml" } },
                 ],
@@ -249,6 +251,104 @@ function estructuraBajantes(): NodoCatalogo[] {
                 },
             ],
         },
+    ];
+}
+
+/**
+ * 10. Gestión de residuos.
+ *
+ * Decisión del cliente (17/08/2026): la retirada de amianto vive en este módulo,
+ * no como modelo de negocio propio. La estructura de agosto se perdió al
+ * resolver el merge del 26/08 (commit 1259308) y se reconstruye aquí sobre la
+ * tarifa 2026, que entonces no existía: cada hoja es una partida literal de los
+ * capítulos 1.10 (RCD) y 1.07 (amianto). Mapeo en `mapeo-capitulos.ts`.
+ *
+ * Las bajantes de fibrocemento NO están aquí: se capturan en Bajantes (AMI003).
+ * El motor suma las cantidades del mismo código, así que tenerlas en los dos
+ * módulos las cobraría dos veces.
+ *
+ * Marcar "Amianto" activa la alerta y, con ella, el mínimo de 3 fotos del
+ * módulo (MINIMO_FOTOS_CON_ALERTA en el formulario, DERCAS §6.2). Una visita que
+ * solo lleva escombro no exige fotos.
+ *
+ * TODO(validar): composición propuesta por Advantys (15/09/2026). Los esquemas
+ * manuscritos no desarrollan este módulo. Pendiente de Miguel.
+ */
+function estructuraGestionResiduos(): NodoCatalogo[] {
+    return [
+        {
+            key: "escombro",
+            label: "Escombro y RCD",
+            hijos: [
+                {
+                    key: "contenedor",
+                    label: "Contenedor",
+                    hijos: [
+                        { key: "contenedor_5m3", label: "Contenedor 5 m³", medicion: { unidad: "ud" } },
+                        { key: "contenedor_7m3", label: "Contenedor 7 m³", medicion: { unidad: "ud" } },
+                        { key: "contenedor_12m3", label: "Contenedor 12 m³", medicion: { unidad: "ud" } },
+                    ],
+                },
+                { key: "carga_sacos", label: "Carga manual en sacos", medicion: { unidad: "m3" } },
+                { key: "clasificacion", label: "Clasificación de residuos en obra", medicion: { unidad: "m3" } },
+                { key: "transporte_vertedero", label: "Transporte a vertedero", medicion: { unidad: "m3" } },
+                { key: "canon_vertedero", label: "Canon de vertedero", medicion: { unidad: "m3" } },
+                { key: "residuos_peligrosos", label: "Residuos peligrosos (envases)", medicion: { unidad: "kg" } },
+            ],
+        },
+        {
+            key: "amianto",
+            label: "Amianto / fibrocemento",
+            alerta:
+                "Amianto: solo lo ejecuta Scala Valencia con empresa RERA. Añade el plan de trabajo en " +
+                "Planes y controles y mínimo 3 fotos. Las bajantes de fibrocemento se marcan en Bajantes.",
+            hijos: [
+                { key: "placas_cubierta", label: "Placas de fibrocemento en cubierta", medicion: { unidad: "m2" } },
+                { key: "paneles_fachada", label: "Paneles de fibrocemento en fachada", medicion: { unidad: "m2" } },
+                { key: "calorifugado_tuberias", label: "Calorifugado de tuberías", medicion: { unidad: "ml" } },
+                { key: "encapsulamiento", label: "Encapsulamiento (no friable)", medicion: { unidad: "m2" } },
+                { key: "transporte_amianto", label: "Transporte de residuos de amianto", medicion: { unidad: "m3" } },
+            ],
+        },
+        {
+            key: "planes",
+            label: "Planes y controles",
+            hijos: [
+                { key: "plan_gestion_residuos", label: "Plan de gestión de residuos", medicion: { unidad: "ud" } },
+                { key: "plan_trabajo_amianto", label: "Plan de trabajo de amianto", medicion: { unidad: "ud" } },
+                { key: "mediciones_higienicas", label: "Mediciones higiénicas de aire", medicion: { unidad: "ud" } },
+            ],
+        },
+        varios(),
+    ];
+}
+
+/**
+ * 11. Documentación.
+ *
+ * El cliente no definió este módulo. Se interpreta como la documentación técnica
+ * que se presupuesta: capítulo 1.09 de la tarifa. Lo que no esté ahí (licencias,
+ * certificados a aportar...) va al texto libre, que no bloquea y sale como
+ * aviso al generar.
+ *
+ * El plan de gestión de residuos y el de trabajo de amianto están en Gestión de
+ * residuos, junto a los trabajos que los exigen: un mismo código en dos módulos
+ * se cobraría dos veces.
+ *
+ * TODO(validar): interpretación de Advantys (15/09/2026). Pendiente de Miguel.
+ */
+function estructuraDocumentacion(): NodoCatalogo[] {
+    return [
+        {
+            key: "seguridad_salud",
+            label: "Seguridad y salud",
+            hijos: [
+                { key: "estudio_basico", label: "Estudio básico de seguridad y salud", medicion: { unidad: "ud" } },
+                { key: "plan_seguridad", label: "Plan de seguridad y salud", medicion: { unidad: "ud" } },
+                { key: "coordinacion", label: "Coordinación de seguridad y salud en obra", medicion: { unidad: "h" } },
+            ],
+        },
+        { key: "otra_documentacion", label: "Otra documentación", permiteTextoLibre: true },
     ];
 }
 
@@ -331,28 +431,31 @@ export const MODULOS: ModuloTrabajo[] = [
         key: "gestion_de_residuos",
         label: "Gestión de residuos",
         orden: 10,
-        captura: "libre",
-        estructura: [],
+        captura: "arbol",
+        estructura: estructuraGestionResiduos(),
+        // null y no "retirada_amianto": el módulo acompaña casi siempre a otro
+        // (fachada + escombro) y con un modelo propio `modeloNegocioComun` dejaría
+        // vacío el campo de GHL en todas esas oportunidades.
         modeloNegocioDercas: null,
         notaInterna:
-            "Sin estructura definida. Pendiente decidir si absorbe la retirada de amianto (DERCAS §4.1) y si dispara la derivación Vertical -> Escala (§5.4).",
+            "Absorbe la retirada de amianto (decisión del cliente, 17/08/2026). La derivación Vertical -> Escala (DERCAS §5.4) sigue sin automatizar.",
     },
     {
         key: "documentacion",
         label: "Documentación",
         orden: 11,
-        captura: "libre",
-        estructura: [],
+        captura: "arbol",
+        estructura: estructuraDocumentacion(),
         modeloNegocioDercas: null,
-        notaInterna: "Sin estructura definida por el cliente.",
+        notaInterna: "Documentación técnica presupuestable (cap. 1.09). Interpretación de Advantys, pendiente de Miguel.",
     },
     {
         key: "varios",
         label: "Varios",
         orden: 12,
-        captura: "libre",
-        estructura: [],
+        captura: "buscador",
+        estructura: estructuraBuscador(),
         modeloNegocioDercas: null,
-        notaInterna: "Sin estructura definida por el cliente.",
+        notaInterna: "Buscador sobre la tarifa completa, como pide el esquema de fachadas. Ver lib/catalogo/buscador.ts.",
     },
 ];
