@@ -44,3 +44,7 @@ next-env.d.ts
 .env*
 
 resultado-TEST-*.odt
+
+# Artefactos de scripts de prueba y variables locales
+/salida/
+/vars.ps1
