@@ -25,6 +25,17 @@
  *
  * El contrato es una sola función. Cambiar a otro proveedor es reescribir
  * `convertirAPdf` y nada más: ni las rutas ni el resto del pipeline lo saben.
+ *
+ * ---------------------------------------------------------------------------
+ * AUTENTICACIÓN (añadido 14/09/2026)
+ * ---------------------------------------------------------------------------
+ * Gotenberg no tiene autenticación propia: cualquiera que alcance el puerto
+ * puede convertir documentos. Nuestra instancia (gotenberg.advantys.ai, EC2
+ * eu-north-1) está detrás de un Caddy que exige basic auth, así que toda
+ * petición debe llevar cabecera Authorization o responde 401.
+ *
+ * Credenciales en GOTENBERG_USER / GOTENBERG_PASSWORD, en texto plano: el
+ * hash bcrypt vive en el Caddyfile del servidor y solo sirve para verificar.
  */
 
 /** Extensión y tipo del resultado, para quien tenga que nombrarlo o subirlo. */
@@ -46,6 +57,23 @@ function urlServicio(): string {
         );
     }
     return url.replace(/\/+$/, "");
+}
+
+/**
+ * Cabecera de autenticación del servicio.
+ *
+ * Devuelve un objeto vacío si no hay credenciales configuradas: así el módulo
+ * sigue funcionando contra una instancia sin proteger (desarrollo local con
+ * Gotenberg en Docker, por ejemplo) sin necesidad de tocar código.
+ */
+function cabeceras(): Record<string, string> {
+    const usuario = process.env.GOTENBERG_USER?.trim();
+    const password = process.env.GOTENBERG_PASSWORD;
+
+    if (!usuario || !password) return {};
+
+    const credencial = Buffer.from(`${usuario}:${password}`).toString("base64");
+    return { Authorization: `Basic ${credencial}` };
 }
 
 /** Si el servicio está configurado. Para decidir sin provocar una excepción. */
@@ -83,6 +111,7 @@ export async function convertirAPdf(odt: ArrayBuffer, nombre: string): Promise<A
     try {
         respuesta = await fetch(`${base}/forms/libreoffice/convert`, {
             method: "POST",
+            headers: cabeceras(),
             // OBLIGATORIO. El fetch parcheado de Next.js corrompe el stream
             // binario del FormData al intentar cachear la petición. Mismo
             // motivo que en Soluciona y en GHL Media Storage.
@@ -98,6 +127,16 @@ export async function convertirAPdf(odt: ArrayBuffer, nombre: string): Promise<A
         throw new ConversionPdfError(`No se ha podido contactar con el servicio de conversión: ${motivo}`);
     } finally {
         clearTimeout(temporizador);
+    }
+
+    // El 401 se distingue del resto: no es un problema del documento sino de
+    // configuración, y el mensaje genérico manda a mirar donde no es.
+    if (respuesta.status === 401) {
+        throw new ConversionPdfError(
+            "El servicio de conversión rechazó las credenciales (401). Revisa GOTENBERG_USER y " +
+                "GOTENBERG_PASSWORD en .env.local y en las variables de entorno de Vercel. " +
+                "La contraseña va en texto plano, no el hash del Caddyfile."
+        );
     }
 
     if (!respuesta.ok) {
