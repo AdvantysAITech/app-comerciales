@@ -1,8 +1,10 @@
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { lookup } from "node:dns/promises";
 import { zipSync } from "fflate";
 import { auth } from "@/auth";
 import { convertirAPdf } from "@/lib/documentos/pdf";
+import { leerRegistro } from "@/lib/documentos/estado";
+import { esSubcuentaValida } from "@/lib/subcuenta";
 
 /**
  * GET /api/diagnostico/gotenberg
@@ -19,6 +21,9 @@ import { convertirAPdf } from "@/lib/documentos/pdf";
  *
  * Solo dirección. No devuelve contraseñas: solo si existen y si tienen algo
  * raro (espacios o comillas pegadas al copiar).
+ *
+ * Con `?oportunidad=<id>` devuelve el registro del documento de esa oportunidad:
+ * estado, formato y avisos del cierre.
  *
  * Temporal: se borra en cuanto la conversión funcione en producción.
  */
@@ -68,10 +73,28 @@ function inspeccionar(valor: string | undefined): string {
     return `presente (${valor.length} caracteres)${avisos.length ? ` · OJO: ${avisos.join(", ")}` : ""}`;
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
     const session = await auth();
     if (!session?.user || session.user.rol !== "direccion") {
         return NextResponse.json({ error: "Solo dirección" }, { status: 403 });
+    }
+
+    // ?oportunidad=<id>: devuelve el registro del documento, con el formato y los
+    // avisos del cierre (p. ej. por qué salió en ODT). No toca el servidor.
+    const oportunidad = request.nextUrl.searchParams.get("oportunidad")?.trim();
+    if (oportunidad) {
+        const subcuenta = session.user.subcuenta;
+        if (!subcuenta || !esSubcuentaValida(subcuenta)) {
+            return NextResponse.json({ error: "Sesión sin subcuenta" }, { status: 400 });
+        }
+        try {
+            return NextResponse.json({ oportunidad, registro: await leerRegistro(subcuenta, oportunidad) });
+        } catch (error) {
+            return NextResponse.json(
+                { oportunidad, error: error instanceof Error ? error.message : String(error) },
+                { status: 500 }
+            );
+        }
     }
 
     const pasos: Paso[] = [];

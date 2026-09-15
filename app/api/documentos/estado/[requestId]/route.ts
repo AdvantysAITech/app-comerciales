@@ -38,6 +38,13 @@ import { convertirAPdf, conversionDisponible, MIMETYPE_PDF, nombrePdf } from "@/
 // no cabe en 10 s.
 export const maxDuration = 60;
 
+/**
+ * Tiempo a partir del cual un registro en `recibido`/`validado` se da por
+ * abandonado. Por encima de `maxDuration`: si la invocación que cierra sigue
+ * viva, a los 60 s la plataforma ya la habría cortado.
+ */
+const CIERRE_ABANDONADO_MS = 90_000;
+
 // El rasterizador es un binario nativo: no se puede empaquetar en el bundle.
 export const runtime = "nodejs";
 
@@ -202,6 +209,43 @@ export async function GET(
             return NextResponse.json({ error: "No hay registro para esta oportunidad." }, { status: 404 });
         }
 
+        // --- Idempotencia (15/09/2026) ---------------------------------------
+        // El cierre solo lo hace UNA consulta: la primera que encuentra el
+        // registro en `solicitado` o `generando`. Antes, cualquier consulta
+        // posterior (otra pestaña, la ficha reabierta, un reintento del móvil)
+        // intentaba repetirlo, chocaba con la máquina de estados
+        // ("publicado -> recibido") y respondía 500. Visto en producción:
+        // 6 lecturas, ninguna escritura, 500 en 800 ms.
+        const respuestaActual = () =>
+            NextResponse.json({
+                requestId,
+                estado: registro.estado,
+                urlDocumento: registro.urlDocumento,
+                tokens: registro.tokens,
+                formato: registro.formato,
+                errores: registro.errores,
+            });
+
+        // Consulta de una versión anterior: se informa del estado vigente.
+        if (registro.requestId !== requestId) return respuestaActual();
+
+        if (registro.estado === "publicado" || registro.estado === "fallido") return respuestaActual();
+
+        if (registro.estado === "recibido" || registro.estado === "validado") {
+            // Otra invocación está cerrando. Si lleva demasiado, murió a medias
+            // (p. ej. límite de tiempo de la función): se cierra como fallido
+            // para que la ficha permita volver a generar.
+            const antiguedadMs = Date.now() - new Date(registro.actualizadoEn).getTime();
+            if (antiguedadMs < CIERRE_ABANDONADO_MS) {
+                return NextResponse.json({ requestId, estado: "generando" });
+            }
+
+            const motivo = `Cierre interrumpido: el registro lleva ${Math.round(antiguedadMs / 1000)} s en "${registro.estado}".`;
+            console.error(`[documentos] ${requestId}: ${motivo}`);
+            await escribirRegistro(subcuenta, oportunidadId, { ...registro, estado: "fallido", errores: [motivo] });
+            return NextResponse.json({ requestId, estado: "fallido", errores: [motivo] });
+        }
+
         const avisos: string[] = [];
 
         const base = {
@@ -356,10 +400,13 @@ export async function GET(
                 avisos.push(`Publicado pero NO adjuntado a la oportunidad en GHL: ${motivo}`);
             }
 
+            const formato = mimetype === MIMETYPE_PDF ? "pdf" : "odt";
             const publicado = await escribirRegistro(subcuenta, oportunidadId, {
                 ...validado,
                 estado: "publicado",
                 urlDocumento: subido.url,
+                formato,
+                avisos: avisos.length > 0 ? avisos : undefined,
             });
 
             registrarAvisos(requestId, avisos);
@@ -370,7 +417,7 @@ export async function GET(
                 urlDocumento: publicado.urlDocumento,
                 tokens: publicado.tokens,
                 conPortada,
-                formato: mimetype === MIMETYPE_PDF ? "pdf" : "odt",
+                formato,
                 avisos,
             });
         } catch (error) {
