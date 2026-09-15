@@ -268,6 +268,69 @@ export function inyectarPortada(contentXml: string): string {
 }
 
 /**
+ * Quita el reinicio de numeración del primer párrafo que sigue a la portada.
+ *
+ * ---------------------------------------------------------------------------
+ * POR QUÉ
+ * ---------------------------------------------------------------------------
+ * La plantilla abre el cuerpo con un párrafo que cambia a la página "Standard"
+ * y además reinicia la numeración: `style:page-number="1"`. La portada ya es la
+ * página 1 (impar). Para que la nueva "página 1" también caiga en impar,
+ * LibreOffice inserta una página en blanco automática entre las dos.
+ *
+ * En LibreOffice de escritorio no se ve (la vista normal oculta esas páginas),
+ * pero Gotenberg SÍ las exporta al PDF: la página 2 salía en blanco en todos
+ * los presupuestos. Reproducido y verificado el 15/09/2026 con el ODT de
+ * `salida/e2e`: con el atributo, 8 páginas y la 2 vacía; sin él, 7 páginas.
+ *
+ * Quitarlo no cambia nada visible: la plantilla no imprime números de página.
+ * Si algún día se añade "Página X", el cuerpo empezará en la 2. Para numerar
+ * desde 1 tras la portada NO se debe volver a poner el reinicio aquí (vuelve
+ * la página en blanco): hay que usar un desplazamiento en el campo de número.
+ *
+ * ---------------------------------------------------------------------------
+ * POR QUÉ AQUÍ Y NO EN LA PLANTILLA
+ * ---------------------------------------------------------------------------
+ * La plantilla no se puede abrir en un editor sin partir los markerkeys. Y
+ * haciéndolo en el post-proceso cubre también las plantillas futuras (Vertical).
+ *
+ * Solo toca el estilo de ESE párrafo, y solo si es lo siguiente a la portada.
+ * Si la estructura no es la esperada, devuelve el XML intacto: en el peor caso
+ * vuelve la página en blanco, nunca se rompe el documento.
+ */
+export function quitarReinicioNumeracionTrasPortada(contentXml: string): string {
+    const marco = contentXml.indexOf(`draw:name="Portada"`);
+    if (marco === -1) return contentXml;
+
+    const cierrePortada = contentXml.indexOf("</text:p>", marco);
+    if (cierrePortada === -1) return contentXml;
+
+    // Lo inmediatamente siguiente tiene que ser un párrafo o encabezado. Se
+    // toleran saltos de página blandos, que LibreOffice intercala al guardar.
+    const tras = contentXml.slice(cierrePortada + "</text:p>".length);
+    const siguiente = /^(?:\s|<text:soft-page-break\/>)*<text:(?:p|h)\b[^>]*?\btext:style-name="([^"]+)"/.exec(tras);
+    if (!siguiente) return contentXml;
+
+    const nombre = siguiente[1];
+    const escapado = nombre.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const apertura = new RegExp(`<style:style\\b[^>]*\\bstyle:name="${escapado}"[^>]*>`).exec(contentXml);
+    if (!apertura) return contentXml;
+
+    // Estilo autocerrado: no tiene propiedades de párrafo, no hay nada que quitar.
+    if (apertura[0].endsWith("/>")) return contentXml;
+
+    const inicio = apertura.index;
+    const fin = contentXml.indexOf("</style:style>", inicio);
+    if (fin === -1) return contentXml;
+
+    const estilo = contentXml.slice(inicio, fin);
+    const limpio = estilo.replace(/\s+style:page-number="[^"]*"/g, "");
+    if (limpio === estilo) return contentXml;
+
+    return contentXml.slice(0, inicio) + limpio + contentXml.slice(fin);
+}
+
+/**
  * Quita el párrafo del marcador sin poner nada en su sitio.
  *
  * Es la vía de degradación: si la portada no se ha podido renderizar, el
@@ -382,6 +445,10 @@ export function postprocesarOdt(odt: ArrayBuffer, opciones: OpcionesPostproceso 
 
     if (png && png.byteLength > 0) {
         contentXml = inyectarPortada(contentXml);
+
+        // Sin esto, Gotenberg exporta una página en blanco entre la portada y
+        // el cuerpo. Ver `quitarReinicioNumeracionTrasPortada`.
+        contentXml = quitarReinicioNumeracionTrasPortada(contentXml);
 
         const manifiesto = entradas["META-INF/manifest.xml"];
         if (!manifiesto) {

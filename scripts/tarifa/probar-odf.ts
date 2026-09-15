@@ -10,6 +10,7 @@ import {
     eliminarMarcadorPortada,
     inyectarPortada,
     postprocesarOdt,
+    quitarReinicioNumeracionTrasPortada,
 } from "../../lib/documentos/odf";
 import { MARCADOR_DESGLOSE } from "../../lib/documentos/odf";
 
@@ -276,6 +277,51 @@ check(
     !decodificar(entradasSin["META-INF/manifest.xml"]).includes(RUTA_PORTADA)
 );
 check("las tablas siguen estiladas", decodificar(entradasSin["content.xml"]).includes('table:style-name="AITabla"'));
+
+console.log("\n== Página en blanco tras la portada ==");
+{
+    // Reproduce la estructura real de la plantilla: el primer párrafo del cuerpo
+    // cambia a la página "Standard" y reinicia la numeración. Con portada, eso
+    // hace que LibreOffice inserte una página en blanco y Gotenberg la exporte.
+    const estiloP6 =
+        `<style:style style:name="P6" style:family="paragraph" style:parent-style-name="Standard" ` +
+        `style:master-page-name="Standard"><style:paragraph-properties fo:margin-top="0in" ` +
+        `style:page-number="1"/></style:style>`;
+    // Mismo prefijo de nombre: no debe tocarse.
+    const estiloP60 =
+        `<style:style style:name="P60" style:family="paragraph" style:master-page-name="Standard">` +
+        `<style:paragraph-properties style:page-number="1"/></style:style>`;
+    const portada =
+        `<text:p text:style-name="AIPortada"><draw:frame draw:name="Portada"><draw:image/></draw:frame></text:p>`;
+    const xml = (cuerpo: string) =>
+        `<office:automatic-styles>${estiloP6}${estiloP60}</office:automatic-styles>` +
+        `<office:body><office:text>${cuerpo}<text:p text:style-name="P60">otro</text:p></office:text></office:body>`;
+
+    const conPortada = xml(`${portada}<text:p text:style-name="P6"/>`);
+    const corregido = quitarReinicioNumeracionTrasPortada(conPortada);
+    const p6 = corregido.slice(corregido.indexOf('style:name="P6"'), corregido.indexOf('style:name="P60"'));
+
+    check("quita el reinicio del párrafo que sigue a la portada", !p6.includes("style:page-number"));
+    check("conserva el cambio de página Standard", p6.includes('style:master-page-name="Standard"'));
+    check("conserva el resto de propiedades", p6.includes('fo:margin-top="0in"'));
+    check("no toca otro estilo con el mismo prefijo (P60)", corregido.includes(estiloP60));
+    check("es idempotente", quitarReinicioNumeracionTrasPortada(corregido) === corregido);
+    check(
+        "tolera un salto de página blando entre medias",
+        !quitarReinicioNumeracionTrasPortada(
+            xml(`${portada}<text:soft-page-break/><text:p text:style-name="P6"/>`)
+        ).includes(estiloP6)
+    );
+
+    const sinPortada = xml(`<text:p text:style-name="P6"/>`);
+    check("sin portada no cambia nada", quitarReinicioNumeracionTrasPortada(sinPortada) === sinPortada);
+
+    const conTabla = xml(`${portada}<table:table table:name="T"><text:p text:style-name="P6"/></table:table>`);
+    check(
+        "si lo siguiente no es un párrafo, no cambia nada",
+        quitarReinicioNumeracionTrasPortada(conTabla) === conTabla
+    );
+}
 
 console.log("\n== Entradas inválidas ==");
 function revienta(fn: () => unknown): boolean {
