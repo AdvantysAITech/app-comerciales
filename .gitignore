@@ -42,3 +42,9 @@ next-env.d.ts
 
 .vercel
 .env*
+
+resultado-TEST-*.odt
+
+# Artefactos de scripts de prueba y variables locales
+/salida/
+/vars.ps1

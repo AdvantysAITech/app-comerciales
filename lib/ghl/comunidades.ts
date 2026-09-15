@@ -24,6 +24,17 @@ export type Comunidad = {
     nombreDireccion: string;
     numeroViviendas?: number;
     notasAcceso?: string;
+    /**
+     * Localidad y provincia de la comunidad. Se imprimen en el presupuesto
+     * (`presup.ComunidadLocalidad`, `presup.ComunidadProvincia`) y la localidad
+     * es además la de la línea de firma (`doc.Localidad`).
+     *
+     * Opcionales aquí porque GHL OMITE las propiedades vacías en la respuesta:
+     * que lleguen `undefined` significa "ese registro no lo tiene relleno", no
+     * "el campo no existe". Verificado por API el 09/09/2026.
+     */
+    localidad?: string;
+    provincia?: string;
     administradorId?: string;
 };
 
@@ -33,6 +44,34 @@ type SaRecord = {
     relations?: Array<{ objectKey: string; recordId: string }>;
 };
 
+/**
+ * Claves de propiedad tal cual las devuelve la API.
+ *
+ * NO se deducen de la etiqueta: GHL genera la clave a partir del nombre visible
+ * y la deforma ("Nombre / Dirección" -> `nombre_direcci_n`, "Número de
+ * viviendas" -> `nmero_de_viviendas`). Peor: si alguien corrige la etiqueta
+ * desde la interfaz, la clave puede quedarse con la errata original. Ya pasó en
+ * el objeto de administradores.
+ *
+ * Verificadas por PowerShell contra un registro real el 09/09/2026
+ * (C/ Islas Canarias, 180 -> localidad "Náquera", provincia "Valencia").
+ */
+const PROP = {
+    nombreDireccion: "nombre_direcci_n",
+    numeroViviendas: "nmero_de_viviendas",
+    notasAcceso: "notas_de_acceso",
+    localidad: "localidad",
+    provincia: "provincia",
+} as const;
+
+/** Texto de una propiedad, o undefined si no viene o viene en blanco. */
+function texto(properties: Record<string, unknown>, clave: string): string | undefined {
+    const valor = properties[clave];
+    if (typeof valor !== "string") return undefined;
+    const limpio = valor.trim();
+    return limpio === "" ? undefined : limpio;
+}
+
 function mapearComunidad(record: SaRecord): Comunidad {
     const administrador = record.relations?.find(
         (r) => r.objectKey === OBJECT_KEY_ADMINISTRADOR
@@ -40,9 +79,11 @@ function mapearComunidad(record: SaRecord): Comunidad {
 
     return {
         id: record.id,
-        nombreDireccion: record.properties.nombre_direcci_n as string,
-        numeroViviendas: record.properties.nmero_de_viviendas as number | undefined,
-        notasAcceso: record.properties.notas_de_acceso as string | undefined,
+        nombreDireccion: record.properties[PROP.nombreDireccion] as string,
+        numeroViviendas: record.properties[PROP.numeroViviendas] as number | undefined,
+        notasAcceso: texto(record.properties, PROP.notasAcceso),
+        localidad: texto(record.properties, PROP.localidad),
+        provincia: texto(record.properties, PROP.provincia),
         administradorId: administrador?.recordId,
     };
 }
@@ -92,6 +133,32 @@ export function buscarComunidadPorNombre(
     return comunidades.find((c) => normalizarNombre(c.nombreDireccion) === objetivo);
 }
 
+/**
+ * Lee una comunidad concreta por su id.
+ *
+ * Verificado por PowerShell el 09/09/2026: el GET responde y el registro llega
+ * en `data.record`, NO en la raíz. Misma forma que el POST de creación y
+ * distinta de `/opportunities/`, que devuelve `data.opportunity`. Aquí no hay
+ * regla general: cada endpoint se comprueba.
+ *
+ * Se usa en la generación de documentos, donde hace falta una sola comunidad y
+ * listar las de la subcuenta entera sería traerse todas para descartar N-1.
+ */
+export async function obtenerComunidad(
+    subcuenta: Subcuenta,
+    comunidadId: string
+): Promise<Comunidad | null> {
+    const data = await saFetch(
+        subcuenta,
+        `/objects/${OBJECT_KEY_COMUNIDAD}/records/${comunidadId}`
+    );
+
+    const record: SaRecord | undefined = data.record;
+    if (!record?.id) return null;
+
+    return mapearComunidad(record);
+}
+
 type DatosNuevaComunidad = {
     nombreDireccion: string;
     numeroViviendas?: number;
@@ -114,16 +181,16 @@ export async function crearComunidad(
     datos: DatosNuevaComunidad
 ): Promise<Comunidad> {
     const properties: Record<string, unknown> = {
-        nombre_direcci_n: datos.nombreDireccion.trim(),
+        [PROP.nombreDireccion]: datos.nombreDireccion.trim(),
     };
 
     // Solo se envían las propiedades informadas: mandar undefined sobrescribiría
     // con vacío si se reutiliza esta forma en un update.
     if (datos.numeroViviendas !== undefined) {
-        properties.nmero_de_viviendas = datos.numeroViviendas;
+        properties[PROP.numeroViviendas] = datos.numeroViviendas;
     }
     if (datos.notasAcceso) {
-        properties.notas_de_acceso = datos.notasAcceso;
+        properties[PROP.notasAcceso] = datos.notasAcceso;
     }
 
     const data = await saFetch(subcuenta, `/objects/${OBJECT_KEY_COMUNIDAD}/records`, {

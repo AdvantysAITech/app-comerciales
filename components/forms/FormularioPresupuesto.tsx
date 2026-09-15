@@ -1,20 +1,22 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SelectorArbol } from "@/components/forms/SelectorArbol";
+import { BuscadorPartidas } from "@/components/forms/BuscadorPartidas";
 import { SubidorFotos } from "@/components/forms/SubidorFotos";
 import { SubidorDocumentos } from "@/components/forms/SubidorDocumentos";
 import { GrabadorVoz } from "@/components/forms/GrabadorVoz";
 import { getModulos, type ModuloTrabajo } from "@/lib/catalogo";
-import { normalizarNombre } from "@/lib/texto";
+import { filtrarSinPrecio } from "@/lib/catalogo/disponibilidad";
 import type { DocumentoAdjunto } from "@/lib/documentos/tipos";
+import { normalizarNombre } from "@/lib/texto";
 import {
     cargarBorrador,
     describirAntiguedad,
     guardarBorrador,
     limpiarBorrador,
     tieneContenido,
-    type BorradorPresupuesto,
+    type DatosBorrador,
 } from "@/lib/visita/borrador";
 import {
     alertasActivas,
@@ -27,24 +29,16 @@ import {
     type Subcuenta,
 } from "@/lib/visita/seleccion";
 
-
 /**
- * Formulario de captura v2.
+ * Formulario de captura de presupuesto (flujo v2).
  *
- * Convive con el formulario antiguo (/visitas/nueva), que sigue operativo en
- * produccion hasta que este pase la prueba end-to-end real.
+ * Envia a /api/registrar-presupuesto, que crea comunidad, contacto y
+ * oportunidad(es) en GHL con el payload canonico de la visita. Ese payload es
+ * despues la entrada del generador de documentos.
  */
 
-type ComunidadListado = {
-    id: string;
-    nombreDireccion: string;
-    administradorId?: string;
-};
-
-type AdministradorListado = {
-    id: string;
-    nombreDespacho?: string;
-};
+type ComunidadListado = { id: string; nombreDireccion: string; administradorId?: string };
+type AdministradorListado = { id: string; nombreDespacho?: string };
 
 type Props = {
     subcuenta: Subcuenta;
@@ -52,12 +46,7 @@ type Props = {
     administradores: AdministradorListado[];
 };
 
-type OportunidadCreada = {
-    id: string;
-    nombre: string;
-    modeloNegocio: string | null;
-    bytesJson: number;
-};
+type OportunidadCreada = { id: string; nombre: string; modeloNegocio: string | null };
 
 type ResultadoAlta = {
     comunidad: { id: string; nombre: string; creada: boolean };
@@ -71,7 +60,10 @@ const ESTILO_LABEL = "mb-1.5 block text-xs text-muted";
 const ESTILO_SECCION = "rounded-2xl border border-hairline bg-surface p-4";
 const ESTILO_TITULO = "mb-3 text-[11px] font-medium uppercase tracking-wide text-muted";
 
-/** Espera antes de guardar el borrador. Evita escribir en cada tecla. */
+/** Fotos minimas cuando el modulo incluye una partida con aviso (amianto). */
+const MINIMO_FOTOS_CON_ALERTA = 3;
+
+/** Espera del autoguardado. Escribir en cada pulsacion castiga al movil. */
 const RETARDO_AUTOGUARDADO = 800;
 
 export function FormularioPresupuesto({ subcuenta, comunidades, administradores }: Props) {
@@ -87,32 +79,26 @@ export function FormularioPresupuesto({ subcuenta, comunidades, administradores 
     const [fotosPorModulo, setFotosPorModulo] = useState<Record<string, string[]>>({});
     const [documentosPorModulo, setDocumentosPorModulo] = useState<Record<string, DocumentoAdjunto[]>>({});
 
-    const [borradorRecuperable, setBorradorRecuperable] = useState<BorradorPresupuesto | null>(null);
+    const [borradorRecuperado, setBorradorRecuperado] = useState<string | null>(null);
     const [enviando, setEnviando] = useState(false);
     const [errorEnvio, setErrorEnvio] = useState<string | null>(null);
     const [resultado, setResultado] = useState<ResultadoAlta | null>(null);
 
-    // Mientras no se decida sobre el borrador no se autoguarda: si no, el propio
-    // formulario vacio sobrescribiria el borrador que estamos ofreciendo.
-    const autoguardadoActivo = useRef(false);
+    // Evita que el autoguardado pise el borrador con el formulario vacio durante
+    // el primer render, antes de haber intentado recuperarlo.
+    const rehidratado = useRef(false);
 
-    const modulos = useMemo(() => getModulos(subcuenta), [subcuenta]);
+    // `filtrarSinPrecio` esconde las opciones que la tarifa 2026 no sabe valorar.
+    // Si el comercial no las ve, no puede marcarlas, y el 422 al generar deja de
+    // ocurrir. Lo que se salga del catálogo va al nodo "Varios" como texto libre.
+    // Es temporal: en cuanto Miguel decida esas partidas, vuelven solas.
+    const modulos = useMemo(() => getModulos(subcuenta).map(filtrarSinPrecio), [subcuenta]);
 
-    // --- Borrador --------------------------------------------------------
-
-    useEffect(() => {
-        const guardado = cargarBorrador(subcuenta);
-        if (guardado && tieneContenido(guardado)) {
-            setBorradorRecuperable(guardado);
-        } else {
-            autoguardadoActivo.current = true;
-        }
-    }, [subcuenta]);
-
-    useEffect(() => {
-        if (!autoguardadoActivo.current || resultado) return;
-
-        const datos = {
+    // Las dependencias son TODOS los campos. Con el array vacio, `datosActuales`
+    // se congela en el primer render y el autoguardado acaba escribiendo el
+    // formulario vacio encima del borrador en cada pulsacion.
+    const datosActuales: DatosBorrador = useMemo(
+        () => ({
             nombreComunidad,
             comunidadElegidaId,
             administradorId,
@@ -124,66 +110,55 @@ export function FormularioPresupuesto({ subcuenta, comunidades, administradores 
             seleccion,
             fotosPorModulo,
             documentosPorModulo,
-        };
+        }),
+        [
+            nombreComunidad,
+            comunidadElegidaId,
+            administradorId,
+            contacto,
+            telefono,
+            fecha,
+            observaciones,
+            modulosElegidos,
+            seleccion,
+            fotosPorModulo,
+            documentosPorModulo,
+        ]
+    );
 
-        if (!tieneContenido(datos)) return;
+    useEffect(() => {
+        const borrador = cargarBorrador(subcuenta);
 
-        const temporizador = setTimeout(() => guardarBorrador(subcuenta, datos), RETARDO_AUTOGUARDADO);
-        return () => clearTimeout(temporizador);
-    }, [
-        subcuenta,
-        resultado,
-        nombreComunidad,
-        comunidadElegidaId,
-        administradorId,
-        contacto,
-        telefono,
-        fecha,
-        observaciones,
-        modulosElegidos,
-        seleccion,
-        fotosPorModulo,
-        documentosPorModulo,
-    ]);
+        if (borrador && tieneContenido(borrador)) {
+            setNombreComunidad(borrador.nombreComunidad);
+            setComunidadElegidaId(borrador.comunidadElegidaId);
+            setAdministradorId(borrador.administradorId);
+            setContacto(borrador.contacto);
+            setTelefono(borrador.telefono);
+            setFecha(borrador.fecha);
+            setObservaciones(borrador.observaciones);
+            setModulosElegidos(borrador.modulosElegidos);
+            setSeleccion(borrador.seleccion);
+            setFotosPorModulo(borrador.fotosPorModulo);
+            setDocumentosPorModulo(borrador.documentosPorModulo ?? {});
+            setBorradorRecuperado(borrador.guardadoEn);
+        }
 
-    function recuperarBorrador() {
-        const b = borradorRecuperable;
-        if (!b) return;
+        rehidratado.current = true;
+    }, [subcuenta]);
 
-        setNombreComunidad(b.nombreComunidad);
-        setComunidadElegidaId(b.comunidadElegidaId);
-        setAdministradorId(b.administradorId);
-        setContacto(b.contacto);
-        setTelefono(b.telefono);
-        setFecha(b.fecha);
-        setObservaciones(b.observaciones);
-        setModulosElegidos(b.modulosElegidos);
-        setSeleccion(b.seleccion);
-        setFotosPorModulo(b.fotosPorModulo);
-        // Sin `?? {}`: cargarBorrador ya rellena el campo en los borradores
-        // guardados antes de este cambio, asi que aqui llega siempre definido.
-        setDocumentosPorModulo(b.documentosPorModulo);
+    useEffect(() => {
+        if (!rehidratado.current) return;
+        if (!tieneContenido(datosActuales)) return;
 
-        setBorradorRecuperable(null);
-        autoguardadoActivo.current = true;
-    }
+        const id = setTimeout(() => guardarBorrador(subcuenta, datosActuales), RETARDO_AUTOGUARDADO);
+        return () => clearTimeout(id);
+    }, [subcuenta, datosActuales]);
 
-    function descartarBorrador() {
-        limpiarBorrador(subcuenta);
-        setBorradorRecuperable(null);
-        autoguardadoActivo.current = true;
-    }
-
-    // --- Comunidad -------------------------------------------------------
-
-    // Sugerencias mientras escribe. Coincidencia parcial: la maquina propone,
-    // el comercial decide. Nunca se empareja solo.
     const sugerencias = useMemo(() => {
         const texto = normalizarNombre(nombreComunidad);
         if (texto.length < 2) return [];
-        return comunidades
-            .filter((c) => normalizarNombre(c.nombreDireccion).includes(texto))
-            .slice(0, 5);
+        return comunidades.filter((c) => normalizarNombre(c.nombreDireccion).includes(texto)).slice(0, 5);
     }, [comunidades, nombreComunidad]);
 
     const comunidadElegida = comunidades.find((c) => c.id === comunidadElegidaId);
@@ -196,42 +171,38 @@ export function FormularioPresupuesto({ subcuenta, comunidades, administradores 
 
     const seCrearaComunidad = nombreComunidad.trim() !== "" && !comunidadElegida && !coincidenciaExacta;
 
-    function elegirSugerencia(comunidad: ComunidadListado) {
-        setComunidadElegidaId(comunidad.id);
-        setNombreComunidad(comunidad.nombreDireccion);
-        if (comunidad.administradorId) setAdministradorId(comunidad.administradorId);
-    }
-
-    // --- Seleccion -------------------------------------------------------
-
     const conteo = useMemo(
         () => contarPorModulo(subcuenta, modulosElegidos, seleccion),
         [subcuenta, modulosElegidos, seleccion]
     );
-
     const partidas = useMemo(
         () => partidasSeleccionadas(subcuenta, modulosElegidos, seleccion),
         [subcuenta, modulosElegidos, seleccion]
     );
-
     const errores = useMemo(
         () => validarSeleccion(subcuenta, modulosElegidos, seleccion),
         [subcuenta, modulosElegidos, seleccion]
     );
-
     const alertas = useMemo(
         () => alertasActivas(subcuenta, modulosElegidos, seleccion),
         [subcuenta, modulosElegidos, seleccion]
     );
 
-    // Modulos que exigen un minimo de fotos y no lo cumplen. El caso real es
-    // Gestion de residuos: el DERCAS 6.2 pide 3 fotos minimo para amianto.
-    const fotosInsuficientes = useMemo(() => {
-        return modulosElegidos
-            .map((key) => modulos.find((m) => m.key === key))
-            .filter((m): m is ModuloTrabajo => Boolean(m))
-            .filter((m) => (m.fotosMinimas ?? 0) > (fotosPorModulo[m.key]?.length ?? 0));
-    }, [modulos, modulosElegidos, fotosPorModulo]);
+    const modulosConAlerta = useMemo(() => new Set(alertas.map((a) => a.moduloKey)), [alertas]);
+
+    /** Minimo de fotos de un modulo: el del catalogo, o el de alerta si es mayor. */
+    const minimoFotos = useCallback(
+        (key: string) => {
+            const delCatalogo = modulos.find((m) => m.key === key)?.fotosMinimas ?? 0;
+            return modulosConAlerta.has(key) ? Math.max(delCatalogo, MINIMO_FOTOS_CON_ALERTA) : delCatalogo;
+        },
+        [modulos, modulosConAlerta]
+    );
+
+    const modulosSinFotosSuficientes = useMemo(
+        () => modulosElegidos.filter((key) => (fotosPorModulo[key]?.length ?? 0) < minimoFotos(key)),
+        [modulosElegidos, fotosPorModulo, minimoFotos]
+    );
 
     function alternarModulo(modulo: ModuloTrabajo) {
         setModulosElegidos((anterior) => {
@@ -240,108 +211,25 @@ export function FormularioPresupuesto({ subcuenta, comunidades, administradores 
                 // huerfanas en el estado y viajarian al presupuesto sin que
                 // nadie las vea en pantalla.
                 setSeleccion((s) => limpiarModulo(s, modulo.key));
+                setFotosPorModulo((f) => {
+                    const siguiente = { ...f };
+                    delete siguiente[modulo.key];
+                    return siguiente;
+                });
                 return anterior.filter((k) => k !== modulo.key);
             }
             return [...anterior, modulo.key];
         });
     }
 
-    function fijarFotos(moduloKey: string, fotos: string[]) {
-        setFotosPorModulo((anterior) => ({ ...anterior, [moduloKey]: fotos }));
+    function elegirSugerencia(comunidad: ComunidadListado) {
+        setComunidadElegidaId(comunidad.id);
+        setNombreComunidad(comunidad.nombreDireccion);
+        if (comunidad.administradorId) setAdministradorId(comunidad.administradorId);
     }
 
-    function fijarDocumentos(moduloKey: string, documentos: DocumentoAdjunto[]) {
-        setDocumentosPorModulo((anterior) => ({ ...anterior, [moduloKey]: documentos }));
-    }
-
-    // --- Dictado ---------------------------------------------------------
-
-    // La transcripcion se ANADE a lo que ya hubiera escrito, nunca lo sustituye:
-    // borrar texto ya tecleado por pulsar un boton seria un fallo grave en obra.
-    // Al pasar por setObservaciones entra tambien en el autoguardado.
-    function anadirTranscripcion(texto: string) {
-        setObservaciones((actual) => (actual.trim() ? `${actual.trim()}\n${texto}` : texto));
-    }
-
-    // --- Envio -----------------------------------------------------------
-
-    const faltanDatosGenerales =
-        nombreComunidad.trim() === "" || contacto.trim() === "" || telefono.trim() === "" || fecha === "";
-
-    // El modulo Proyectos tiene `estructura: []` y por tanto NUNCA genera
-    // partidas: ahi el contenido es la documentacion del arquitecto. Sin esto,
-    // un comercial que solo sube un BC3 no podria registrar nada.
-    const documentosAdjuntos = useMemo(
-        () => modulosElegidos.reduce((total, key) => total + (documentosPorModulo[key]?.length ?? 0), 0),
-        [modulosElegidos, documentosPorModulo]
-    );
-
-    const hayContenido = partidas.length > 0 || documentosAdjuntos > 0;
-
-    const puedeEnviar =
-        !enviando &&
-        !faltanDatosGenerales &&
-        errores.length === 0 &&
-        fotosInsuficientes.length === 0 &&
-        hayContenido;
-
-    const motivoBloqueo = enviando
-        ? "Registrando el presupuesto..."
-        : faltanDatosGenerales
-          ? "Completa comunidad, contacto, teléfono y fecha"
-          : errores.length > 0
-            ? "Hay partidas marcadas sin resolver"
-            : fotosInsuficientes.length > 0
-              ? `Faltan fotos en: ${fotosInsuficientes.map((m) => m.label).join(", ")}`
-              : !hayContenido
-                ? "Selecciona al menos una partida o adjunta documentación"
-                : partidas.length > 0
-                  ? `${partidas.length} partidas listas para registrar`
-                  : `${documentosAdjuntos} ${documentosAdjuntos === 1 ? "documento listo" : "documentos listos"} para registrar`;
-
-    async function enviar() {
-        if (!puedeEnviar) return;
-
-        setEnviando(true);
-        setErrorEnvio(null);
-
-        try {
-            const response = await fetch("/api/registrar-presupuesto", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    comunidadNombre: nombreComunidad,
-                    administradorId: administradorId || null,
-                    contacto,
-                    telefono,
-                    fechaVisita: fecha,
-                    observaciones,
-                    modulosElegidos,
-                    seleccion,
-                    fotosPorModulo,
-                    documentosPorModulo,
-                }),
-            });
-
-            const data = await response.json();
-
-            if (!response.ok) {
-                throw new Error(data.error ?? "No se ha podido registrar el presupuesto");
-            }
-
-            // El borrador se limpia SOLO aqui, con el alta ya confirmada. Si se
-            // limpiara antes, un fallo de red dejaria al comercial sin datos y
-            // sin oportunidad: la visita habria que repetirla.
-            limpiarBorrador(subcuenta);
-            setResultado(data as ResultadoAlta);
-        } catch (e) {
-            setErrorEnvio(e instanceof Error ? e.message : "Error desconocido al registrar");
-        } finally {
-            setEnviando(false);
-        }
-    }
-
-    function nuevoPresupuesto() {
+    function descartarBorrador() {
+        limpiarBorrador(subcuenta);
         setNombreComunidad("");
         setComunidadElegidaId(null);
         setAdministradorId("");
@@ -353,60 +241,110 @@ export function FormularioPresupuesto({ subcuenta, comunidades, administradores 
         setSeleccion(seleccionVacia);
         setFotosPorModulo({});
         setDocumentosPorModulo({});
-        setResultado(null);
-        setErrorEnvio(null);
-        autoguardadoActivo.current = true;
+        setBorradorRecuperado(null);
     }
 
-    // --- Pantalla de confirmacion ----------------------------------------
+    // La transcripcion se ANADE a lo ya escrito, nunca lo sustituye: borrar
+    // texto tecleado al pulsar un boton seria un fallo grave estando en obra.
+    function anadirTranscripcion(texto: string) {
+        setObservaciones((actual) => (actual.trim() ? `${actual.trim()}\n${texto}` : texto));
+    }
+
+    const faltanDatosGenerales =
+        nombreComunidad.trim() === "" || contacto.trim() === "" || telefono.trim() === "" || fecha === "";
+
+    const motivoBloqueo = faltanDatosGenerales
+        ? "Completa comunidad, contacto, teléfono y fecha"
+        : errores.length > 0
+          ? "Hay partidas marcadas sin resolver"
+          : partidas.length === 0
+            ? "Selecciona al menos una partida"
+            : modulosSinFotosSuficientes.length > 0
+              ? `Faltan fotos en: ${modulosSinFotosSuficientes
+                    .map((k) => modulos.find((m) => m.key === k)?.label ?? k)
+                    .join(", ")}`
+              : null;
+
+    const puedeEnviar = motivoBloqueo === null && !enviando;
+
+    async function enviar() {
+        if (!puedeEnviar) return;
+
+        setEnviando(true);
+        setErrorEnvio(null);
+
+        try {
+            // La subcuenta, la empresa y el comercial NO se mandan: los resuelve
+            // el servidor desde la sesion. Un formulario no decide en que
+            // subcuenta escribe.
+            const respuesta = await fetch("/api/registrar-presupuesto", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    comunidadNombre: nombreComunidad.trim(),
+                    administradorId: administradorId || null,
+                    contacto: contacto.trim(),
+                    telefono: telefono.trim(),
+                    fechaVisita: fecha,
+                    observaciones: observaciones.trim(),
+                    modulosElegidos,
+                    seleccion,
+                    fotosPorModulo,
+                }),
+            });
+
+            const datos = await respuesta.json();
+            if (!respuesta.ok) throw new Error(datos.error ?? `Error ${respuesta.status}`);
+
+            // Solo se limpia el borrador con el alta CONFIRMADA. Si falla, el
+            // comercial conserva la visita y puede reintentar sin recapturar.
+            limpiarBorrador(subcuenta);
+            setResultado(datos as ResultadoAlta);
+        } catch (error) {
+            setErrorEnvio(error instanceof Error ? error.message : "Error desconocido");
+        } finally {
+            setEnviando(false);
+        }
+    }
 
     if (resultado) {
         return (
             <div className="px-4 pb-24 pt-6 sm:px-10">
                 <h1 className="mb-5 text-xl font-semibold text-ink sm:text-2xl">Presupuesto registrado</h1>
 
-                <div className="flex flex-col gap-3">
-                    <section className={ESTILO_SECCION}>
-                        <p className={ESTILO_TITULO}>Comunidad</p>
-                        <p className="text-sm text-ink">{resultado.comunidad.nombre}</p>
-                        {resultado.comunidad.creada && (
-                            <p className="mt-1 text-xs text-muted">Creada nueva en la base de datos</p>
-                        )}
-                    </section>
+                <section className={ESTILO_SECCION}>
+                    <p className={ESTILO_TITULO}>Comunidad</p>
+                    <p className="text-sm text-ink">{resultado.comunidad.nombre}</p>
 
-                    <section className={ESTILO_SECCION}>
-                        <p className={ESTILO_TITULO}>
-                            {resultado.oportunidades.length === 1 ? "Oportunidad" : "Oportunidades"}
-                        </p>
-                        <div className="flex flex-col gap-2">
-                            {resultado.oportunidades.map((o) => (
-                                <div key={o.id} className="border-b border-hairline pb-2 last:border-0">
-                                    <p className="text-sm text-ink">{o.nombre}</p>
-                                    <p className="mt-0.5 text-xs text-muted">
-                                        {o.modeloNegocio ?? "Sin modelo de negocio"} · {o.bytesJson} bytes de datos
-                                    </p>
-                                </div>
-                            ))}
-                        </div>
-                    </section>
+                    <p className={`${ESTILO_TITULO} mt-4`}>
+                        Oportunidades ({resultado.oportunidades.length})
+                    </p>
+                    <div className="flex flex-col gap-1.5">
+                        {resultado.oportunidades.map((o) => (
+                            <div key={o.id} className="border-b border-hairline pb-1.5 text-xs last:border-0">
+                                <span className="text-ink">{o.nombre}</span>
+                                <span className="ml-2 text-muted">{o.id}</span>
+                            </div>
+                        ))}
+                    </div>
 
                     {resultado.avisos.length > 0 && (
-                        <section className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4">
-                            <p className={ESTILO_TITULO}>Ten en cuenta</p>
-                            <ul className="flex flex-col gap-1.5">
-                                {resultado.avisos.map((aviso, i) => (
-                                    <li key={i} className="text-xs text-amber-700 dark:text-amber-400">
-                                        {aviso}
-                                    </li>
-                                ))}
-                            </ul>
-                        </section>
+                        <ul className="mt-4 flex flex-col gap-1 border-t border-hairline pt-3">
+                            {resultado.avisos.map((a, i) => (
+                                <li key={i} className="text-xs text-amber-700 dark:text-amber-400">
+                                    {a}
+                                </li>
+                            ))}
+                        </ul>
                     )}
-                </div>
+                </section>
 
                 <button
                     type="button"
-                    onClick={nuevoPresupuesto}
+                    onClick={() => {
+                        setResultado(null);
+                        descartarBorrador();
+                    }}
                     className="mt-4 w-full cursor-pointer rounded-xl bg-ink py-3 text-sm font-semibold text-canvas"
                 >
                     Registrar otro presupuesto
@@ -415,35 +353,23 @@ export function FormularioPresupuesto({ subcuenta, comunidades, administradores 
         );
     }
 
-    // --- Formulario ------------------------------------------------------
-
     return (
         <div className="px-4 pb-24 pt-6 sm:px-10">
             <h1 className="mb-5 text-xl font-semibold text-ink sm:text-2xl">Nuevo presupuesto</h1>
 
-            {borradorRecuperable && (
-                <section className="mb-3 rounded-2xl border border-hairline bg-surface p-4">
-                    <p className="text-sm text-ink">
-                        Hay una visita sin terminar de {describirAntiguedad(borradorRecuperable.guardadoEn)}
-                        {borradorRecuperable.nombreComunidad ? `: ${borradorRecuperable.nombreComunidad}` : ""}.
+            {borradorRecuperado && (
+                <div className="mb-3 flex items-center justify-between gap-3 rounded-2xl border border-hairline bg-ink/[0.04] px-4 py-3">
+                    <p className="text-xs text-muted">
+                        Borrador recuperado ({describirAntiguedad(borradorRecuperado)})
                     </p>
-                    <div className="mt-3 flex gap-2">
-                        <button
-                            type="button"
-                            onClick={recuperarBorrador}
-                            className="min-h-11 flex-1 cursor-pointer rounded-xl bg-ink px-3 text-sm font-medium text-canvas"
-                        >
-                            Continuar
-                        </button>
-                        <button
-                            type="button"
-                            onClick={descartarBorrador}
-                            className="min-h-11 flex-1 cursor-pointer rounded-xl border border-hairline px-3 text-sm text-ink"
-                        >
-                            Empezar de cero
-                        </button>
-                    </div>
-                </section>
+                    <button
+                        type="button"
+                        onClick={descartarBorrador}
+                        className="shrink-0 cursor-pointer rounded-lg border border-hairline px-2.5 py-1.5 text-xs font-medium text-ink transition hover:bg-canvas"
+                    >
+                        Empezar de cero
+                    </button>
+                </div>
             )}
 
             <div className="flex flex-col gap-3">
@@ -543,21 +469,18 @@ export function FormularioPresupuesto({ subcuenta, comunidades, administradores 
                             />
                         </label>
 
-                        {/* Ya no envuelve al campo: un boton dentro de una etiqueta
-                            reenvia el clic al textarea en algunos navegadores. La
-                            asociacion se hace con htmlFor/id, que es equivalente. */}
                         <div>
-                            <label className={ESTILO_LABEL} htmlFor="observaciones">
-                                Observaciones
+                            <label>
+                                <span className={ESTILO_LABEL}>Observaciones</span>
+                                <textarea
+                                    value={observaciones}
+                                    onChange={(e) => setObservaciones(e.target.value)}
+                                    rows={3}
+                                    placeholder="Accesos, incidencias, lo que convenga recordar..."
+                                    className={`${ESTILO_CAMPO} resize-none`}
+                                    disabled={enviando}
+                                />
                             </label>
-                            <textarea
-                                id="observaciones"
-                                value={observaciones}
-                                onChange={(e) => setObservaciones(e.target.value)}
-                                rows={3}
-                                placeholder="Accesos, incidencias, lo que convenga recordar..."
-                                className={`${ESTILO_CAMPO} resize-none`}
-                            />
                             <div className="mt-2">
                                 <GrabadorVoz onTranscripcion={anadirTranscripcion} disabled={enviando} />
                             </div>
@@ -599,6 +522,7 @@ export function FormularioPresupuesto({ subcuenta, comunidades, administradores 
                 {modulosElegidos.map((key) => {
                     const modulo = modulos.find((m) => m.key === key);
                     if (!modulo) return null;
+
                     return (
                         <section key={key} className={ESTILO_SECCION}>
                             <p className={ESTILO_TITULO}>{modulo.label}</p>
@@ -610,10 +534,19 @@ export function FormularioPresupuesto({ subcuenta, comunidades, administradores 
                                     seleccion={seleccion}
                                     onSeleccionChange={setSeleccion}
                                 />
+                            ) : modulo.captura === "buscador" ? (
+                                <BuscadorPartidas
+                                    subcuenta={subcuenta}
+                                    modulo={modulo}
+                                    seleccion={seleccion}
+                                    onSeleccionChange={setSeleccion}
+                                />
                             ) : modulo.captura === "importacion" ? (
                                 <SubidorDocumentos
                                     documentos={documentosPorModulo[key] ?? []}
-                                    onDocumentosChange={(docs) => fijarDocumentos(key, docs)}
+                                    onDocumentosChange={(docs) =>
+                                        setDocumentosPorModulo((anterior) => ({ ...anterior, [key]: docs }))
+                                    }
                                     disabled={enviando}
                                 />
                             ) : (
@@ -625,8 +558,10 @@ export function FormularioPresupuesto({ subcuenta, comunidades, administradores 
                             <div className="mt-4 border-t border-hairline pt-4">
                                 <SubidorFotos
                                     fotos={fotosPorModulo[key] ?? []}
-                                    onFotosChange={(fotos) => fijarFotos(key, fotos)}
-                                    minimo={modulo.fotosMinimas ?? 0}
+                                    onFotosChange={(fotos) =>
+                                        setFotosPorModulo((anterior) => ({ ...anterior, [key]: fotos }))
+                                    }
+                                    minimo={minimoFotos(key)}
                                 />
                             </div>
                         </section>
@@ -681,17 +616,16 @@ export function FormularioPresupuesto({ subcuenta, comunidades, administradores 
 
                 {errorEnvio && (
                     <section className="rounded-2xl border border-red-500/30 bg-red-500/10 p-4">
-                        <p className={ESTILO_TITULO}>No se ha podido registrar</p>
-                        <p className="text-xs text-red-600 dark:text-red-400">{errorEnvio}</p>
-                        <p className="mt-2 text-xs text-muted">
-                            Los datos siguen guardados en este dispositivo. Puedes reintentarlo.
+                        <p className="text-xs text-red-700 dark:text-red-400">{errorEnvio}</p>
+                        <p className="mt-1 text-[11px] text-muted">
+                            La visita sigue guardada en el borrador: puedes reintentar sin recapturar nada.
                         </p>
                     </section>
                 )}
             </div>
 
             <div className="sticky bottom-24 z-30 mt-4 rounded-2xl border border-hairline bg-canvas/95 p-3 backdrop-blur-md">
-                <p className="mb-2 text-center text-xs text-muted">{motivoBloqueo}</p>
+                {motivoBloqueo && <p className="mb-2 text-center text-xs text-muted">{motivoBloqueo}</p>}
                 <button
                     type="button"
                     onClick={enviar}
@@ -700,7 +634,7 @@ export function FormularioPresupuesto({ subcuenta, comunidades, administradores 
                         puedeEnviar ? "cursor-pointer" : "cursor-not-allowed opacity-40"
                     }`}
                 >
-                    {enviando ? "Registrando..." : "Registrar presupuesto"}
+                    {enviando ? "Enviando..." : "Enviar presupuesto"}
                 </button>
             </div>
         </div>

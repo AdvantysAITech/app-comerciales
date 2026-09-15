@@ -238,7 +238,10 @@ export function validarSeleccion(
 
     for (const moduloKey of modulosKeys) {
         const modulo = getModulo(subcuenta, moduloKey);
-        if (!modulo || modulo.captura !== "arbol") continue;
+        // El buscador de Varios también es un árbol (capítulo -> partida): se
+        // valida igual. Sin esto, una partida buscada y sin medición pasaría el
+        // formulario y el motor la descartaría en silencio al generar.
+        if (!modulo || (modulo.captura !== "arbol" && modulo.captura !== "buscador")) continue;
 
         for (const marcado of resolverModulo(modulo, seleccion, false)) {
             const encontrado = buscarNodoPorRuta(subcuenta, marcado.ruta);
