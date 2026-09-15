@@ -63,6 +63,17 @@ export type RegistroDocumento = {
     numeroReferencia: string;
     /** URL en GHL Media Storage. Solo cuando está publicado. */
     urlDocumento?: string;
+    /**
+     * Formato publicado. Se guarda desde el 15/09/2026: sin él, un presupuesto
+     * que salió en ODT por un fallo de conversión era indistinguible de uno en
+     * PDF sin abrir el fichero.
+     */
+    formato?: "pdf" | "odt";
+    /**
+     * Avisos del cierre (sin portada, conversión fallida...). Ya no se muestran
+     * al comercial, así que quedan aquí para poder consultarlos en GHL.
+     */
+    avisos?: string[];
     /** Motivos del fallo, tal cual los devolvió la verificación. */
     errores?: string[];
     /**
