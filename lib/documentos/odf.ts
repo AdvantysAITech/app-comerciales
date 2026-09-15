@@ -30,8 +30,6 @@ import type { PresupuestoCalculado } from "./motor";
 /** Ancho útil de la caja de texto de la plantilla. */
 const ANCHO_TABLA_PULGADAS = 6.5;
 
-const BORDE = "0.5pt solid #b8b8b8";
-
 /** Ruta de la imagen dentro del paquete ODF. */
 export const RUTA_PORTADA = "Pictures/portada.png";
 
@@ -97,6 +95,32 @@ export class MarcadorPortadaAusenteError extends Error {
 // Estilos
 // ---------------------------------------------------------------------------
 
+/**
+ * Estilos de tabla y celda, como UN SOLO literal sin interpolaciones.
+ *
+ * ---------------------------------------------------------------------------
+ * NO CONVERTIR EN PLANTILLA (15/09/2026)
+ * ---------------------------------------------------------------------------
+ * Esto era una concatenación de plantillas con `${ANCHO_TABLA_PULGADAS}` y
+ * `${BORDE}` (constante ya eliminada). Son constantes, así que el minificador del build de producción
+ * de Next.js intentaba plegarlas en un único string y se COMÍA 147 caracteres:
+ * desde `in" table:align` hasta el inicio del estilo AICelda. El content.xml
+ * quedaba mal formado (`style:width="6.5<style:table-cell-properties`) y
+ * Gotenberg respondía "LibreOffice failed to convert ... resource issue", que
+ * no tenía nada que ver con recursos.
+ *
+ * En `npm run dev` no se minifica: por eso en local funcionaba y en Vercel no.
+ * Cambiar la interpolación por `toFixed(4)` NO lo arregló (verificado: lo
+ * plegaba igual). Un literal único no tiene nada que plegar.
+ *
+ * `npm run build` ejecuta scripts/verificar-build.mjs, que comprueba este
+ * texto en el código compilado. Si alguien lo vuelve a partir, el build falla.
+ *
+ * Valores: ancho 6.5in (= ANCHO_TABLA_PULGADAS), borde 0.5pt solid #b8b8b8.
+ */
+export const ESTILOS_TABLA_BASE =
+    '<style:style style:name="AITabla" style:family="table"><style:table-properties style:width="6.5in" table:align="left" fo:margin-top="0.08in" fo:margin-bottom="0.08in"/></style:style><style:style style:name="AICelda" style:family="table-cell"><style:table-cell-properties fo:border="0.5pt solid #b8b8b8" fo:padding="0.04in"/></style:style>';
+
 function estilosDeTabla(numerosDeColumnas: readonly number[]): string {
     const columnas = numerosDeColumnas
         .map((n) => {
@@ -108,14 +132,7 @@ function estilosDeTabla(numerosDeColumnas: readonly number[]): string {
         })
         .join("");
 
-    return (
-        `<style:style style:name="AITabla" style:family="table">` +
-        `<style:table-properties style:width="${ANCHO_TABLA_PULGADAS}in" table:align="left" ` +
-        `fo:margin-top="0.08in" fo:margin-bottom="0.08in"/></style:style>` +
-        `<style:style style:name="AICelda" style:family="table-cell">` +
-        `<style:table-cell-properties fo:border="${BORDE}" fo:padding="0.04in"/></style:style>` +
-        columnas
-    );
+    return ESTILOS_TABLA_BASE + columnas;
 }
 
 /**
