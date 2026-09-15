@@ -50,8 +50,9 @@ const INTENTOS_MAXIMOS = 30;
 export function DocumentoPresupuesto({ oportunidadId, registroInicial, disponible }: Props) {
     const [registro, setRegistro] = useState<Respuesta | null>(registroInicial);
     const [trabajando, setTrabajando] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-    const [avisos, setAvisos] = useState<string[]>([]);
+    // Solo se guarda SI hubo error, no el texto: el detalle técnico va al log
+    // del servidor y al registro de GHL, no a la pantalla del comercial.
+    const [fallo, setFallo] = useState(false);
     const cancelado = useRef(false);
     const siguiendo = useRef(false);
 
@@ -70,22 +71,36 @@ export function DocumentoPresupuesto({ oportunidadId, registroInicial, disponibl
         for (let i = 0; i < INTENTOS_MAXIMOS; i++) {
             if (cancelado.current) return;
 
-            const respuesta = await fetch(`/api/documentos/estado/${requestId}`);
-            const datos = (await respuesta.json()) as Respuesta;
+            let datos: Respuesta;
+            try {
+                const respuesta = await fetch(`/api/documentos/estado/${requestId}`);
+                datos = (await respuesta.json()) as Respuesta;
+            } catch {
+                // Sin cobertura o respuesta que no es JSON (p. ej. timeout de la
+                // plataforma). Se reintenta en la siguiente vuelta.
+                await new Promise((r) => setTimeout(r, INTERVALO_MS));
+                continue;
+            }
 
-            if (datos.error) {
-                setError(datos.error);
+            if (datos.error || datos.estado === "fallido") {
+                // Sin esto la ficha se quedaba en "Generando..." con el botón
+                // bloqueado aunque el servidor ya hubiera abandonado.
+                marcarFallo(requestId);
                 return;
             }
 
             setRegistro(datos);
-            if (datos.avisos?.length) setAvisos(datos.avisos);
             if (datos.estado !== "generando") return;
 
             await new Promise((r) => setTimeout(r, INTERVALO_MS));
         }
 
-        setError("La generación está tardando más de lo normal. Vuelve a abrir la ficha en unos minutos.");
+        marcarFallo(requestId);
+    }
+
+    function marcarFallo(requestId?: string) {
+        setFallo(true);
+        setRegistro((anterior) => ({ ...(anterior ?? {}), requestId: requestId ?? anterior?.requestId, estado: "fallido" }));
     }
 
     /**
@@ -116,8 +131,7 @@ export function DocumentoPresupuesto({ oportunidadId, registroInicial, disponibl
 
     async function generar() {
         setTrabajando(true);
-        setError(null);
-        setAvisos([]);
+        setFallo(false);
         cancelado.current = false;
 
         try {
@@ -137,12 +151,11 @@ export function DocumentoPresupuesto({ oportunidadId, registroInicial, disponibl
             const datos = (await respuesta.json()) as Respuesta;
             if (!respuesta.ok) throw new Error(datos.error ?? `Error ${respuesta.status}`);
 
-            setAvisos(datos.avisos ?? []);
             setRegistro({ ...datos, estado: "generando" });
 
             if (datos.requestId) await seguir(datos.requestId);
-        } catch (e) {
-            setError(e instanceof Error ? e.message : "Error desconocido");
+        } catch {
+            marcarFallo();
         } finally {
             setTrabajando(false);
         }
@@ -179,12 +192,6 @@ export function DocumentoPresupuesto({ oportunidadId, registroInicial, disponibl
                 </div>
             )}
 
-            {registro?.estado === "publicado" && registro.conPortada === false && (
-                <p className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-700 dark:text-amber-400">
-                    El presupuesto se ha generado sin la infografía de portada.
-                </p>
-            )}
-
             {registro?.urlDocumento && (
                 <a
                     href={registro.urlDocumento}
@@ -196,33 +203,11 @@ export function DocumentoPresupuesto({ oportunidadId, registroInicial, disponibl
                 </a>
             )}
 
-            {/* El borrador NO se publica: sin precios reales no es un
-                presupuesto, y ofrecerlo para descarga invitaria a enviarlo. */}
-            {registro?.borrador && estado === "recibido" && (
-                <p className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-700 dark:text-amber-400">
-                    Generado sin precios de catálogo. No se puede enviar al administrador.
-                </p>
-            )}
-
-            {registro?.errores && registro.errores.length > 0 && (
-                <ul className="flex flex-col gap-1 rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2">
-                    {registro.errores.map((e, i) => (
-                        <li key={i} className="text-[11px] text-red-700 dark:text-red-400">
-                            {e}
-                        </li>
-                    ))}
-                </ul>
-            )}
-
-            {avisos.map((a, i) => (
-                <p key={i} className="text-[11px] text-muted">
-                    {a}
-                </p>
-            ))}
-
-            {error && (
-                <p className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-[11px] text-red-700 dark:text-red-400">
-                    {error}
+            {/* Único mensaje que queda: sin él, el comercial reintentaría a
+                ciegas, y cada intento consume un número del correlativo. */}
+            {(fallo || estado === "fallido") && !enCurso && (
+                <p className="text-[11px] text-muted">
+                    No se ha podido generar. Avisa a Advantys antes de volver a intentarlo.
                 </p>
             )}
 

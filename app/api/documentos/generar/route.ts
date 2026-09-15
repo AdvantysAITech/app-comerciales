@@ -83,7 +83,24 @@ function describirTextoLibre(payload: PayloadVisita, rutas: readonly string[]): 
     return descripciones.length > 0 ? descripciones : [...rutas];
 }
 
+/**
+ * La ficha ya no muestra el detalle de los rechazos al comercial (15/09/2026).
+ * Cualquier respuesta de error se escribe entera en el log de Vercel para que
+ * Advantys pueda diagnosticar sin pedir capturas.
+ */
 export async function POST(request: NextRequest) {
+    const respuesta = await generar(request);
+    if (respuesta.status >= 400) {
+        const cuerpo = await respuesta
+            .clone()
+            .json()
+            .catch(() => null);
+        console.error(`[documentos] generar rechazado (${respuesta.status}):`, JSON.stringify(cuerpo));
+    }
+    return respuesta;
+}
+
+async function generar(request: NextRequest): Promise<NextResponse> {
     const session = await auth();
 
     if (!session?.user?.subcuenta || !esSubcuentaValida(session.user.subcuenta)) {
@@ -353,6 +370,9 @@ export async function POST(request: NextRequest) {
             numeroReferencia: preparado.json.num_ref,
             actualizadoEn: new Date().toISOString(),
         });
+
+        // Los avisos no se muestran al comercial (15/09/2026): van al log.
+        for (const aviso of avisos) console.warn(`[documentos] ${requestId}: ${aviso}`);
 
         return NextResponse.json({
             requestId,

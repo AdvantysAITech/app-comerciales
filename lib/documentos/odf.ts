@@ -75,6 +75,13 @@ const PORTADA_ALTO = "297mm";
  * vista siga ahí. Por eso el mensaje apunta a la causa probable.
  */
 export class MarcadorPortadaAusenteError extends Error {
+    /**
+     * Qué marcador falta. La ruta de estado lo necesita para decidir: sin
+     * [[PORTADA]] el documento se publica sin infografía; sin [[DESGLOSE]] no se
+     * publica, porque saldría sin partidas.
+     */
+    readonly marcador: string;
+
     constructor(marcador: string = MARCADOR_PORTADA) {
         super(
             `El ODT no contiene el marcador "${marcador}". O la plantilla no lo lleva, ` +
@@ -82,6 +89,7 @@ export class MarcadorPortadaAusenteError extends Error {
                 `varios <text:span>. Vuelve a subir la plantilla y verifica los markerkeys.`
         );
         this.name = "MarcadorPortadaAusenteError";
+        this.marcador = marcador;
     }
 }
 

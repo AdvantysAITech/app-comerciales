@@ -1,3 +1,5 @@
+import { unzipSync, zipSync } from "fflate";
+
 /**
  * lib/documentos/pdf.ts
  *
@@ -81,6 +83,99 @@ export function conversionDisponible(): boolean {
     return Boolean(process.env.GOTENBERG_URL?.trim());
 }
 
+// ---------------------------------------------------------------------------
+// Aligerado del ODT antes de convertir (15/09/2026)
+// ---------------------------------------------------------------------------
+
+/**
+ * Quita las fuentes incrustadas del ODT que se envía a Gotenberg.
+ *
+ * La plantilla lleva incrustadas Liberation Sans y Linux Libertine G (8 ficheros
+ * .ttf): son el 94 % del documento. Con ellas el ODT pesa 3,4 MB; sin ellas,
+ * 0,2 MB. Linux Libertine G no se usa en ningún texto visible, y Liberation
+ * Sans ya la tiene LibreOffice instalada.
+ *
+ * Verificado con LibreOffice sobre un presupuesto real con portada y desglose:
+ * mismas 5 páginas, mismas fuentes en el PDF y las 5 páginas idénticas píxel a
+ * píxel con y sin las fuentes incrustadas.
+ *
+ * Se hace AQUÍ y no en `postprocesarOdt` a propósito: solo afecta a la copia
+ * que se convierte. Si la conversión falla y se publica el ODT, ese ODT sigue
+ * llevando sus fuentes.
+ */
+export function aligerarParaConversion(odt: ArrayBuffer): ArrayBuffer {
+    const entradas = unzipSync(new Uint8Array(odt));
+    const fuentes = Object.keys(entradas).filter((n) => n.startsWith("Fonts/"));
+    if (fuentes.length === 0) return odt;
+
+    const dec = new TextDecoder("utf-8");
+    const enc = new TextEncoder();
+
+    for (const nombre of fuentes) delete entradas[nombre];
+
+    // Sin la referencia, LibreOffice buscaría un fichero que ya no está.
+    for (const nombre of ["content.xml", "styles.xml"]) {
+        if (!entradas[nombre]) continue;
+        entradas[nombre] = enc.encode(
+            dec.decode(entradas[nombre]).replace(/<svg:font-face-src>[\s\S]*?<\/svg:font-face-src>/g, "")
+        );
+    }
+
+    // Un manifiesto que declara ficheros ausentes hace que algunos lectores
+    // den el documento por dañado.
+    if (entradas["META-INF/manifest.xml"]) {
+        entradas["META-INF/manifest.xml"] = enc.encode(
+            dec
+                .decode(entradas["META-INF/manifest.xml"])
+                .replace(/<manifest:file-entry[^>]*manifest:full-path="Fonts\/[^"]*"[^>]*\/>/g, "")
+        );
+    }
+
+    if (entradas["settings.xml"]) {
+        entradas["settings.xml"] = enc.encode(
+            dec
+                .decode(entradas["settings.xml"])
+                .replace(
+                    /(config:name="EmbedFonts" config:type="boolean">)true</,
+                    "$1false<"
+                )
+        );
+    }
+
+    // mimetype primero y sin comprimir: es como se reconoce un ODT.
+    const salida: Record<string, [Uint8Array, { level: 0 | 6 }]> = {};
+    if (entradas["mimetype"]) salida["mimetype"] = [entradas["mimetype"], { level: 0 }];
+    for (const [nombre, datos] of Object.entries(entradas)) {
+        if (nombre !== "mimetype") salida[nombre] = [datos, { level: 6 }];
+    }
+
+    const zip = zipSync(salida);
+    return zip.buffer.slice(zip.byteOffset, zip.byteOffset + zip.byteLength) as ArrayBuffer;
+}
+
+// ---------------------------------------------------------------------------
+// Conversión
+// ---------------------------------------------------------------------------
+
+/** Intentos totales. Gotenberg indica que un fallo de recursos se puede reintentar. */
+const INTENTOS = 2;
+
+/**
+ * Tiempo máximo por intento. Dos intentos más la espera tienen que caber, con
+ * la descarga del ODT y la subida a GHL, en los 60 s de la función.
+ */
+const TIEMPO_MAXIMO_INTENTO_MS = 20_000;
+
+const ESPERA_ENTRE_INTENTOS_MS = 1_500;
+
+/**
+ * Estados que merecen un segundo intento. 500 es "LibreOffice failed to
+ * convert", que Gotenberg describe como problema de recursos y reintentable;
+ * 502/503 son el proxy o el servicio saturados. Un 400 o un 401 no se arreglan
+ * repitiendo.
+ */
+const ESTADOS_REINTENTABLES = new Set([500, 502, 503]);
+
 /**
  * Convierte un ODT a PDF.
  *
@@ -98,14 +193,34 @@ export async function convertirAPdf(odt: ArrayBuffer, nombre: string): Promise<A
         );
     }
 
+    const ligero = aligerarParaConversion(odt);
+
+    let ultimoError: ConversionPdfError | null = null;
+
+    for (let intento = 1; intento <= INTENTOS; intento++) {
+        const resultado = await intentarConversion(base, ligero, nombre);
+        if (resultado.ok) return resultado.pdf;
+
+        ultimoError = resultado.error;
+        if (!resultado.reintentable || intento === INTENTOS) break;
+
+        console.warn(`[pdf] ${nombre}: intento ${intento} fallido, se reintenta. ${resultado.error.message}`);
+        await new Promise((r) => setTimeout(r, ESPERA_ENTRE_INTENTOS_MS));
+    }
+
+    throw ultimoError ?? new ConversionPdfError("La conversión falló sin detalle.");
+}
+
+type ResultadoIntento =
+    | { ok: true; pdf: ArrayBuffer }
+    | { ok: false; error: ConversionPdfError; reintentable: boolean };
+
+async function intentarConversion(base: string, odt: ArrayBuffer, nombre: string): Promise<ResultadoIntento> {
     const formulario = new FormData();
     formulario.append("files", new Blob([odt], { type: "application/vnd.oasis.opendocument.text" }), nombre);
 
-    // Un ODT de 3 MB con LibreOffice arrancando de cero puede irse a varios
-    // segundos. Se corta a 45 s: por encima de eso, el comercial lleva
-    // demasiado tiempo esperando y sale mejor publicar en ODT.
     const control = new AbortController();
-    const temporizador = setTimeout(() => control.abort(), 45_000);
+    const temporizador = setTimeout(() => control.abort(), TIEMPO_MAXIMO_INTENTO_MS);
 
     let respuesta: Response;
     try {
@@ -120,11 +235,23 @@ export async function convertirAPdf(odt: ArrayBuffer, nombre: string): Promise<A
             signal: control.signal,
         });
     } catch (error) {
+        // Un tiempo agotado no se reintenta: un segundo intento igual de lento
+        // se saldría del límite de la función.
         if (error instanceof Error && error.name === "AbortError") {
-            throw new ConversionPdfError("El servicio de conversión ha tardado más de 45 s.");
+            return {
+                ok: false,
+                reintentable: false,
+                error: new ConversionPdfError(
+                    `El servicio de conversión ha tardado más de ${TIEMPO_MAXIMO_INTENTO_MS / 1000} s.`
+                ),
+            };
         }
         const motivo = error instanceof Error ? error.message : "error desconocido";
-        throw new ConversionPdfError(`No se ha podido contactar con el servicio de conversión: ${motivo}`);
+        return {
+            ok: false,
+            reintentable: true,
+            error: new ConversionPdfError(`No se ha podido contactar con el servicio de conversión: ${motivo}`),
+        };
     } finally {
         clearTimeout(temporizador);
     }
@@ -132,18 +259,26 @@ export async function convertirAPdf(odt: ArrayBuffer, nombre: string): Promise<A
     // El 401 se distingue del resto: no es un problema del documento sino de
     // configuración, y el mensaje genérico manda a mirar donde no es.
     if (respuesta.status === 401) {
-        throw new ConversionPdfError(
-            "El servicio de conversión rechazó las credenciales (401). Revisa GOTENBERG_USER y " +
-                "GOTENBERG_PASSWORD en .env.local y en las variables de entorno de Vercel. " +
-                "La contraseña va en texto plano, no el hash del Caddyfile."
-        );
+        return {
+            ok: false,
+            reintentable: false,
+            error: new ConversionPdfError(
+                "El servicio de conversión rechazó las credenciales (401). Revisa GOTENBERG_USER y " +
+                    "GOTENBERG_PASSWORD en .env.local y en las variables de entorno de Vercel. " +
+                    "La contraseña va en texto plano, no el hash del Caddyfile."
+            ),
+        };
     }
 
     if (!respuesta.ok) {
         const cuerpo = await respuesta.text().catch(() => "");
-        throw new ConversionPdfError(
-            `El servicio de conversión rechazó la petición (${respuesta.status}): ${cuerpo.slice(0, 300)}`
-        );
+        return {
+            ok: false,
+            reintentable: ESTADOS_REINTENTABLES.has(respuesta.status),
+            error: new ConversionPdfError(
+                `El servicio de conversión rechazó la petición (${respuesta.status}): ${cuerpo.slice(0, 300)}`
+            ),
+        };
     }
 
     const pdf = await respuesta.arrayBuffer();
@@ -156,13 +291,17 @@ export async function convertirAPdf(odt: ArrayBuffer, nombre: string): Promise<A
         cabecera[0] === 0x25 && cabecera[1] === 0x50 && cabecera[2] === 0x44 && cabecera[3] === 0x46;
 
     if (!esPdf) {
-        throw new ConversionPdfError(
-            `Lo devuelto por el servicio de conversión no es un PDF (${pdf.byteLength} bytes, ` +
-                `no empieza por "%PDF"). Comprueba GOTENBERG_URL.`
-        );
+        return {
+            ok: false,
+            reintentable: false,
+            error: new ConversionPdfError(
+                `Lo devuelto por el servicio de conversión no es un PDF (${pdf.byteLength} bytes, ` +
+                    `no empieza por "%PDF"). Comprueba GOTENBERG_URL.`
+            ),
+        };
     }
 
-    return pdf;
+    return { ok: true, pdf };
 }
 
 /** "SV-2026-0005.odt" -> "SV-2026-0005.pdf" */
