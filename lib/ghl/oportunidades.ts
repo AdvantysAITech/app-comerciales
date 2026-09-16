@@ -1,32 +1,10 @@
 import { saFetch, getLocationId, type Subcuenta } from "./client";
 import { asociarComunidadConOportunidad } from "./comunidades";
+import { claveEtapa, idsGhl, type ClaveEtapa } from "./ids";
 
-const PIPELINE_ID = "Lg3gwS0oqpYDiBm8bjcD";
-
-export const ETAPA = {
-    AVISO_RECIBIDO: "4d3b0cf1-c995-4fa4-9cac-bcde44b24d62",
-    VISITA_CONCERTADA: "2f764a91-4a30-4d3e-b4bb-ad5c654e7b6a",
-    DATOS_RECOGIDOS: "c1c13b28-af25-4769-b95b-cdb89500a9b7",
-    PRESUPUESTO_EN_REVISION: "c5e51f0b-763f-4cce-b581-f6919f66ba29",
-    PRESUPUESTO_ENVIADO: "3d1f30db-9c7d-4391-90d7-50d98b217e42",
-    EN_NEGOCIACION: "eb1fe6ae-b418-4df0-84cd-cb27b6fb051c",
-    GANADA: "74963521-4c81-447e-8fb5-858bf0b8120a",
-    PERDIDA: "f89b0539-1afa-4f1f-be2a-517b22f415c9",
-} as const;
-
-export const ETAPAS_PRESUPUESTO = [
-    ETAPA.DATOS_RECOGIDOS,
-    ETAPA.PRESUPUESTO_EN_REVISION,
-    ETAPA.PRESUPUESTO_ENVIADO,
-    ETAPA.EN_NEGOCIACION,
-    ETAPA.GANADA,
-    ETAPA.PERDIDA,
-];
-
-const CUSTOM_FIELD_MODELO_NEGOCIO = "PTtDhuZnyksZ9Tj0Sb4f";
-const CUSTOM_FIELD_DESCRIPCION = "T9ubn5i7yJhutgOBSWZD";
-const CUSTOM_FIELD_FECHA_VISITA = "jltp3YJ2gnMMVnoIepLn";
-const CUSTOM_FIELD_COMUNIDAD = "rUPG2ZYUgBLRlEvR1tHh";
+// Pipeline, etapas y custom fields viven en lib/ghl/ids.ts, por subcuenta.
+// Se reexportan para no romper a quien los importaba desde aquí.
+export { ETAPAS_PRESUPUESTO, NOMBRE_ETAPA, type ClaveEtapa } from "./ids";
 
 /**
  * Etiquetas EXACTAS del picklist "Modelo de negocio" en GHL.
@@ -42,17 +20,6 @@ const ETIQUETA_MODELO_NEGOCIO: Record<string, string> = {
     descuelgues_verticales: "Descuelgues Verticales",
     retirada_amianto: "Retirada de Amianto",
     reformas_zonas_comunes: "Reformas y Zonas Comunes",
-};
-
-export const NOMBRE_ETAPA: Record<string, string> = {
-    [ETAPA.AVISO_RECIBIDO]: "Aviso recibido",
-    [ETAPA.VISITA_CONCERTADA]: "Visita concertada",
-    [ETAPA.DATOS_RECOGIDOS]: "Datos recogidos",
-    [ETAPA.PRESUPUESTO_EN_REVISION]: "Presupuesto en revisión",
-    [ETAPA.PRESUPUESTO_ENVIADO]: "Presupuesto enviado",
-    [ETAPA.EN_NEGOCIACION]: "En negociación",
-    [ETAPA.GANADA]: "Ganada",
-    [ETAPA.PERDIDA]: "Pérdida",
 };
 
 type DatosOportunidad = {
@@ -71,6 +38,7 @@ type OportunidadAbierta = {
     id: string;
     name: string;
     pipelineStageId: string;
+    etapa: ClaveEtapa | null;
     createdAt: string;
     modeloNegocio: string | null;
 }
@@ -79,6 +47,11 @@ export type OportunidadListado = {
     id: string;
     name: string;
     pipelineStageId: string;
+    /**
+     * Etapa normalizada. La UI trabaja con esto y no con `pipelineStageId`: el
+     * ID de una misma etapa es distinto en cada subcuenta.
+     */
+    etapa: ClaveEtapa | null;
     createdAt: string;
     modeloNegocio: string | null;
     comunidadNombre: string | null;
@@ -185,16 +158,18 @@ function construirDescripcion(datos: {
     ].join("\n");
 }
 
-function mapearOportunidadListado(op: any): OportunidadListado {
+function mapearOportunidadListado(subcuenta: Subcuenta, op: any): OportunidadListado {
+    const { campos } = idsGhl(subcuenta);
     return {
         id: op.id,
         name: op.name,
         pipelineStageId: op.pipelineStageId,
+        etapa: claveEtapa(subcuenta, op.pipelineStageId),
         createdAt: op.createdAt,
-        modeloNegocio: valorCampo(op, CUSTOM_FIELD_MODELO_NEGOCIO),
-        comunidadNombre: valorCampo(op, CUSTOM_FIELD_COMUNIDAD),
-        fechaVisita: valorFecha(op, CUSTOM_FIELD_FECHA_VISITA),
-        descripcionVisita: valorCampo(op, CUSTOM_FIELD_DESCRIPCION),
+        modeloNegocio: valorCampo(op, campos.MODELO_NEGOCIO),
+        comunidadNombre: valorCampo(op, campos.COMUNIDAD),
+        fechaVisita: valorFecha(op, campos.FECHA_VISITA),
+        descripcionVisita: valorCampo(op, campos.DESCRIPCION),
         administrador: {
             id: op.contactId ?? op.contact?.id ?? null,
             nombre: op.contact?.name ?? null,
@@ -206,20 +181,21 @@ function mapearOportunidadListado(op: any): OportunidadListado {
 
 export async function crearOportunidad(subcuenta: Subcuenta, datos: DatosOportunidad) {
     const descripcionCompleta = construirDescripcion(datos);
+    const { pipelineId, etapas, campos } = idsGhl(subcuenta);
 
     const data = await saFetch(subcuenta, "/opportunities/", {
         method: "POST",
         body: JSON.stringify({
             locationId: getLocationId(subcuenta),
-            pipelineId: PIPELINE_ID,
-            pipelineStageId: ETAPA.AVISO_RECIBIDO,
+            pipelineId,
+            pipelineStageId: etapas.AVISO_RECIBIDO,
             contactId: datos.contactId,
             name: `${datos.comunidadNombre} - ${ETIQUETA_MODELO_NEGOCIO[datos.modeloNegocio]}`,
             status: "open",
             customFields: [
-                { id: CUSTOM_FIELD_MODELO_NEGOCIO, field_value: ETIQUETA_MODELO_NEGOCIO[datos.modeloNegocio] },
-                { id: CUSTOM_FIELD_DESCRIPCION, field_value: descripcionCompleta },
-                { id: CUSTOM_FIELD_FECHA_VISITA, field_value: datos.fecha },
+                { id: campos.MODELO_NEGOCIO, field_value: ETIQUETA_MODELO_NEGOCIO[datos.modeloNegocio] },
+                { id: campos.DESCRIPCION, field_value: descripcionCompleta },
+                { id: campos.FECHA_VISITA, field_value: datos.fecha },
             ],
         }),
     });
@@ -231,21 +207,22 @@ export async function crearOportunidad(subcuenta: Subcuenta, datos: DatosOportun
 
 export async function crearOportunidadDesdeVisita(subcuenta: Subcuenta, datos: DatosOportunidad) {
     const descripcionCompleta = construirDescripcion(datos);
+    const { pipelineId, etapas, campos } = idsGhl(subcuenta);
 
     const data = await saFetch(subcuenta, "/opportunities/", {
         method: "POST",
         body: JSON.stringify({
             locationId: getLocationId(subcuenta),
-            pipelineId: PIPELINE_ID,
-            pipelineStageId: ETAPA.DATOS_RECOGIDOS,
+            pipelineId,
+            pipelineStageId: etapas.DATOS_RECOGIDOS,
             contactId: datos.contactId,
             name: `${datos.comunidadNombre} - ${ETIQUETA_MODELO_NEGOCIO[datos.modeloNegocio]}`,
             status: "open",
             customFields: [
-                { id: CUSTOM_FIELD_MODELO_NEGOCIO, field_value: ETIQUETA_MODELO_NEGOCIO[datos.modeloNegocio] },
-                { id: CUSTOM_FIELD_DESCRIPCION, field_value: descripcionCompleta },
-                { id: CUSTOM_FIELD_FECHA_VISITA, field_value: datos.fecha },
-                { id: CUSTOM_FIELD_COMUNIDAD, field_value: datos.comunidadNombre },
+                { id: campos.MODELO_NEGOCIO, field_value: ETIQUETA_MODELO_NEGOCIO[datos.modeloNegocio] },
+                { id: campos.DESCRIPCION, field_value: descripcionCompleta },
+                { id: campos.FECHA_VISITA, field_value: datos.fecha },
+                { id: campos.COMUNIDAD, field_value: datos.comunidadNombre },
             ],
         }),
     });
@@ -258,9 +235,11 @@ export async function crearOportunidadDesdeVisita(subcuenta: Subcuenta, datos: D
 export async function buscarOportunidadesAbiertas(
     subcuenta: Subcuenta,
     contactId: string,
-    etapasCandidatas: string[]
+    etapasCandidatas: readonly ClaveEtapa[]
 ): Promise<OportunidadAbierta[]> {
     const locationId = getLocationId(subcuenta);
+    const { pipelineId, etapas, campos } = idsGhl(subcuenta);
+    const idsCandidatos = etapasCandidatas.map((clave) => etapas[clave]);
 
     const data = await saFetch(
         subcuenta,
@@ -272,28 +251,31 @@ export async function buscarOportunidadesAbiertas(
     return oportunidades
         .filter(
             (op) =>
-                op.pipelineId === PIPELINE_ID &&
+                op.pipelineId === pipelineId &&
                 op.status === "open" &&
-                etapasCandidatas.includes(op.pipelineStageId)
+                idsCandidatos.includes(op.pipelineStageId)
         )
         .map((op) => ({
             id: op.id,
             name: op.name,
             pipelineStageId: op.pipelineStageId,
+            etapa: claveEtapa(subcuenta, op.pipelineStageId),
             createdAt: op.createdAt,
-            modeloNegocio: valorCampo(op, CUSTOM_FIELD_MODELO_NEGOCIO),
+            modeloNegocio: valorCampo(op, campos.MODELO_NEGOCIO),
         }));
 }
 
 export async function listarOportunidades(
     subcuenta: Subcuenta,
-    etapasIncluidas: string[]
+    etapasIncluidas: readonly ClaveEtapa[]
 ): Promise<OportunidadListado[]> {
     const locationId = getLocationId(subcuenta);
+    const { pipelineId, etapas } = idsGhl(subcuenta);
+    const idsIncluidos = etapasIncluidas.map((clave) => etapas[clave]);
 
     const data = await saFetch(
         subcuenta,
-        `/opportunities/search?location_id=${locationId}&pipeline_id=${PIPELINE_ID}`
+        `/opportunities/search?location_id=${locationId}&pipeline_id=${pipelineId}`
     );
 
     const oportunidades: any[] = data.opportunities ?? [];
@@ -301,10 +283,10 @@ export async function listarOportunidades(
     return oportunidades
         .filter(
             (op) =>
-                op.pipelineId === PIPELINE_ID &&
-                etapasIncluidas.includes(op.pipelineStageId)
+                op.pipelineId === pipelineId &&
+                idsIncluidos.includes(op.pipelineStageId)
         )
-        .map(mapearOportunidadListado);
+        .map((op) => mapearOportunidadListado(subcuenta, op));
 }
 
 export async function obtenerOportunidad(
@@ -315,7 +297,7 @@ export async function obtenerOportunidad(
         const data = await saFetch(subcuenta, `/opportunities/${oportunidadId}`);
         const op = data.opportunity ?? data;
         if (!op?.id) return null;
-        return mapearOportunidadListado(op);
+        return mapearOportunidadListado(subcuenta, op);
     } catch {
         return null;
     }
@@ -327,16 +309,17 @@ export async function adjuntarDatosVisita(
     datos: DatosVisita
 ) {
     const descripcionCompleta = construirDescripcion(datos);
+    const { etapas, campos } = idsGhl(subcuenta);
 
     const data = await saFetch(subcuenta, `/opportunities/${oportunidadId}`, {
         method: "PUT",
         body: JSON.stringify({
-            pipelineStageId: ETAPA.DATOS_RECOGIDOS,
+            pipelineStageId: etapas.DATOS_RECOGIDOS,
             customFields: [
-                { id: CUSTOM_FIELD_MODELO_NEGOCIO, field_value: ETIQUETA_MODELO_NEGOCIO[datos.modeloNegocio] },
-                { id: CUSTOM_FIELD_DESCRIPCION, field_value: descripcionCompleta },
-                { id: CUSTOM_FIELD_FECHA_VISITA, field_value: datos.fecha },
-                { id: CUSTOM_FIELD_COMUNIDAD, field_value: datos.comunidadNombre },
+                { id: campos.MODELO_NEGOCIO, field_value: ETIQUETA_MODELO_NEGOCIO[datos.modeloNegocio] },
+                { id: campos.DESCRIPCION, field_value: descripcionCompleta },
+                { id: campos.FECHA_VISITA, field_value: datos.fecha },
+                { id: campos.COMUNIDAD, field_value: datos.comunidadNombre },
             ],
         }),
     });
@@ -348,9 +331,8 @@ export async function adjuntarDatosVisita(
  *
  * Es donde Miguel y el comercial ven el documento desde GHL. Hasta ahora la URL
  * solo vivía dentro del JSON del registro de estado, que nadie va a abrir para
- * sacar un enlace.
+ * sacar un enlace. Su ID, por subcuenta, en lib/ghl/ids.ts (`campos.PRESUPUESTO`).
  */
-const CUSTOM_FIELD_PRESUPUESTO = "BYt6QSQIz4jpDtDtL6J0";
 
 export type DocumentoAdjunto = {
     url: string;
@@ -400,7 +382,7 @@ export async function adjuntarPresupuesto(
         body: JSON.stringify({
             customFields: [
                 {
-                    id: CUSTOM_FIELD_PRESUPUESTO,
+                    id: idsGhl(subcuenta).campos.PRESUPUESTO,
                     field_value: [
                         {
                             url: documento.url,

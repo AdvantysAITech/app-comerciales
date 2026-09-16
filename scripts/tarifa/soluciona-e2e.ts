@@ -6,6 +6,7 @@ import { join } from "node:path";
 
 import { esSubcuentaValida, type SubcuentaSlug } from "../../lib/subcuenta";
 import { saFetch } from "../../lib/ghl/client";
+import { idsGhl } from "../../lib/ghl/ids";
 import { obtenerComunidad } from "../../lib/ghl/comunidades";
 import { obtenerAdministrador } from "../../lib/ghl/administradores";
 import type { PayloadVisita } from "../../lib/visita/payload";
@@ -79,7 +80,7 @@ if (!esSubcuentaValida(subcuenta)) {
 const version = Number(valorDe("version") ?? 1);
 const requestId = `${subcuenta}-${oportunidadId}-e2e-v${version}`;
 
-const CUSTOM_FIELD_DATOS_VISITA = "xFXns9nopnKIR4RDRf2g";
+const CUSTOM_FIELD_DATOS_VISITA = idsGhl(subcuenta).campos.DATOS_VISITA;
 
 const salida = join(process.cwd(), "salida", "e2e");
 mkdirSync(salida, { recursive: true });

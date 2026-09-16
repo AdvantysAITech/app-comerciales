@@ -1,5 +1,6 @@
 import { auth } from "@/auth";
-import { listarOportunidades, ETAPAS_PRESUPUESTO, ETAPA } from "@/lib/ghl/oportunidades";
+import { listarOportunidades } from "@/lib/ghl/oportunidades";
+import { ETAPAS_PRESUPUESTO, type ClaveEtapa } from "@/lib/ghl/ids";
 import { PanelPresupuestos } from "@/components/PanelPresupuesto";
 import { LogoSubcuenta } from "@/components/LogoSubcuenta";
 
@@ -14,13 +15,10 @@ export default async function DashboardPage() {
     const oportunidades = await listarOportunidades(subcuenta, ETAPAS_PRESUPUESTO);
 
     const total = oportunidades.length;
-    const porRevisar = oportunidades.filter((op) =>
-        ([ETAPA.PRESUPUESTO_EN_REVISION, ETAPA.PRESUPUESTO_ENVIADO, ETAPA.EN_NEGOCIACION] as string[]).includes(
-            op.pipelineStageId
-        )
-    ).length;
-    const ganados = oportunidades.filter((op) => op.pipelineStageId === ETAPA.GANADA).length;
-    const perdidos = oportunidades.filter((op) => op.pipelineStageId === ETAPA.PERDIDA).length;
+    const etapasPorRevisar: readonly ClaveEtapa[] = ["PRESUPUESTO_EN_REVISION", "PRESUPUESTO_ENVIADO", "EN_NEGOCIACION"];
+    const porRevisar = oportunidades.filter((op) => op.etapa !== null && etapasPorRevisar.includes(op.etapa)).length;
+    const ganados = oportunidades.filter((op) => op.etapa === "GANADA").length;
+    const perdidos = oportunidades.filter((op) => op.etapa === "PERDIDA").length;
 
     const nombre = session.user.name ?? "";
     const iniciales =

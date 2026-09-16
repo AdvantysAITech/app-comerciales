@@ -62,6 +62,10 @@ async function main(): Promise<void> {
     process.env.SA_CAMPO_ESTADO_DOCUMENTO = CAMPO;
     process.env.SA_SCALA_API_TOKEN = "pit-simulado";
     process.env.SA_SCALA_LOCATION_ID = "loc-simulado";
+    process.env.SOLUCIONA_PLANTILLA_SCALA_URL = "https://plantilla.simulada/scala.odt";
+    // Vertical: campo de estado sí, plantilla no. Ver checks de disponibilidad.
+    process.env.SA_VERTICAL_CAMPO_ESTADO_DOCUMENTO = "campo-vertical-simulado";
+    delete process.env.SOLUCIONA_PLANTILLA_VERTICAL_URL;
 
     const {
         leerRegistro,
@@ -73,7 +77,14 @@ async function main(): Promise<void> {
 
     console.log("\n== Disponibilidad por subcuenta ==");
     check("scala operativa", documentosDisponibles("scala-valencia"));
-    check("vertical bloqueada aunque tenga campo en .env", !documentosDisponibles("vertical-projects"));
+    check("vertical bloqueada sin plantilla aunque tenga campo de estado", !documentosDisponibles("vertical-projects"));
+    process.env.SOLUCIONA_PLANTILLA_VERTICAL_URL = "https://plantilla.simulada/vertical.odt";
+    check("vertical operativa con campo de estado y plantilla", documentosDisponibles("vertical-projects"));
+    delete process.env.SA_VERTICAL_CAMPO_ESTADO_DOCUMENTO;
+    check("vertical bloqueada sin campo de estado", !documentosDisponibles("vertical-projects"));
+    delete process.env.SOLUCIONA_PLANTILLA_SCALA_URL;
+    check("scala bloqueada sin plantilla", !documentosDisponibles("scala-valencia"));
+    process.env.SOLUCIONA_PLANTILLA_SCALA_URL = "https://plantilla.simulada/scala.odt";
 
     console.log("\n== Lectura ==");
     simular(() => new Error("ECONNRESET"));

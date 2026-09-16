@@ -7,7 +7,7 @@ async function main() {
     const resultado = await buscarOportunidadesAbiertas(
         "scala-valencia",
         "dEZqLNQCSJrZR1HXFEvv",
-        ["4d3b0cf1-c995-4fa4-9cac-bcde44b24d62"]
+        ["AVISO_RECIBIDO"]
     );
     console.log(JSON.stringify(resultado, null, 2));
 }

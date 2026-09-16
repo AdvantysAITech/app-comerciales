@@ -41,6 +41,11 @@ function urlPlantilla(subcuenta: string): string | undefined {
     return url?.trim() || undefined;
 }
 
+/** Si la subcuenta tiene URL de plantilla configurada. No la descarga. */
+export function plantillaConfigurada(subcuenta: SubcuentaSlug): boolean {
+    return Boolean(urlPlantilla(subcuenta));
+}
+
 const NOMBRE_PLANTILLA: Record<string, string> = {
     "scala-valencia": "Plantilla_Presupuesto_Scala.odt",
     "vertical-projects": "Plantilla_Presupuesto_Vertical.odt",

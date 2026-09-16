@@ -22,7 +22,10 @@
     "soluciona:e2e": "tsx scripts/tarifa/soluciona-e2e.ts",
     "soluciona:consultar": "tsx scripts/tarifa/soluciona-consultar.ts",
     "buscador:indice": "tsx scripts/tarifa/generar-indice-buscador.ts",
-    "modulos:probar": "tsx scripts/tarifa/probar-modulos-nuevos.ts"
+    "modulos:probar": "tsx scripts/tarifa/probar-modulos-nuevos.ts",
+    "licencias:probar": "tsx scripts/tarifa/probar-licencias.ts",
+    "ghl:comparar": "tsx scripts/ghl/comparar-subcuentas.ts",
+    "ids:probar": "tsx scripts/ghl/probar-ids.ts"
   },
   "dependencies": {
     "@resvg/resvg-js": "^2.6.2",

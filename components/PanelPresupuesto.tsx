@@ -2,7 +2,8 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { ETAPAS_PRESUPUESTO, NOMBRE_ETAPA, type OportunidadListado } from "@/lib/ghl/oportunidades";
+import type { OportunidadListado } from "@/lib/ghl/oportunidades";
+import { ETAPAS_PRESUPUESTO, NOMBRE_ETAPA } from "@/lib/ghl/ids";
 
 type Props = {
     oportunidades: OportunidadListado[];
@@ -10,7 +11,7 @@ type Props = {
 
 const OPCIONES_ETAPA = [
     { value: "todas", label: "Todas las etapas" },
-    ...ETAPAS_PRESUPUESTO.map((id) => ({ value: id, label: NOMBRE_ETAPA[id] })),
+    ...ETAPAS_PRESUPUESTO.map((clave) => ({ value: clave, label: NOMBRE_ETAPA[clave] })),
 ];
 
 const OPCIONES_PERIODO = [
@@ -43,7 +44,7 @@ export function PanelPresupuestos({ oportunidades }: Props) {
                 texto === "" ||
                 (op.comunidadNombre ?? op.name).toLowerCase().includes(texto) ||
                 (op.administrador.nombre ?? "").toLowerCase().includes(texto);
-            const coincideEtapa = etapa === "todas" || op.pipelineStageId === etapa;
+            const coincideEtapa = etapa === "todas" || op.etapa === etapa;
             const coincideFecha = coincidePeriodo(op.createdAt, periodo);
             return coincideTexto && coincideEtapa && coincideFecha;
         });
@@ -114,7 +115,7 @@ export function PanelPresupuestos({ oportunidades }: Props) {
                                 {op.modeloNegocio ?? "Sin modelo asignado"} · {op.administrador.nombre ?? "Sin administrador"}
                             </p>
                             <span className="mt-3 inline-block rounded-full border border-hairline px-2.5 py-1 text-[11px] font-medium text-ink">
-                                {NOMBRE_ETAPA[op.pipelineStageId] ?? "—"}
+                                {op.etapa ? NOMBRE_ETAPA[op.etapa] : "—"}
                             </span>
                         </Link>
                     ))}

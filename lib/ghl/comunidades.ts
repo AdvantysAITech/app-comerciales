@@ -1,18 +1,17 @@
 import { saFetch, type Subcuenta, getLocationId } from "./client";
 import { normalizarNombre } from "../texto";
+import { idsGhl } from "./ids";
 
 const OBJECT_KEY_COMUNIDAD = "custom_objects.comunidades_de_propietarios";
 const OBJECT_KEY_ADMINISTRADOR = "custom_objects.administradores_de_fincas";
 
-// Association "comunidad_de_la_oportunidad" (Comunidades De Propietarios -> Opportunity),
-// confirmada por curl el 31/07/2026. GHL no impone cardinalidad 1:1 en esta relación:
-// hay que evitar crearla más de una vez por oportunidad desde el propio código.
-const ASSOCIATION_ID_COMUNIDAD_OPORTUNIDAD = "6a4b7ab79e37d62b69f3fced";
-
-// Association "administrador_asignado" (Administradores De Fincas -> Comunidades),
-// confirmada por PowerShell el 17/08/2026 contra /associations/.
-// El orden NO es intercambiable: firstRecordId = administrador, secondRecordId = comunidad.
-const ASSOCIATION_ID_ADMINISTRADOR_COMUNIDAD = "6a4b75539e37d69185f0e716";
+// IDs de asociación por subcuenta en lib/ghl/ids.ts (16/09/2026):
+//  - "comunidad_de_la_oportunidad" (Comunidades De Propietarios -> Opportunity).
+//    GHL no impone cardinalidad 1:1: hay que evitar crearla más de una vez por
+//    oportunidad desde el propio código.
+//  - "administrador_asignado" (Administradores De Fincas -> Comunidades).
+//    El orden NO es intercambiable: firstRecordId = administrador,
+//    secondRecordId = comunidad. Verificado igual en Scala y en Vertical.
 
 // Tope de páginas al listar. Con 7 comunidades reales hoy sobra de largo; existe
 // para que un fallo de paginación nunca se convierta en un bucle infinito.
@@ -254,7 +253,7 @@ export async function asociarAdministradorConComunidad(
         method: "POST",
         body: JSON.stringify({
             locationId: getLocationId(subcuenta),
-            associationId: ASSOCIATION_ID_ADMINISTRADOR_COMUNIDAD,
+            associationId: idsGhl(subcuenta).asociaciones.ADMINISTRADOR_COMUNIDAD,
             firstRecordId: administradorId,
             secondRecordId: comunidadId,
         }),
@@ -270,7 +269,7 @@ export async function asociarComunidadConOportunidad(
         method: "POST",
         body: JSON.stringify({
             locationId: getLocationId(subcuenta),
-            associationId: ASSOCIATION_ID_COMUNIDAD_OPORTUNIDAD,
+            associationId: idsGhl(subcuenta).asociaciones.COMUNIDAD_OPORTUNIDAD,
             firstRecordId: comunidadId,
             secondRecordId: oportunidadId,
         }),

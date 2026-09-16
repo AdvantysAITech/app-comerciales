@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { upsertContact } from "@/lib/ghl/contactos";
-import { buscarOportunidadesAbiertas, adjuntarDatosVisita, crearOportunidadDesdeVisita, ETAPA } from "@/lib/ghl/oportunidades";
+import { buscarOportunidadesAbiertas, adjuntarDatosVisita, crearOportunidadDesdeVisita } from "@/lib/ghl/oportunidades";
 
 export async function POST(request: NextRequest) {
     const session = await auth();
@@ -24,7 +24,7 @@ export async function POST(request: NextRequest) {
         }
 
         const candidatas = await buscarOportunidadesAbiertas(subcuenta, contactId, [
-            ETAPA.VISITA_CONCERTADA,
+            "VISITA_CONCERTADA",
         ]);
 
         if (candidatas.length === 0) {

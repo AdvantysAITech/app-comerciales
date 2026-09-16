@@ -1,5 +1,6 @@
 import type { Catalogo, ModuloTrabajo, NodoCatalogo } from "./tipos";
 import { MODULOS } from "./modulos";
+import { aplicarLicencias } from "./licencias";
 
 export type { Catalogo, ModuloTrabajo, NodoCatalogo, Unidad, ModeloNegocioDercas, TipoCaptura } from "./tipos";
 export { ETIQUETA_UNIDAD } from "./tipos";
@@ -16,14 +17,17 @@ type Subcuenta = "scala-valencia" | "vertical-projects";
 /**
  * Catálogo por subcuenta.
  *
- * Hoy ambas apuntan al mismo árbol porque el brief viene de Scala y el DERCAS
- * §1.4 dice que los snapshots son idénticos en lógica de negocio. La separación
- * existe desde el día uno porque Vertical acabará divergiendo (no tiene licencia
- * de amianto) y no queremos refactorizar el modelo cuando ocurra.
+ * Las dos parten del mismo árbol porque el DERCAS §1.4 dice que los snapshots
+ * son idénticos en lógica de negocio. La diferencia son las licencias: desde el
+ * 16/09/2026 Vertical Projects no ve ninguna opción de amianto (no tiene
+ * licencia RERA, DERCAS §4.1). Ver lib/catalogo/licencias.ts.
+ *
+ * VERSION_CATALOGO no sube: no se renombra ni elimina ninguna clave del árbol
+ * base, solo se deja de ofrecer una parte a una subcuenta.
  */
 const CATALOGOS: Record<Subcuenta, Catalogo> = {
-    "scala-valencia": { version: VERSION_CATALOGO, modulos: MODULOS },
-    "vertical-projects": { version: VERSION_CATALOGO, modulos: MODULOS },
+    "scala-valencia": { version: VERSION_CATALOGO, modulos: aplicarLicencias("scala-valencia", MODULOS) },
+    "vertical-projects": { version: VERSION_CATALOGO, modulos: aplicarLicencias("vertical-projects", MODULOS) },
 };
 
 export function getCatalogo(subcuenta: Subcuenta): Catalogo {

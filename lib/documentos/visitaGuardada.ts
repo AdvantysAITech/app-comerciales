@@ -1,4 +1,5 @@
 import { saFetch, type Subcuenta } from "@/lib/ghl/client";
+import { idsGhl } from "@/lib/ghl/ids";
 import type { PayloadVisita } from "@/lib/visita/payload";
 
 /**
@@ -13,8 +14,11 @@ import type { PayloadVisita } from "@/lib/visita/payload";
  * dos sitios donde olvidarlo.
  */
 
-/** Campo LARGE_TEXT con el JSON canónico de la visita. */
-export const CUSTOM_FIELD_DATOS_VISITA = "xFXns9nopnKIR4RDRf2g";
+/*
+ * El id del campo LARGE_TEXT con el JSON canónico de la visita vive en
+ * lib/ghl/ids.ts (`campos.DATOS_VISITA`), por subcuenta. Lo anunciado arriba
+ * pasó: en Vertical el campo tiene otro id (16/09/2026).
+ */
 
 /**
  * Devuelve el payload de la visita, o `null` si la oportunidad no lo tiene.
@@ -35,7 +39,8 @@ export async function leerPayloadVisita(
     const campos: Array<{ id: string; fieldValue?: unknown; field_value?: unknown }> =
         oportunidad?.customFields ?? [];
 
-    const campo = campos.find((c) => c.id === CUSTOM_FIELD_DATOS_VISITA);
+    const idCampo = idsGhl(subcuenta).campos.DATOS_VISITA;
+    const campo = campos.find((c) => c.id === idCampo);
     const valor = campo?.fieldValue ?? campo?.field_value;
     if (typeof valor !== "string" || valor.trim() === "") return null;
 

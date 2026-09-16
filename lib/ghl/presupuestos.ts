@@ -2,7 +2,7 @@ import { saFetch, getLocationId, type Subcuenta } from "./client";
 import { obtenerOCrearComunidad, asociarComunidadConOportunidad } from "./comunidades";
 import { listarAdministradores } from "./administradores";
 import { upsertContact } from "./contactos";
-import { ETAPA } from "./oportunidades";
+import { idsGhl } from "./ids";
 import {
     agruparEnOportunidades,
     construirPayload,
@@ -24,17 +24,7 @@ import {
  * DERCAS 4.2, ya registrada, y hay que revisarla cuando Avisos se desarrolle.
  */
 
-const PIPELINE_ID = "Lg3gwS0oqpYDiBm8bjcD";
-
-// Mismos ids que en oportunidades.ts. Se repiten aqui a proposito para no volver
-// a tocar ese fichero en esta entrega; cuando haya que editarlo de nuevo, se
-// unifican en un solo modulo de constantes.
-const CUSTOM_FIELD_MODELO_NEGOCIO = "PTtDhuZnyksZ9Tj0Sb4f";
-const CUSTOM_FIELD_DESCRIPCION = "T9ubn5i7yJhutgOBSWZD";
-const CUSTOM_FIELD_FECHA_VISITA = "jltp3YJ2gnMMVnoIepLn";
-const CUSTOM_FIELD_COMUNIDAD = "rUPG2ZYUgBLRlEvR1tHh";
-/** Campo LARGE_TEXT creado el 17/08/2026 para el JSON canonico de la visita. */
-const CUSTOM_FIELD_DATOS_VISITA = "xFXns9nopnKIR4RDRf2g";
+// Pipeline, etapas y custom fields: lib/ghl/ids.ts, por subcuenta (16/09/2026).
 
 /**
  * Etiquetas EXACTAS del picklist "Modelo de negocio".
@@ -93,11 +83,12 @@ async function crearOportunidadPresupuesto(
         json: string;
     }
 ): Promise<string> {
+    const { pipelineId, etapas, campos } = idsGhl(subcuenta);
     const customFields: Array<{ id: string; field_value: string }> = [
-        { id: CUSTOM_FIELD_DESCRIPCION, field_value: datos.descripcion },
-        { id: CUSTOM_FIELD_FECHA_VISITA, field_value: datos.fechaVisita },
-        { id: CUSTOM_FIELD_COMUNIDAD, field_value: datos.comunidadNombre },
-        { id: CUSTOM_FIELD_DATOS_VISITA, field_value: datos.json },
+        { id: campos.DESCRIPCION, field_value: datos.descripcion },
+        { id: campos.FECHA_VISITA, field_value: datos.fechaVisita },
+        { id: campos.COMUNIDAD, field_value: datos.comunidadNombre },
+        { id: campos.DATOS_VISITA, field_value: datos.json },
     ];
 
     // Si los modulos de la oportunidad no comparten modelo de negocio, el campo
@@ -105,7 +96,7 @@ async function crearOportunidadPresupuesto(
     // aceptaria cualquier cosa. Mejor un hueco auditable que un dato inventado.
     if (datos.modeloNegocio) {
         customFields.push({
-            id: CUSTOM_FIELD_MODELO_NEGOCIO,
+            id: campos.MODELO_NEGOCIO,
             field_value: ETIQUETA_MODELO_NEGOCIO[datos.modeloNegocio],
         });
     }
@@ -114,8 +105,8 @@ async function crearOportunidadPresupuesto(
         method: "POST",
         body: JSON.stringify({
             locationId: getLocationId(subcuenta),
-            pipelineId: PIPELINE_ID,
-            pipelineStageId: ETAPA.DATOS_RECOGIDOS,
+            pipelineId,
+            pipelineStageId: etapas.DATOS_RECOGIDOS,
             contactId: datos.contactId,
             name: datos.nombre,
             status: "open",

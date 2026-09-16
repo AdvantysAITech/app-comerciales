@@ -1,4 +1,5 @@
 import { saFetch, type Subcuenta } from "@/lib/ghl/client";
+import { plantillaConfigurada } from "./plantilla";
 
 /** Se lee en cada llamada, no al importar. Mismo motivo que en plantilla.ts. */
 function campoEstadoDe(subcuenta: string): string | undefined {
@@ -15,16 +16,16 @@ function campoEstadoDe(subcuenta: string): string | undefined {
 /**
  * Subcuentas con la parametrización de GHL terminada.
  *
- * Tener el custom field configurado en .env.local NO significa que la
- * subcuenta esté lista: Vertical Projects tiene la variable puesta pero la
- * subcuenta está vacía (sin custom objects, sin contactos, sin oportunidades)
- * a 31/08/2026. Sin esta lista, `documentosDisponibles` devolvería true y
- * Toni podría lanzar una generación que fallaría a mitad.
+ * Tener el custom field configurado en el entorno NO significa que la
+ * subcuenta esté lista: a 31/08/2026 Vertical tenía la variable puesta y la
+ * subcuenta vacía. Sin esta lista, `documentosDisponibles` devolvería true y se
+ * podría lanzar una generación que fallaría a mitad.
  *
- * Quitar "vertical-projects" del comentario y añadirlo al Set cuando se
- * replique la subcuenta.
+ * 16/09/2026: Vertical replicada con el snapshot de Scala e IDs cargados en
+ * lib/ghl/ids.ts. Se añade. La generación sigue dependiendo además de que
+ * estén SA_VERTICAL_CAMPO_ESTADO_DOCUMENTO y SOLUCIONA_PLANTILLA_VERTICAL_URL.
  */
-const SUBCUENTAS_OPERATIVAS: ReadonlySet<string> = new Set(["scala-valencia"]);
+const SUBCUENTAS_OPERATIVAS: ReadonlySet<string> = new Set(["scala-valencia", "vertical-projects"]);
 
 export type EstadoDocumento =
     /** Se ha pedido pero aún no hay respuesta de la app. */
@@ -128,9 +129,19 @@ function campoConfigurado(subcuenta: Subcuenta): string {
     return campo;
 }
 
-/** Si la subcuenta puede generar documentos hoy. Para la UI. */
+/**
+ * Si la subcuenta puede generar documentos hoy. Para la UI.
+ *
+ * Exige también la URL de la plantilla: sin ella el botón aparecería y la
+ * generación fallaría delante del comercial con "No hay plantilla configurada".
+ * Mejor no ofrecerla hasta que esté la plantilla con la marca de esa empresa.
+ */
 export function documentosDisponibles(subcuenta: Subcuenta): boolean {
-    return Boolean(campoEstadoDe(subcuenta)) && SUBCUENTAS_OPERATIVAS.has(subcuenta);
+    return (
+        Boolean(campoEstadoDe(subcuenta)) &&
+        plantillaConfigurada(subcuenta) &&
+        SUBCUENTAS_OPERATIVAS.has(subcuenta)
+    );
 }
 
 /**

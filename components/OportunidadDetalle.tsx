@@ -1,5 +1,6 @@
 import { auth } from "@/auth";
-import { obtenerOportunidad, NOMBRE_ETAPA } from "@/lib/ghl/oportunidades";
+import { obtenerOportunidad } from "@/lib/ghl/oportunidades";
+import { NOMBRE_ETAPA } from "@/lib/ghl/ids";
 import { urlContactoSa, urlOportunidadSa } from "@/lib/ghl/urls";
 import { documentosDisponibles, leerRegistro } from "@/lib/documentos/estado";
 import { DocumentoPresupuesto } from "@/components/DocumentoPresupuesto";
@@ -34,7 +35,7 @@ export async function OportunidadDetalle({ id }: { id: string }) {
 
             <div className="mt-3 flex items-center justify-between gap-3">
                 <span className="inline-block rounded-full border border-hairline px-3 py-1 text-xs font-medium text-ink">
-                    {NOMBRE_ETAPA[oportunidad.pipelineStageId] ?? "Desconocido"}
+                    {oportunidad.etapa ? NOMBRE_ETAPA[oportunidad.etapa] : "Desconocido"}
                 </span>
                 <a
                     href={urlOportunidadSa(subcuenta, oportunidad.id)}
