@@ -208,12 +208,6 @@ export async function registrarPresupuesto(
         const payloadGrupo = payloadDelGrupo(payload, keys);
         const modeloNegocio = modeloNegocioComun(grupo.modulos);
 
-        if (!modeloNegocio) {
-            avisos.push(
-                `"${grupo.etiqueta}" mezcla varios modelos de negocio: el campo se ha dejado vacio en GHL. Revisalo antes de presupuestar.`
-            );
-        }
-
         const json = JSON.stringify(payloadGrupo);
 
         const id = await crearOportunidadPresupuesto(subcuenta, {
