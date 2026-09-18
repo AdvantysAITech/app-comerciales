@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { normalizarNombre } from "@/lib/texto";
+import { normalizarNombre, normalizarTelefono } from "@/lib/texto";
 
 /**
  * Alta rápida de administradores y comunidades desde el formulario.
@@ -247,6 +247,18 @@ export function AltaAdministrador({
         setError(null);
 
         try {
+            /**
+             * GHL valida el teléfono en el servidor (tipo PHONE, exige E.164) y
+             * devuelve un 400 con su propio mensaje en inglés. Se comprueba
+             * aquí para que el comercial lea algo accionable y no pierda el
+             * formulario relleno por un espacio de más.
+             */
+            if (telefono.trim() !== "" && normalizarTelefono(telefono) === null) {
+                throw new Error(
+                    "El teléfono no es válido. Escríbelo con 9 dígitos (600000000) o con prefijo (+34600000000)."
+                );
+            }
+
             const cuerpo: Record<string, unknown> = { nombreDespacho, contactoPrincipal, telefono, email, localidad, provincia };
 
             if (puedeEditarComision && comision.trim() !== "") {

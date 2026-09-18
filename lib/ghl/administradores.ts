@@ -1,5 +1,5 @@
 import { saFetch, type Subcuenta, getLocationId } from "./client";
-import { normalizarNombre } from "../texto";
+import { normalizarNombre, normalizarTelefono } from "../texto";
 
 const OBJECT_KEY_ADMINISTRADOR = "custom_objects.administradores_de_fincas";
 
@@ -220,7 +220,6 @@ export async function crearAdministrador(
 
     const opcionales: Array<[string, string | undefined]> = [
         [PROP.contactoPrincipal, datos.contactoPrincipal],
-        [PROP.telefono, datos.telefono],
         [PROP.email, datos.email],
         [PROP.localidad, datos.localidad],
         [PROP.provincia, datos.provincia],
@@ -229,6 +228,32 @@ export async function crearAdministrador(
     for (const [clave, valor] of opcionales) {
         const limpio = valor?.trim();
         if (limpio) properties[clave] = limpio;
+    }
+
+    /**
+     * El teléfono va aparte porque `telfono` es de tipo PHONE y GHL valida el
+     * formato: rechaza "600000000" con un 400 y exige E.164. Verificado en
+     * Scala y en Vertical el 18/09/2026 con `npm run ghl:probar-altas`.
+     *
+     * Se normaliza aquí, en la frontera con GHL, y no en el formulario: así
+     * cualquier otro consumidor futuro (importación de Excel, bot de WhatsApp)
+     * queda cubierto sin repetir la regla.
+     */
+    let telefonoNormalizado: string | undefined;
+    const telefonoEscrito = datos.telefono?.trim();
+
+    if (telefonoEscrito) {
+        const normalizado = normalizarTelefono(telefonoEscrito);
+
+        if (!normalizado) {
+            throw new Error(
+                `El teléfono "${telefonoEscrito}" no tiene un formato válido. ` +
+                    `Escríbelo con 9 dígitos (600000000) o en formato internacional (+34600000000).`
+            );
+        }
+
+        telefonoNormalizado = normalizado;
+        properties[PROP.telefono] = normalizado;
     }
 
     if (datos.comisionPactada !== undefined) {
@@ -259,7 +284,7 @@ export async function crearAdministrador(
         id: record.id,
         nombreDespacho,
         contactoPrincipal: datos.contactoPrincipal?.trim() || undefined,
-        telefono: datos.telefono?.trim() || undefined,
+        telefono: telefonoNormalizado,
         email: datos.email?.trim() || undefined,
         localidad: datos.localidad?.trim() || undefined,
         provincia: datos.provincia?.trim() || undefined,
