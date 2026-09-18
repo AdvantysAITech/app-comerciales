@@ -71,24 +71,87 @@ export async function convertirAWav(blob: Blob): Promise<File> {
  * crecer con la duración del dictado: son tres peticiones simultáneas en vez de
  * una de tres minutos.
  *
- * El corte es por tiempo, no por silencio: puede partir una palabra. Se asume.
- * Gemini transcribe cada trozo con contexto suficiente y el texto se une con un
- * espacio; una palabra ocasionalmente cortada es un precio bajísimo comparado
- * con un 413.
+ * ---------------------------------------------------------------------------
+ * POR QUÉ SE CORTA EN SILENCIO Y NO A TIEMPO FIJO (18/09/2026)
+ * ---------------------------------------------------------------------------
+ * La primera versión cortaba a los 30 s exactos. En la primera prueba real eso
+ * partió "cuarenta metros lineales" por la mitad, y el modelo, al recibir un
+ * fragmento que empieza a media palabra, se atascó y repitió la frase entera:
+ *
+ *     "...unos 40 25 ml. La tela asfáltica está 25 ml. La tela asfáltica está
+ *      levantada..."
+ *
+ * Así que el corte se busca en el punto MÁS SILENCIOSO dentro de una ventana
+ * alrededor del objetivo. Entre dos frases siempre hay una pausa, y cortar ahí
+ * deja los dos trozos empezando y acabando en frontera de palabra. No hace
+ * falta solapamiento ni eliminar duplicados después.
  */
+/** Margen de búsqueda del silencio, a cada lado del corte teórico. */
+const VENTANA_BUSQUEDA_S = 2.5;
+
+/** Tamaño de la ventana de energía. 20 ms es la escala de una pausa entre palabras. */
+const VENTANA_ENERGIA_MS = 20;
+
+/**
+ * Busca el punto más silencioso cerca de `objetivo` y devuelve su índice.
+ *
+ * Se mide energía media por ventanas de 20 ms y se elige la de menor valor. No
+ * hace falta un detector de voz: dentro de una franja de cinco segundos de
+ * dictado continuo SIEMPRE hay una pausa entre palabras, y la ventana más
+ * floja cae ahí.
+ */
+function buscarSilencio(muestras: Float32Array, objetivo: number): number {
+    const margen = Math.floor(VENTANA_BUSQUEDA_S * FRECUENCIA_DESTINO);
+    const ventana = Math.floor((VENTANA_ENERGIA_MS / 1000) * FRECUENCIA_DESTINO);
+
+    const desde = Math.max(ventana, objetivo - margen);
+    const hasta = Math.min(muestras.length - ventana, objetivo + margen);
+
+    if (hasta <= desde) return objetivo;
+
+    let mejorIndice = objetivo;
+    let mejorEnergia = Infinity;
+
+    for (let i = desde; i < hasta; i += ventana) {
+        let energia = 0;
+        for (let j = i; j < i + ventana; j++) energia += muestras[j] * muestras[j];
+
+        if (energia < mejorEnergia) {
+            mejorEnergia = energia;
+            // El corte va en mitad de la pausa, no en su borde.
+            mejorIndice = i + Math.floor(ventana / 2);
+        }
+    }
+
+    return mejorIndice;
+}
+
 export async function trocearAWav(blob: Blob, segundosPorTrozo = 30): Promise<File[]> {
     const muestras = await renderizarMono16k(blob);
     const porTrozo = Math.max(1, Math.floor(segundosPorTrozo * FRECUENCIA_DESTINO));
 
     const trozos: File[] = [];
+    let inicio = 0;
 
-    for (let inicio = 0, i = 0; inicio < muestras.length; inicio += porTrozo, i++) {
-        const corte = muestras.subarray(inicio, Math.min(inicio + porTrozo, muestras.length));
+    while (inicio < muestras.length) {
+        const objetivo = inicio + porTrozo;
+
+        // El último trozo llega hasta el final: no tiene sentido buscarle un
+        // silencio y dejar cola suelta.
+        const fin =
+            objetivo >= muestras.length
+                ? muestras.length
+                : Math.max(inicio + 1, buscarSilencio(muestras, objetivo));
+
+        const corte = muestras.subarray(inicio, fin);
+
         trozos.push(
-            new File([codificarWav(corte, FRECUENCIA_DESTINO)], `observaciones-${i + 1}.wav`, {
+            new File([codificarWav(corte, FRECUENCIA_DESTINO)], `observaciones-${trozos.length + 1}.wav`, {
                 type: "audio/wav",
             })
         );
+
+        inicio = fin;
     }
 
     return trozos;

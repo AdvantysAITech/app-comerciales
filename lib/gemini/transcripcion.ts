@@ -46,17 +46,74 @@ const INSTRUCCION = [
     "Es el dictado de un comercial durante una visita técnica a una comunidad de propietarios,",
     "en el sector de rehabilitación de fachadas y cubiertas.",
     "",
+    "Formato de salida: UN ÚNICO PÁRRAFO DE TEXTO CORRIDO.",
+    "",
+    "PROHIBIDO, sin excepción:",
+    "- Marcas de tiempo de cualquier tipo. Nada de 00:03.221, 00:00:03,221 ni '-->'.",
+    "- Formato de subtítulos (SRT, WebVTT), numeración de líneas o saltos por frase.",
+    "- Etiquetas de hablante, viñetas, encabezados, comillas o comentarios tuyos.",
+    "- Repetir una frase que ya has transcrito.",
+    "",
     "Reglas:",
-    "- Devuelve ÚNICAMENTE la transcripción. Sin preámbulos, sin comillas, sin comentarios.",
+    "- Devuelve ÚNICAMENTE la transcripción. Sin preámbulos.",
     "- No resumas, no corrijas el contenido y no añadas nada que no se haya dicho.",
     "- Corrige solo puntuación y mayúsculas para que el texto se lea bien.",
     "- Escribe las cifras en dígitos y las unidades abreviadas: 25 m2, 12 ml, 3 ud.",
+    "- El audio puede ser un fragmento de un dictado más largo: puede empezar o",
+    "  terminar a media frase. Transcribe lo que oigas y no intentes completarlo.",
     "- Si el audio está vacío o es ininteligible, devuelve una cadena vacía.",
     "",
     "Vocabulario habitual: peto, casetón, bajante, fibrocemento, caravista, zaguán,",
     "medianera, patio de luces, descuelgue, bimástil, andamio tubular, tela asfáltica,",
-    "EPDM, Geolite T40, mortero M-7,5, hidrófugo, revestimiento elástico, forjado, roza.",
+    "EPDM, Geolite T40, mortero M-7,5, hidrófugo, revestimiento elástico, forjado, roza,",
+    "canto de forjado, armadura vista, coronación, cota cero, zanja, rodapié.",
 ].join("\n");
+
+/**
+ * Red de seguridad sobre la salida del modelo.
+ *
+ * POR QUÉ EXISTE (18/09/2026): con el prompt anterior, un fragmento salió en
+ * formato WebVTT entero ("00:03.221 --> 00:08.061"), partiendo palabras por la
+ * mitad ("caset|ón", "ami|anto"). El prompt nuevo lo prohíbe explícitamente,
+ * pero una instrucción no es una garantía: si vuelve a ocurrir, es preferible
+ * limpiarlo aquí a que el comercial reciba subtítulos en el campo de
+ * observaciones.
+ *
+ * También colapsa frases repetidas consecutivas, que es como se manifiesta el
+ * atasco del modelo cuando un fragmento empieza a media palabra.
+ */
+export function limpiarTranscripcion(texto: string): string {
+    /**
+     * Las marcas se sustituyen por un espacio y NO se intenta reconstruir las
+     * palabras que hayan quedado partidas ("caset ón").
+     *
+     * Se probó a reunirlas mirando si a la derecha había una minúscula, y el
+     * resultado fue peor: "2 bajantes [marca] de fibrocemento" se convertía en
+     * "bajantesde". Sin diccionario no hay forma de distinguir una palabra
+     * partida de un espacio legítimo, y estropear texto correcto es peor que
+     * dejar un espacio feo en un caso raro. La defensa de verdad está en el
+     * prompt, que prohíbe las marcas, y en cortar el audio en silencio.
+     */
+    const sinMarcas = texto
+        // 00:03.221 --> 00:08.061  y  00:00:03,221 --> 00:00:08,061
+        .replace(/\d{1,2}:\d{2}(:\d{2})?[.,]\d{1,3}\s*-->\s*\d{1,2}:\d{2}(:\d{2})?[.,]\d{1,3}/g, " ")
+        // Marcas sueltas tipo [00:12] o (00:12.3)
+        .replace(/[[(]\s*\d{1,2}:\d{2}(:\d{2})?([.,]\d{1,3})?\s*[\])]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+
+    // Frases idénticas seguidas: se deja una.
+    const frases = sinMarcas.split(/(?<=[.!?])\s+/);
+    const limpias: string[] = [];
+
+    for (const frase of frases) {
+        const anterior = limpias[limpias.length - 1];
+        if (anterior && anterior.toLowerCase() === frase.toLowerCase()) continue;
+        limpias.push(frase);
+    }
+
+    return limpias.join(" ").trim();
+}
 
 export type ResultadoTranscripcion = {
     texto: string;
@@ -125,7 +182,13 @@ export async function transcribirAudio(archivo: File): Promise<ResultadoTranscri
         contents: [
             {
                 role: "user",
-                parts: [{ text: INSTRUCCION }, { inlineData: { mimeType, data: base64 } }],
+                /**
+                 * El AUDIO va primero y la instrucción después. Con la
+                 * instrucción delante, el modelo la trataba como contexto y
+                 * derivaba al formato de subtítulos; cerrando con ella, las
+                 * reglas de formato son lo último que lee antes de responder.
+                 */
+                parts: [{ inlineData: { mimeType, data: base64 } }, { text: INSTRUCCION }],
             },
         ],
         generationConfig: {
@@ -150,10 +213,12 @@ export async function transcribirAudio(archivo: File): Promise<ResultadoTranscri
         throw new Error(`Gemini bloqueó la petición: ${respuesta.promptFeedback.blockReason}`);
     }
 
-    const texto = (respuesta.candidates?.[0]?.content?.parts ?? [])
+    const bruto = (respuesta.candidates?.[0]?.content?.parts ?? [])
         .map((parte) => parte.text ?? "")
         .join("")
         .trim();
+
+    const texto = limpiarTranscripcion(bruto);
 
     return { texto, vacio: texto.length === 0 };
 }
