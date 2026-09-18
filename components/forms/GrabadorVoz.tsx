@@ -22,8 +22,22 @@ const SEGUNDOS_MAXIMOS = 180;
  */
 const SEGUNDOS_POR_TROZO = 30;
 
-/** Peticiones simultáneas. Más de tres no acelera y castiga la red en obra. */
-const CONCURRENCIA = 3;
+/**
+ * Peticiones simultáneas.
+ *
+ * Bajado de 3 a 2 el 18/09/2026. Trocear multiplicó por seis el número de
+ * llamadas a Gemini para un mismo dictado, y con tres en vuelo más el
+ * reintento se agotaba la cuota por minuto: en producción salieron 429 y 503
+ * encadenados. Dos mantiene casi toda la ganancia de velocidad con un tercio
+ * menos de presión sobre el límite de peticiones.
+ */
+const CONCURRENCIA = 2;
+
+/** Espera base del reintento. Crece en cada intento y lleva algo de azar. */
+const ESPERA_BASE_MS = 1200;
+
+/** Intentos por trozo, el primero incluido. */
+const MAX_INTENTOS = 3;
 
 /**
  * Corte por petición.
@@ -127,8 +141,15 @@ export function GrabadorVoz({ onTranscripcion, disabled = false }: Props) {
         setEstado("procesando");
     }
 
-    /** Una petición, con corte por tiempo y un reintento. */
-    async function transcribirTrozo(trozo: File, reintentos = 1): Promise<string> {
+    /**
+     * Una petición, con corte por tiempo y reintento con espera creciente.
+     *
+     * El reintento NO es incondicional. Ante un 429 (cuota agotada) volver a
+     * pedir es contraproducente: consume el poco margen que quede y retrasa el
+     * mensaje al comercial. Ante un 503 (modelo saturado) sí conviene, pero
+     * esperando, no en el mismo instante.
+     */
+    async function transcribirTrozo(trozo: File, intento = 0): Promise<string> {
         const controlador = new AbortController();
         const corte = setTimeout(() => controlador.abort(), TIEMPO_MAXIMO_MS);
 
@@ -159,14 +180,25 @@ export function GrabadorVoz({ onTranscripcion, disabled = false }: Props) {
             const datos = await respuesta.json();
             return (datos.texto as string) ?? "";
         } catch (e) {
-            // Un corte de red en obra es lo normal, no la excepción: se
-            // reintenta una vez antes de darlo por perdido.
-            if (reintentos > 0) return transcribirTrozo(trozo, reintentos - 1);
+            const mensaje = e instanceof Error ? e.message : "";
+
+            // Cuota agotada: no se reintenta. Sale directo al comercial.
+            if (mensaje.includes("[429]")) throw new Error(mensaje.replace("[429] ", ""));
+
+            // Un corte de red en obra es lo normal, no la excepción.
+            if (intento < MAX_INTENTOS - 1) {
+                // Espera creciente con algo de azar: si los dos trabajadores
+                // fallan a la vez, sin el azar reintentarían sincronizados y
+                // volverían a chocar contra el mismo límite.
+                const espera = ESPERA_BASE_MS * 2 ** intento + Math.random() * 400;
+                await new Promise((r) => setTimeout(r, espera));
+                return transcribirTrozo(trozo, intento + 1);
+            }
 
             if (e instanceof DOMException && e.name === "AbortError") {
                 throw new Error("La transcripción ha tardado demasiado");
             }
-            throw e;
+            throw new Error(mensaje.replace(/^\[\d+\] /, "") || "Error al transcribir");
         } finally {
             clearTimeout(corte);
         }

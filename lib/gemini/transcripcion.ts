@@ -1,4 +1,4 @@
-import { geminiGenerateContent } from "./client";
+import { ErrorGemini, geminiGenerateContent } from "./client";
 
 /**
  * Transcripción de las observaciones dictadas por el comercial (DERCAS §6.2:
@@ -64,6 +64,40 @@ export type ResultadoTranscripcion = {
     vacio: boolean;
 };
 
+/**
+ * Traduce los errores de Gemini a algo que un comercial pueda entender y que
+ * el cliente pueda usar para decidir si reintenta.
+ *
+ * El `status` se conserva en el mensaje entre corchetes porque la ruta solo
+ * devuelve texto: es la forma de que el navegador sepa que un 429 NO se
+ * reintenta y un 503 sí.
+ */
+async function llamar(cuerpo: unknown) {
+    try {
+        return await geminiGenerateContent(cuerpo);
+    } catch (error) {
+        if (!(error instanceof ErrorGemini)) throw error;
+
+        if (error.status === 429) {
+            throw new ErrorGemini(
+                429,
+                "[429] Se ha agotado la cuota de transcripción de Gemini. " +
+                    "Escribe las observaciones a mano y avisa a Advantys."
+            );
+        }
+
+        if (error.status === 503) {
+            throw new ErrorGemini(503, "[503] El servicio de transcripción está saturado ahora mismo.");
+        }
+
+        if (error.status === 504) {
+            throw new ErrorGemini(504, "[504] El servicio de transcripción ha tardado demasiado.");
+        }
+
+        throw error;
+    }
+}
+
 export async function transcribirAudio(archivo: File): Promise<ResultadoTranscripcion> {
     const mimeType = normalizarMime(archivo.type);
 
@@ -87,7 +121,7 @@ export async function transcribirAudio(archivo: File): Promise<ResultadoTranscri
 
     const base64 = Buffer.from(await archivo.arrayBuffer()).toString("base64");
 
-    const respuesta = await geminiGenerateContent({
+    const respuesta = await llamar({
         contents: [
             {
                 role: "user",
