@@ -30,6 +30,7 @@
     "bcryptjs": "^3.0.3",
     "dejavu-fonts-ttf": "^2.37.3",
     "fflate": "^0.8.3",
+    "heic-to": "^1.5.2",
     "next": "16.2.10",
     "next-auth": "^5.0.0-beta.31",
     "react": "19.2.4",

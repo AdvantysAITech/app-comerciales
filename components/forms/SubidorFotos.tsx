@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { normalizarFoto } from "@/lib/imagen/normalizar";
 
 /**
  * Subida de fotos de un módulo.
@@ -30,6 +31,20 @@ import { useCallback, useEffect, useState } from "react";
  * Para VER la foto está el visor: se pulsa y se abre a pantalla completa, que
  * era la otra mitad de la petición. Antes no había forma de ampliar una foto
  * sin abrirla en otra pestaña.
+ *
+ * ---------------------------------------------------------------------------
+ * GALERÍA Y CÁMARA POR SEPARADO (18/09/2026)
+ * ---------------------------------------------------------------------------
+ * Había un único input con `capture="environment"`. Ese atributo no es una
+ * sugerencia: en Android y en parte de iOS ABRE LA CÁMARA directamente y no
+ * deja elegir de la galería. Jose pasa las fotos del móvil al PC por Dropbox y
+ * las sube desde el ordenador, así que ese camino estaba cerrado para él.
+ *
+ * Ahora son dos entradas. La de cámara conserva `capture`; la de galería no lo
+ * lleva, que es justo lo que hace que se abra el selector de archivos.
+ *
+ * Todo lo que entra pasa por `normalizarFoto` antes de subirse: HEIC a JPEG,
+ * orientación EXIF aplicada y 1920 px de lado máximo. Ver lib/imagen/normalizar.ts.
  */
 
 type Props = {
@@ -156,39 +171,63 @@ export function SubidorFotos({ fotos, onFotosChange, minimo = 0 }: Props) {
     const [pendientes, setPendientes] = useState(0);
     const [error, setError] = useState<string | null>(null);
     const [visor, setVisor] = useState<number | null>(null);
+    const [paso, setPaso] = useState<"preparando" | "subiendo" | null>(null);
+
+    const inputGaleria = useRef<HTMLInputElement>(null);
+    const inputCamara = useRef<HTMLInputElement>(null);
 
     async function subir(archivos: FileList | null) {
-        if (!archivos) return;
+        if (!archivos || archivos.length === 0) return;
 
         setSubiendo(true);
         setPendientes(archivos.length);
         setError(null);
 
         const subidas: string[] = [];
+        const fallos: string[] = [];
 
         try {
-            for (const archivo of Array.from(archivos)) {
-                const formData = new FormData();
-                formData.append("foto", archivo);
+            for (const original of Array.from(archivos)) {
+                try {
+                    // Normalizar ANTES de subir. Un HEIC de 4 MB sale de aquí
+                    // como un JPEG de ~300 KB, con lo que el límite de tamaño
+                    // de la petición deja de ser un problema y la subida en
+                    // obra con 4G pasa de minutos a segundos.
+                    setPaso("preparando");
+                    const { archivo } = await normalizarFoto(original);
 
-                const response = await fetch("/api/subir-foto", { method: "POST", body: formData });
-                const data = await response.json();
+                    setPaso("subiendo");
+                    const formData = new FormData();
+                    formData.append("foto", archivo);
 
-                if (!response.ok) {
-                    throw new Error(data.error ?? "Fallo al subir una de las fotos");
+                    const response = await fetch("/api/subir-foto", { method: "POST", body: formData });
+                    const data = await response.json();
+
+                    if (!response.ok) {
+                        throw new Error(data.error ?? "Fallo al subir");
+                    }
+
+                    subidas.push(data.url);
+                } catch (e) {
+                    // Una foto ilegible no puede tumbar las otras nueve: se
+                    // anota y se sigue. En obra, repetir la tanda entera por
+                    // un archivo malo es tiempo perdido de verdad.
+                    fallos.push(`${original.name}: ${e instanceof Error ? e.message : "error"}`);
+                } finally {
+                    setPendientes((n) => Math.max(0, n - 1));
                 }
-                subidas.push(data.url);
-                setPendientes((n) => Math.max(0, n - 1));
             }
-            onFotosChange([...fotos, ...subidas]);
-        } catch (e) {
-            // Se conservan las que sí subieron: en obra, repetir 8 fotos porque
-            // falló la novena es tiempo perdido de verdad.
+
             if (subidas.length > 0) onFotosChange([...fotos, ...subidas]);
-            setError(e instanceof Error ? e.message : "Error desconocido al subir");
+            if (fallos.length > 0) setError(fallos.join(" · "));
         } finally {
             setSubiendo(false);
             setPendientes(0);
+            setPaso(null);
+            // Sin esto, elegir el mismo archivo dos veces seguidas no dispara
+            // `change` y parece que la app se ha quedado colgada.
+            if (inputGaleria.current) inputGaleria.current.value = "";
+            if (inputCamara.current) inputCamara.current.value = "";
         }
     }
 
@@ -263,16 +302,49 @@ export function SubidorFotos({ fotos, onFotosChange, minimo = 0 }: Props) {
                     </div>
                 ))}
 
-                <label className="flex aspect-square cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-hairline text-muted transition hover:border-ink/30 hover:text-ink">
+                {/* Cámara: conserva `capture`, que es lo que abre el carrete
+                    directamente en el móvil. */}
+                <label
+                    className={`flex aspect-square flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-hairline text-muted transition hover:border-ink/30 hover:text-ink ${
+                        subiendo ? "cursor-not-allowed opacity-50" : "cursor-pointer"
+                    }`}
+                >
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
                         <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
                         <circle cx="12" cy="13" r="4" />
                     </svg>
+                    <span className="text-[10px]">Cámara</span>
                     <input
+                        ref={inputCamara}
                         type="file"
                         accept="image/*"
-                        multiple
                         capture="environment"
+                        onChange={(e) => subir(e.target.files)}
+                        disabled={subiendo}
+                        className="hidden"
+                    />
+                </label>
+
+                {/* Galería: SIN `capture`. Ese atributo es justo lo que impedía
+                    a Jose subir desde el ordenador o desde el carrete. Se
+                    aceptan .heic/.heif explícitamente porque algunos
+                    selectores no los incluyen en `image/*`. */}
+                <label
+                    className={`flex aspect-square flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-hairline text-muted transition hover:border-ink/30 hover:text-ink ${
+                        subiendo ? "cursor-not-allowed opacity-50" : "cursor-pointer"
+                    }`}
+                >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+                        <rect x="3" y="3" width="18" height="18" rx="2" />
+                        <circle cx="9" cy="9" r="2" />
+                        <path d="m21 15-4.35-4.35a2 2 0 0 0-2.83 0L3 21" />
+                    </svg>
+                    <span className="text-[10px]">Galería</span>
+                    <input
+                        ref={inputGaleria}
+                        type="file"
+                        accept="image/*,.heic,.heif"
+                        multiple
                         onChange={(e) => subir(e.target.files)}
                         disabled={subiendo}
                         className="hidden"
@@ -282,7 +354,8 @@ export function SubidorFotos({ fotos, onFotosChange, minimo = 0 }: Props) {
 
             {subiendo && (
                 <p className="mt-2 text-xs text-muted">
-                    Subiendo fotos{pendientes > 0 ? ` (${pendientes} pendiente${pendientes === 1 ? "" : "s"})` : ""}...
+                    {paso === "preparando" ? "Preparando fotos" : "Subiendo fotos"}
+                    {pendientes > 0 ? ` (${pendientes} pendiente${pendientes === 1 ? "" : "s"})` : ""}...
                 </p>
             )}
             {error && <p className="mt-2 text-xs text-red-600 dark:text-red-400">{error}</p>}
