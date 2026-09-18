@@ -29,6 +29,7 @@ export default async function NuevoPresupuestoPage() {
             subcuenta={subcuenta}
             comunidades={comunidades}
             administradores={administradores}
+            rol={session.user.rol}
         />
     );
 }

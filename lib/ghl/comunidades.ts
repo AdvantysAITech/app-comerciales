@@ -1,21 +1,9 @@
 import { saFetch, type Subcuenta, getLocationId } from "./client";
 import { normalizarNombre } from "../texto";
+import { idsGhl } from "./ids";
 
 const OBJECT_KEY_COMUNIDAD = "custom_objects.comunidades_de_propietarios";
 const OBJECT_KEY_ADMINISTRADOR = "custom_objects.administradores_de_fincas";
-
-// Association "comunidad_de_la_oportunidad" (Comunidades De Propietarios -> Opportunity),
-// confirmada por curl el 31/07/2026. GHL no impone cardinalidad 1:1 en esta relación:
-// hay que evitar crearla más de una vez por oportunidad desde el propio código.
-const ASSOCIATION_ID_COMUNIDAD_OPORTUNIDAD = "6a4b7ab79e37d62b69f3fced";
-
-// Association "administrador_asignado" (Administradores De Fincas -> Comunidades),
-// confirmada por PowerShell el 17/08/2026 contra /associations/.
-// El orden NO es intercambiable: firstRecordId = administrador, secondRecordId = comunidad.
-const ASSOCIATION_ID_ADMINISTRADOR_COMUNIDAD = "6a4b75539e37d69185f0e716";
-
-// Tope de páginas al listar. Con 7 comunidades reales hoy sobra de largo; existe
-// para que un fallo de paginación nunca se convierta en un bucle infinito.
 const MAX_PAGINAS = 20;
 const PAGE_LIMIT = 100;
 
@@ -24,15 +12,6 @@ export type Comunidad = {
     nombreDireccion: string;
     numeroViviendas?: number;
     notasAcceso?: string;
-    /**
-     * Localidad y provincia de la comunidad. Se imprimen en el presupuesto
-     * (`presup.ComunidadLocalidad`, `presup.ComunidadProvincia`) y la localidad
-     * es además la de la línea de firma (`doc.Localidad`).
-     *
-     * Opcionales aquí porque GHL OMITE las propiedades vacías en la respuesta:
-     * que lleguen `undefined` significa "ese registro no lo tiene relleno", no
-     * "el campo no existe". Verificado por API el 09/09/2026.
-     */
     localidad?: string;
     provincia?: string;
     administradorId?: string;
@@ -44,18 +23,6 @@ type SaRecord = {
     relations?: Array<{ objectKey: string; recordId: string }>;
 };
 
-/**
- * Claves de propiedad tal cual las devuelve la API.
- *
- * NO se deducen de la etiqueta: GHL genera la clave a partir del nombre visible
- * y la deforma ("Nombre / Dirección" -> `nombre_direcci_n`, "Número de
- * viviendas" -> `nmero_de_viviendas`). Peor: si alguien corrige la etiqueta
- * desde la interfaz, la clave puede quedarse con la errata original. Ya pasó en
- * el objeto de administradores.
- *
- * Verificadas por PowerShell contra un registro real el 09/09/2026
- * (C/ Islas Canarias, 180 -> localidad "Náquera", provincia "Valencia").
- */
 const PROP = {
     nombreDireccion: "nombre_direcci_n",
     numeroViviendas: "nmero_de_viviendas",
@@ -64,7 +31,6 @@ const PROP = {
     provincia: "provincia",
 } as const;
 
-/** Texto de una propiedad, o undefined si no viene o viene en blanco. */
 function texto(properties: Record<string, unknown>, clave: string): string | undefined {
     const valor = properties[clave];
     if (typeof valor !== "string") return undefined;
@@ -88,13 +54,6 @@ function mapearComunidad(record: SaRecord): Comunidad {
     };
 }
 
-/**
- * Lista todas las comunidades de la subcuenta, paginando hasta agotar el total.
- *
- * La versión anterior pedía una sola página de 50 sin comprobar `total`. Con 7
- * registros no fallaba, pero al superar 50 habría dejado comunidades fuera del
- * buscador SIN ERROR: el comercial no las encontraría y crearía duplicados.
- */
 export async function listarComunidades(subcuenta: Subcuenta): Promise<Comunidad[]> {
     const locationId = getLocationId(subcuenta);
     const acumulado: SaRecord[] = [];
@@ -115,16 +74,8 @@ export async function listarComunidades(subcuenta: Subcuenta): Promise<Comunidad
     return acumulado.map(mapearComunidad);
 }
 
-// Se reexporta para no romper a quien ya la importaba desde este módulo.
 export { normalizarNombre };
 
-/**
- * Busca una comunidad ya existente por nombre.
- *
- * Se filtra en memoria a propósito: la subcuenta tiene 7 registros y el filtro
- * por propiedad de custom object en servidor no está verificado. Cuando el
- * volumen lo justifique, se sustituye.
- */
 export function buscarComunidadPorNombre(
     comunidades: Comunidad[],
     nombre: string
@@ -133,17 +84,6 @@ export function buscarComunidadPorNombre(
     return comunidades.find((c) => normalizarNombre(c.nombreDireccion) === objetivo);
 }
 
-/**
- * Lee una comunidad concreta por su id.
- *
- * Verificado por PowerShell el 09/09/2026: el GET responde y el registro llega
- * en `data.record`, NO en la raíz. Misma forma que el POST de creación y
- * distinta de `/opportunities/`, que devuelve `data.opportunity`. Aquí no hay
- * regla general: cada endpoint se comprueba.
- *
- * Se usa en la generación de documentos, donde hace falta una sola comunidad y
- * listar las de la subcuenta entera sería traerse todas para descartar N-1.
- */
 export async function obtenerComunidad(
     subcuenta: Subcuenta,
     comunidadId: string
@@ -159,10 +99,23 @@ export async function obtenerComunidad(
     return mapearComunidad(record);
 }
 
-type DatosNuevaComunidad = {
+export type DatosNuevaComunidad = {
     nombreDireccion: string;
     numeroViviendas?: number;
     notasAcceso?: string;
+    /**
+     * Localidad y provincia de la comunidad.
+     *
+     * POR QUÉ ESTÁN AQUÍ DESDE EL 18/09/2026: se imprimen en el presupuesto
+     * (`presup.ComunidadLocalidad`, `presup.ComunidadProvincia`) y la localidad
+     * es además la de la línea de firma (`doc.Localidad`). `crearComunidad` no
+     * las enviaba, así que TODA comunidad dada de alta desde la app generaba
+     * presupuestos con esos huecos en blanco y había que rellenarlos a mano en
+     * GHL. Los registros creados antes de esta fecha siguen incompletos: hay
+     * que repasarlos.
+     */
+    localidad?: string;
+    provincia?: string;
     /** Si se indica, se crea además la relación administrador -> comunidad. */
     administradorId?: string;
 };
@@ -192,6 +145,12 @@ export async function crearComunidad(
     if (datos.notasAcceso) {
         properties[PROP.notasAcceso] = datos.notasAcceso;
     }
+    if (datos.localidad?.trim()) {
+        properties[PROP.localidad] = datos.localidad.trim();
+    }
+    if (datos.provincia?.trim()) {
+        properties[PROP.provincia] = datos.provincia.trim();
+    }
 
     const data = await saFetch(subcuenta, `/objects/${OBJECT_KEY_COMUNIDAD}/records`, {
         method: "POST",
@@ -217,6 +176,8 @@ export async function crearComunidad(
         nombreDireccion: datos.nombreDireccion.trim(),
         numeroViviendas: datos.numeroViviendas,
         notasAcceso: datos.notasAcceso,
+        localidad: datos.localidad?.trim() || undefined,
+        provincia: datos.provincia?.trim() || undefined,
         administradorId: datos.administradorId,
     };
 }
@@ -254,7 +215,7 @@ export async function asociarAdministradorConComunidad(
         method: "POST",
         body: JSON.stringify({
             locationId: getLocationId(subcuenta),
-            associationId: ASSOCIATION_ID_ADMINISTRADOR_COMUNIDAD,
+            associationId: idsGhl(subcuenta).asociaciones.ADMINISTRADOR_COMUNIDAD,
             firstRecordId: administradorId,
             secondRecordId: comunidadId,
         }),
@@ -270,7 +231,7 @@ export async function asociarComunidadConOportunidad(
         method: "POST",
         body: JSON.stringify({
             locationId: getLocationId(subcuenta),
-            associationId: ASSOCIATION_ID_COMUNIDAD_OPORTUNIDAD,
+            associationId: idsGhl(subcuenta).asociaciones.COMUNIDAD_OPORTUNIDAD,
             firstRecordId: comunidadId,
             secondRecordId: oportunidadId,
         }),

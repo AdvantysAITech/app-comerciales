@@ -22,6 +22,7 @@ export default async function VisitasPage(){
             subcuenta={subcuenta}
             comunidades={comunidades}
             administradores={administradores}
+            rol={session.user.rol}
         />
     );
 }

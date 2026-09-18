@@ -6,6 +6,8 @@ import { BuscadorPartidas } from "@/components/forms/BuscadorPartidas";
 import { SubidorFotos } from "@/components/forms/SubidorFotos";
 import { SubidorDocumentos } from "@/components/forms/SubidorDocumentos";
 import { GrabadorVoz } from "@/components/forms/GrabadorVoz";
+import { AltaAdministrador, AltaComunidad } from "@/components/forms/AltaRapida";
+import type { Rol } from "@/lib/roles";
 import { getModulos, type ModuloTrabajo } from "@/lib/catalogo";
 import { filtrarSinPrecio } from "@/lib/catalogo/disponibilidad";
 import type { DocumentoAdjunto } from "@/lib/documentos/tipos";
@@ -44,6 +46,13 @@ type Props = {
     subcuenta: Subcuenta;
     comunidades: ComunidadListado[];
     administradores: AdministradorListado[];
+    /**
+     * Solo decide si el alta rápida pinta el campo de comisión pactada, que es
+     * dato interno de dirección (DERCAS §3.3). No es un control de acceso: la
+     * ruta `/api/administradores` descarta la comisión igual si llega desde un
+     * perfil comercial. Por defecto `comercial`, que es el caso restrictivo.
+     */
+    rol?: Rol;
 };
 
 type OportunidadCreada = { id: string; nombre: string; modeloNegocio: string | null };
@@ -66,7 +75,18 @@ const MINIMO_FOTOS_CON_ALERTA = 3;
 /** Espera del autoguardado. Escribir en cada pulsacion castiga al movil. */
 const RETARDO_AUTOGUARDADO = 800;
 
-export function FormularioPresupuesto({ subcuenta, comunidades, administradores }: Props) {
+export function FormularioPresupuesto({ subcuenta, comunidades, administradores, rol = "comercial" }: Props) {
+    /**
+     * Las listas llegan del servidor pero viven en estado local: cuando el
+     * comercial crea un administrador o una comunidad desde el modal, el
+     * registro nuevo tiene que aparecer en el desplegable SIN recargar. Un
+     * `router.refresh()` volvería a montar el formulario y se perdería lo que
+     * ya lleva escrito, que en obra es inaceptable.
+     */
+    const [listaComunidades, setListaComunidades] = useState<ComunidadListado[]>(comunidades);
+    const [listaAdministradores, setListaAdministradores] = useState<AdministradorListado[]>(administradores);
+    const [alta, setAlta] = useState<"administrador" | "comunidad" | null>(null);
+
     const [nombreComunidad, setNombreComunidad] = useState("");
     const [comunidadElegidaId, setComunidadElegidaId] = useState<string | null>(null);
     const [administradorId, setAdministradorId] = useState("");
@@ -158,16 +178,16 @@ export function FormularioPresupuesto({ subcuenta, comunidades, administradores 
     const sugerencias = useMemo(() => {
         const texto = normalizarNombre(nombreComunidad);
         if (texto.length < 2) return [];
-        return comunidades.filter((c) => normalizarNombre(c.nombreDireccion).includes(texto)).slice(0, 5);
-    }, [comunidades, nombreComunidad]);
+        return listaComunidades.filter((c) => normalizarNombre(c.nombreDireccion).includes(texto)).slice(0, 5);
+    }, [listaComunidades, nombreComunidad]);
 
-    const comunidadElegida = comunidades.find((c) => c.id === comunidadElegidaId);
+    const comunidadElegida = listaComunidades.find((c) => c.id === comunidadElegidaId);
 
     const coincidenciaExacta = useMemo(() => {
         const texto = normalizarNombre(nombreComunidad);
         if (!texto) return undefined;
-        return comunidades.find((c) => normalizarNombre(c.nombreDireccion) === texto);
-    }, [comunidades, nombreComunidad]);
+        return listaComunidades.find((c) => normalizarNombre(c.nombreDireccion) === texto);
+    }, [listaComunidades, nombreComunidad]);
 
     const seCrearaComunidad = nombreComunidad.trim() !== "" && !comunidadElegida && !coincidenciaExacta;
 
@@ -226,6 +246,30 @@ export function FormularioPresupuesto({ subcuenta, comunidades, administradores 
         setComunidadElegidaId(comunidad.id);
         setNombreComunidad(comunidad.nombreDireccion);
         if (comunidad.administradorId) setAdministradorId(comunidad.administradorId);
+    }
+
+    /**
+     * El modal puede devolver un registro RECIÉN CREADO o uno EXISTENTE: el
+     * servidor reutiliza si el nombre normalizado ya estaba, y el aviso de
+     * parecidos deja elegir uno de la lista. En los dos casos hay que
+     * incorporarlo sin duplicar, de ahí el `some` por id.
+     */
+    function trasAltaAdministrador(administrador: AdministradorListado) {
+        setListaAdministradores((anterior) =>
+            anterior.some((a) => a.id === administrador.id) ? anterior : [...anterior, administrador]
+        );
+        setAdministradorId(administrador.id);
+        setAlta(null);
+    }
+
+    function trasAltaComunidad(comunidad: ComunidadListado) {
+        setListaComunidades((anterior) =>
+            anterior.some((c) => c.id === comunidad.id) ? anterior : [...anterior, comunidad]
+        );
+        setComunidadElegidaId(comunidad.id);
+        setNombreComunidad(comunidad.nombreDireccion);
+        if (comunidad.administradorId) setAdministradorId(comunidad.administradorId);
+        setAlta(null);
     }
 
     function descartarBorrador() {
@@ -378,19 +422,27 @@ export function FormularioPresupuesto({ subcuenta, comunidades, administradores 
 
                     <div className="flex flex-col gap-3">
                         <div>
-                            <label>
-                                <span className={ESTILO_LABEL}>Comunidad</span>
-                                <input
-                                    type="text"
-                                    value={nombreComunidad}
-                                    onChange={(e) => {
-                                        setNombreComunidad(e.target.value);
-                                        setComunidadElegidaId(null);
-                                    }}
-                                    placeholder="C/ Islas Canarias, 180"
-                                    className={ESTILO_CAMPO}
-                                />
-                            </label>
+                            <div className="mb-1.5 flex items-center justify-between gap-2">
+                                <span className="text-xs text-muted">Comunidad</span>
+                                <button
+                                    type="button"
+                                    onClick={() => setAlta("comunidad")}
+                                    className="cursor-pointer rounded-lg border border-hairline px-2 py-1 text-[11px] text-ink transition hover:border-ink/30"
+                                >
+                                    + Nueva
+                                </button>
+                            </div>
+                            <input
+                                type="text"
+                                aria-label="Comunidad"
+                                value={nombreComunidad}
+                                onChange={(e) => {
+                                    setNombreComunidad(e.target.value);
+                                    setComunidadElegidaId(null);
+                                }}
+                                placeholder="C/ Islas Canarias, 180"
+                                className={ESTILO_CAMPO}
+                            />
 
                             {!comunidadElegida && sugerencias.length > 0 && (
                                 <div className="mt-1.5 flex flex-col gap-1">
@@ -418,21 +470,31 @@ export function FormularioPresupuesto({ subcuenta, comunidades, administradores 
                             )}
                         </div>
 
-                        <label>
-                            <span className={ESTILO_LABEL}>Administrador</span>
+                        <div>
+                            <div className="mb-1.5 flex items-center justify-between gap-2">
+                                <span className="text-xs text-muted">Administrador</span>
+                                <button
+                                    type="button"
+                                    onClick={() => setAlta("administrador")}
+                                    className="cursor-pointer rounded-lg border border-hairline px-2 py-1 text-[11px] text-ink transition hover:border-ink/30"
+                                >
+                                    + Nuevo
+                                </button>
+                            </div>
                             <select
+                                aria-label="Administrador"
                                 value={administradorId}
                                 onChange={(e) => setAdministradorId(e.target.value)}
                                 className={`${ESTILO_CAMPO} cursor-pointer`}
                             >
                                 <option value="">-- Sin administrador --</option>
-                                {administradores.map((a) => (
+                                {listaAdministradores.map((a) => (
                                     <option key={a.id} value={a.id}>
                                         {a.nombreDespacho ?? "(sin nombre)"}
                                     </option>
                                 ))}
                             </select>
-                        </label>
+                        </div>
 
                         <div className="grid grid-cols-2 gap-3">
                             <label>
@@ -637,6 +699,28 @@ export function FormularioPresupuesto({ subcuenta, comunidades, administradores 
                     {enviando ? "Enviando..." : "Enviar presupuesto"}
                 </button>
             </div>
+
+            {alta === "administrador" && (
+                <AltaAdministrador
+                    existentes={listaAdministradores}
+                    puedeEditarComision={rol === "direccion"}
+                    onCerrar={() => setAlta(null)}
+                    onCreado={trasAltaAdministrador}
+                />
+            )}
+
+            {alta === "comunidad" && (
+                <AltaComunidad
+                    // Lo que ya haya escrito en el campo se arrastra al modal:
+                    // volver a teclear la dirección en obra es tiempo perdido.
+                    nombreInicial={nombreComunidad}
+                    existentes={listaComunidades}
+                    administradores={listaAdministradores}
+                    administradorIdInicial={administradorId}
+                    onCerrar={() => setAlta(null)}
+                    onCreada={trasAltaComunidad}
+                />
+            )}
         </div>
     );
 }

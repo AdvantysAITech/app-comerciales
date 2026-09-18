@@ -22,7 +22,8 @@
     "soluciona:e2e": "tsx scripts/tarifa/soluciona-e2e.ts",
     "soluciona:consultar": "tsx scripts/tarifa/soluciona-consultar.ts",
     "buscador:indice": "tsx scripts/tarifa/generar-indice-buscador.ts",
-    "modulos:probar": "tsx scripts/tarifa/probar-modulos-nuevos.ts"
+    "modulos:probar": "tsx scripts/tarifa/probar-modulos-nuevos.ts",
+    "ghl:probar-altas": "tsx scripts/ghl/probar-altas.ts"
   },
   "dependencies": {
     "@resvg/resvg-js": "^2.6.2",
