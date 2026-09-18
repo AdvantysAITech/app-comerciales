@@ -25,7 +25,16 @@ const MIME_ADMITIDOS = [
     "audio/flac",
 ];
 
-const TAMANO_MAXIMO_BYTES = 15 * 1024 * 1024;
+/**
+ * Tope por petición.
+ *
+ * El límite duro de Gemini son 20 MB, pero el que manda es otro: el cuerpo de
+ * una petición a una función de Vercel no puede pasar de 4,5 MB (413
+ * FUNCTION_PAYLOAD_TOO_LARGE). Se corta en 4 MB para dejar margen al resto del
+ * multipart. El cliente trocea en segmentos de 30 s (~960 KB), así que en la
+ * práctica nunca se llega aquí: esto es la red de seguridad.
+ */
+const TAMANO_MAXIMO_BYTES = 4 * 1024 * 1024;
 
 /**
  * El vocabulario de obra se le da explícito al modelo. Sin esto, "Geolite T40"
@@ -71,8 +80,8 @@ export async function transcribirAudio(archivo: File): Promise<ResultadoTranscri
 
     if (archivo.size > TAMANO_MAXIMO_BYTES) {
         throw new Error(
-            `El audio pesa ${(archivo.size / 1024 / 1024).toFixed(1)} MB y el máximo son ` +
-                `${TAMANO_MAXIMO_BYTES / 1024 / 1024} MB. Graba una nota más corta.`
+            `El fragmento de audio pesa ${(archivo.size / 1024 / 1024).toFixed(1)} MB y el máximo ` +
+                `son ${TAMANO_MAXIMO_BYTES / 1024 / 1024} MB.`
         );
     }
 
@@ -88,6 +97,18 @@ export async function transcribirAudio(archivo: File): Promise<ResultadoTranscri
         generationConfig: {
             // Transcribir no es una tarea creativa: cuanto más determinista, mejor.
             temperature: 0,
+            /**
+             * Razonamiento DESACTIVADO (18/09/2026).
+             *
+             * Los modelos flash de esta generación razonan por defecto antes de
+             * responder. En una transcripción literal ese razonamiento no
+             * aporta nada y se paga entero en latencia: es tiempo que el
+             * comercial pasa mirando un spinner en mitad de una visita.
+             *
+             * Si algún día se usa este cliente para una tarea que sí requiera
+             * razonar, el presupuesto se sube AHÍ, no aquí.
+             */
+            thinkingConfig: { thinkingBudget: 0 },
         },
     });
 

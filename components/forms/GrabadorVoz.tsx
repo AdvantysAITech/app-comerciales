@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { convertirAWav } from "@/lib/audio/wav";
+import { trocearAWav } from "@/lib/audio/wav";
 
 /**
  * Dictado de observaciones (DERCAS §6.2).
@@ -16,6 +16,27 @@ import { convertirAWav } from "@/lib/audio/wav";
 
 const SEGUNDOS_MAXIMOS = 180;
 
+/**
+ * Segundos por trozo. 30 s son ~960 KB de WAV, muy por debajo del tope de
+ * 4,5 MB por petición de Vercel.
+ */
+const SEGUNDOS_POR_TROZO = 30;
+
+/** Peticiones simultáneas. Más de tres no acelera y castiga la red en obra. */
+const CONCURRENCIA = 3;
+
+/**
+ * Corte por petición.
+ *
+ * ES LA PIEZA QUE FALTABA. Sin `AbortController`, un `fetch` que se queda
+ * colgado (cobertura mala, función que muere sin responder, pestaña
+ * suspendida por el móvil) no rechaza NUNCA: el estado se quedaba en
+ * "procesando" y el spinner giraba indefinidamente. Es literalmente lo que
+ * describió Jose el 18/09: "a la hora y pico seguía dándole vueltas".
+ * No era Gemini tardando una hora, era la interfaz sin salida.
+ */
+const TIEMPO_MAXIMO_MS = 45000;
+
 type Estado = "inactivo" | "grabando" | "procesando";
 
 type Props = {
@@ -27,6 +48,8 @@ export function GrabadorVoz({ onTranscripcion, disabled = false }: Props) {
     const [estado, setEstado] = useState<Estado>("inactivo");
     const [segundos, setSegundos] = useState(0);
     const [error, setError] = useState<string | null>(null);
+    const [total, setTotal] = useState(0);
+    const [listos, setListos] = useState(0);
 
     const grabadorRef = useRef<MediaRecorder | null>(null);
     const trozosRef = useRef<Blob[]>([]);
@@ -104,34 +127,112 @@ export function GrabadorVoz({ onTranscripcion, disabled = false }: Props) {
         setEstado("procesando");
     }
 
-    async function procesar(blob: Blob) {
-        try {
-            const wav = await convertirAWav(blob);
+    /** Una petición, con corte por tiempo y un reintento. */
+    async function transcribirTrozo(trozo: File, reintentos = 1): Promise<string> {
+        const controlador = new AbortController();
+        const corte = setTimeout(() => controlador.abort(), TIEMPO_MAXIMO_MS);
 
+        try {
             const formData = new FormData();
-            formData.append("audio", wav);
+            formData.append("audio", trozo);
 
             const respuesta = await fetch("/api/transcribir-audio", {
                 method: "POST",
                 body: formData,
+                signal: controlador.signal,
             });
 
-            const datos = await respuesta.json();
-
+            // Un 413 o un 504 de la plataforma no devuelven JSON, así que
+            // `json()` reventaría con un error de parseo que no dice nada.
             if (!respuesta.ok) {
-                throw new Error(datos?.error ?? "Error al transcribir");
+                const cuerpo = await respuesta.text();
+                let mensaje = `Error ${respuesta.status}`;
+                try {
+                    mensaje = JSON.parse(cuerpo)?.error ?? mensaje;
+                } catch {
+                    if (respuesta.status === 413) mensaje = "El fragmento de audio es demasiado grande";
+                    if (respuesta.status === 504) mensaje = "El servidor ha tardado demasiado";
+                }
+                throw new Error(mensaje);
             }
 
-            if (datos.vacio) {
-                setError("No se ha entendido nada en la grabación. Prueba otra vez.");
+            const datos = await respuesta.json();
+            return (datos.texto as string) ?? "";
+        } catch (e) {
+            // Un corte de red en obra es lo normal, no la excepción: se
+            // reintenta una vez antes de darlo por perdido.
+            if (reintentos > 0) return transcribirTrozo(trozo, reintentos - 1);
+
+            if (e instanceof DOMException && e.name === "AbortError") {
+                throw new Error("La transcripción ha tardado demasiado");
+            }
+            throw e;
+        } finally {
+            clearTimeout(corte);
+        }
+    }
+
+    async function procesar(blob: Blob) {
+        try {
+            const trozos = await trocearAWav(blob, SEGUNDOS_POR_TROZO);
+
+            if (trozos.length === 0) throw new Error("La grabación está vacía");
+
+            setTotal(trozos.length);
+            setListos(0);
+
+            /**
+             * Los trozos se lanzan en paralelo pero el resultado se guarda POR
+             * ÍNDICE. Con `push` el orden dependería de cuál conteste antes y
+             * la observación saldría desordenada, que es peor que no tenerla.
+             */
+            const textos: (string | null)[] = new Array(trozos.length).fill(null);
+            const fallos: number[] = [];
+            let siguiente = 0;
+
+            async function trabajador() {
+                while (siguiente < trozos.length) {
+                    const i = siguiente++;
+                    try {
+                        textos[i] = await transcribirTrozo(trozos[i]);
+                    } catch {
+                        fallos.push(i + 1);
+                        textos[i] = "";
+                    } finally {
+                        setListos((n) => n + 1);
+                    }
+                }
+            }
+
+            await Promise.all(
+                Array.from({ length: Math.min(CONCURRENCIA, trozos.length) }, trabajador)
+            );
+
+            const texto = textos.map((t) => t ?? "").join(" ").replace(/\s+/g, " ").trim();
+
+            if (fallos.length > 0) {
+                // Se entrega lo que sí ha llegado: media observación es mejor
+                // que ninguna cuando ya se ha salido de la comunidad.
+                setError(
+                    `No se han podido transcribir ${fallos.length} de ${trozos.length} fragmentos. ` +
+                        `Revisa el texto y completa lo que falte.`
+                );
+            }
+
+            if (texto === "") {
+                if (fallos.length === 0) {
+                    setError("No se ha entendido nada en la grabación. Prueba otra vez.");
+                }
             } else {
-                onTranscripcion(datos.texto as string);
+                onTranscripcion(texto);
             }
         } catch (e) {
             setError(e instanceof Error ? e.message : "Error al transcribir el audio");
         } finally {
             setEstado("inactivo");
             setSegundos(0);
+            setTotal(0);
+            setListos(0);
             grabadorRef.current = null;
             trozosRef.current = [];
         }
@@ -161,7 +262,7 @@ export function GrabadorVoz({ onTranscripcion, disabled = false }: Props) {
                     ) : estado === "procesando" ? (
                         <>
                             <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-hairline border-t-ink" />
-                            Transcribiendo...
+                            {total > 1 ? `Transcribiendo ${listos} de ${total}...` : "Transcribiendo..."}
                         </>
                     ) : (
                         <>

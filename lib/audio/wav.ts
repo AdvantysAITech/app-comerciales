@@ -16,7 +16,8 @@
 
 const FRECUENCIA_DESTINO = 16000;
 
-export async function convertirAWav(blob: Blob): Promise<File> {
+/** Decodifica, mezcla a mono y remuestrea a 16 kHz. Base de las dos salidas. */
+async function renderizarMono16k(blob: Blob): Promise<Float32Array> {
     const datos = await blob.arrayBuffer();
 
     // decodeAudioData entiende webm/opus en Chrome y mp4/aac en Safari, así que
@@ -43,9 +44,54 @@ export async function convertirAWav(blob: Blob): Promise<File> {
     fuente.start();
 
     const renderizado = await offline.startRendering();
-    const wav = codificarWav(renderizado.getChannelData(0), FRECUENCIA_DESTINO);
+    return renderizado.getChannelData(0);
+}
 
-    return new File([wav], "observaciones.wav", { type: "audio/wav" });
+export async function convertirAWav(blob: Blob): Promise<File> {
+    const muestras = await renderizarMono16k(blob);
+    return new File([codificarWav(muestras, FRECUENCIA_DESTINO)], "observaciones.wav", {
+        type: "audio/wav",
+    });
+}
+
+/**
+ * Trocea la grabación en WAVs independientes de `segundosPorTrozo`.
+ *
+ * ---------------------------------------------------------------------------
+ * POR QUÉ SE TROCEA (18/09/2026)
+ * ---------------------------------------------------------------------------
+ * El cuerpo de una petición a una función de Vercel no puede pasar de 4,5 MB;
+ * por encima devuelve 413 FUNCTION_PAYLOAD_TOO_LARGE. Un WAV mono de 16 kHz
+ * ocupa 32 KB por segundo, así que el techo está en unos 140 segundos de
+ * dictado. El grabador permitía 180: por encima de 2:20 la transcripción NO
+ * era lenta, fallaba siempre, y el comercial no tenía forma de saberlo.
+ *
+ * Trocear resuelve dos cosas a la vez. Ningún trozo se acerca al límite (30 s
+ * son unos 960 KB) y, como se transcriben en paralelo, el tiempo total deja de
+ * crecer con la duración del dictado: son tres peticiones simultáneas en vez de
+ * una de tres minutos.
+ *
+ * El corte es por tiempo, no por silencio: puede partir una palabra. Se asume.
+ * Gemini transcribe cada trozo con contexto suficiente y el texto se une con un
+ * espacio; una palabra ocasionalmente cortada es un precio bajísimo comparado
+ * con un 413.
+ */
+export async function trocearAWav(blob: Blob, segundosPorTrozo = 30): Promise<File[]> {
+    const muestras = await renderizarMono16k(blob);
+    const porTrozo = Math.max(1, Math.floor(segundosPorTrozo * FRECUENCIA_DESTINO));
+
+    const trozos: File[] = [];
+
+    for (let inicio = 0, i = 0; inicio < muestras.length; inicio += porTrozo, i++) {
+        const corte = muestras.subarray(inicio, Math.min(inicio + porTrozo, muestras.length));
+        trozos.push(
+            new File([codificarWav(corte, FRECUENCIA_DESTINO)], `observaciones-${i + 1}.wav`, {
+                type: "audio/wav",
+            })
+        );
+    }
+
+    return trozos;
 }
 
 /** Duración en segundos de un blob de audio, sin convertirlo. */
