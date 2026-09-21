@@ -5,7 +5,12 @@ import { obtenerComunidad } from "@/lib/ghl/comunidades";
 import { obtenerAdministrador } from "@/lib/ghl/administradores";
 import { limpiarCasillasPresupuesto } from "@/lib/ghl/casillas";
 import type { PayloadVisita } from "@/lib/visita/payload";
-import { auditarPayload, presupuestar, RutasSinMapearError } from "@/lib/documentos/mapeo-capitulos";
+import {
+    auditarPayload,
+    presupuestarConAjustes,
+    RutasSinMapearError,
+} from "@/lib/documentos/mapeo-capitulos";
+import { hayAjustes, leerAjustes } from "@/lib/documentos/ajustes";
 import type { PresupuestoCalculado } from "@/lib/documentos/motor";
 import { prepararDocumento } from "@/lib/documentos/payloadDocumento";
 import { asignarReferencia } from "@/lib/documentos/contador";
@@ -38,6 +43,14 @@ type Cuerpo = {
      * lo primero que hay que descartar es que el problema sea la entrada.
      */
     simular?: boolean;
+    /**
+     * Reutiliza el número de referencia del registro anterior en lugar de pedir
+     * uno nuevo al correlativo.
+     *
+     * Lo manda la pantalla de revisión: una corrección de dirección es otra
+     * versión del MISMO presupuesto.
+     */
+    conservarReferencia?: boolean;
 };
 
 /**
@@ -155,8 +168,23 @@ async function generar(request: NextRequest): Promise<NextResponse> {
         const avisos: string[] = [];
         let presupuesto: PresupuestoCalculado;
 
+        // Ajustes de dirección. Si los hay, mandan sobre la tarifa.
+        //
+        // Se leen aquí Y en el cierre, porque el presupuesto se recalcula en los
+        // dos sitios: si el cierre recalculara sin ajustes, publicaría el
+        // documento con los precios originales y además lo verificaría contra
+        // unas cifras que no son las impresas.
+        const ajustes = await leerAjustes(subcuenta, cuerpo.oportunidadId);
+
+        if (hayAjustes(ajustes)) {
+            avisos.push(
+                `Presupuesto generado con ajustes de dirección (${ajustes!.autor}, ` +
+                    `${ajustes!.actualizadoEn.slice(0, 10)}).`
+            );
+        }
+
         try {
-            presupuesto = presupuestar(payload);
+            presupuesto = presupuestarConAjustes(payload, ajustes);
         } catch (error) {
             if (!(error instanceof RutasSinMapearError)) throw error;
 
@@ -281,9 +309,20 @@ async function generar(request: NextRequest): Promise<NextResponse> {
 
         const version = cuerpo.version ?? 1;
 
+        const previo = await leerRegistro(subcuenta, cuerpo.oportunidadId);
+
         // Correlativo real. Antes se derivaba de los dígitos del oportunidadId,
         // que ni era correlativo ni era único.
-        const numeroReferencia = await asignarReferencia(subcuenta);
+        //
+        // En una REVISIÓN se conserva el número anterior: SV-2026-0007 corregido
+        // por dirección sigue siendo el presupuesto SV-2026-0007, no uno nuevo.
+        // Sin esto, cada guardado de Miguel quemaría un número del correlativo y
+        // la numeración que ve administración tendría huecos que no corresponden
+        // a ningún presupuesto enviado (DERCAS §12.3).
+        const conservar = Boolean(cuerpo.conservarReferencia) && Boolean(previo?.numeroReferencia);
+        const numeroReferencia = conservar
+            ? previo!.numeroReferencia
+            : await asignarReferencia(subcuenta);
 
         const preparado = prepararDocumento(payload, {
             numeroReferencia,
@@ -317,7 +356,6 @@ async function generar(request: NextRequest): Promise<NextResponse> {
 
         // --- Envío -----------------------------------------------------------
         const requestId = construirRequestId(subcuenta, cuerpo.oportunidadId, version);
-        const previo = await leerRegistro(subcuenta, cuerpo.oportunidadId);
 
         // Circuito de validación a cero antes de encolar.
         //

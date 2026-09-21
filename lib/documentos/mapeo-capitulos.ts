@@ -24,6 +24,7 @@ import {
     type LineaSolicitada,
     type PresupuestoCalculado,
 } from "./motor";
+import { aplicarAjustes, type AjustesPresupuesto } from "./ajustes";
 
 /**
  * lib/documentos/mapeo-capitulos.ts
@@ -988,6 +989,30 @@ export function construirEntradaPresupuesto(
 /** Punto de entrada del bloque económico: visita -> presupuesto calculado. */
 export function presupuestar(payload: PayloadVisita, ivaTipo?: number): PresupuestoCalculado {
     const resultado = calcularPresupuesto(construirEntradaPresupuesto(payload, ivaTipo));
+    assertCuadre(resultado);
+    return resultado;
+}
+
+/**
+ * Igual que `presupuestar`, pero aplicando los ajustes de dirección.
+ *
+ * Es la función que tienen que usar TODAS las rutas. `presupuestar` se mantiene
+ * para los scripts y las pruebas de mapeo, que trabajan sobre el catálogo y no
+ * tienen oportunidad de la que leer ajustes.
+ *
+ * Sin ajustes el resultado es idéntico al de `presupuestar`: `aplicarAjustes`
+ * devuelve la entrada intacta.
+ *
+ * Sigue pasando por `assertCuadre`: un precio puesto a mano por dirección no
+ * exime al documento de cuadrar línea -> capítulo -> PEM -> IVA -> total.
+ */
+export function presupuestarConAjustes(
+    payload: PayloadVisita,
+    ajustes: AjustesPresupuesto | null | undefined,
+    ivaTipo?: number
+): PresupuestoCalculado {
+    const entrada = aplicarAjustes(construirEntradaPresupuesto(payload, ivaTipo), ajustes);
+    const resultado = calcularPresupuesto(entrada);
     assertCuadre(resultado);
     return resultado;
 }

@@ -104,6 +104,38 @@ export async function limpiarCasillasPresupuesto(
 }
 
 /**
+ * ¿Está marcada esta casilla en los `customFields` de una oportunidad?
+ *
+ * Trabaja sobre los campos ya leídos, para poder usarse tanto con el endpoint
+ * de detalle como con el de búsqueda sin repetir la consulta. GHL no es
+ * consistente entre los dos: el valor puede venir en `fieldValue`,
+ * `fieldValueString` o `fieldValueArray`, y como array o como cadena. Se
+ * prueban todas las formas y se compara SIEMPRE contra la opción del picklist:
+ * un valor cualquiera guardado en el campo no es una casilla marcada.
+ */
+export function casillaMarcadaEn(
+    subcuenta: Subcuenta,
+    casilla: CasillaOportunidad,
+    customFields: ReadonlyArray<Record<string, unknown>> | null | undefined
+): boolean {
+    const campo = casillaGhl(subcuenta, casilla);
+    if (!campo) return false;
+
+    const encontrado = (customFields ?? []).find((c) => c?.id === campo.id);
+    if (!encontrado) return false;
+
+    const bruto =
+        encontrado.fieldValue ??
+        encontrado.fieldValueArray ??
+        encontrado.fieldValueString ??
+        encontrado.value;
+
+    const etiquetas = Array.isArray(bruto) ? bruto : bruto === undefined || bruto === null ? [] : [bruto];
+
+    return etiquetas.some((e) => String(e).trim() === campo.opcion);
+}
+
+/**
  * Lee el estado de las dos casillas.
  *
  * Una casilla que no aparece en `customFields` está desmarcada, no ausente: GHL
@@ -121,27 +153,10 @@ export async function leerCasillas(
 ): Promise<Record<CasillaOportunidad, boolean>> {
     const datos = await saFetch(subcuenta, `/opportunities/${oportunidadId}`);
     const oportunidad = datos.opportunity ?? datos;
-    const campos: Array<{ id: string; fieldValue?: unknown; fieldValueArray?: unknown }> =
-        oportunidad?.customFields ?? [];
-
-    const estaMarcada = (casilla: CasillaOportunidad): boolean => {
-        const campo = casillaGhl(subcuenta, casilla);
-        if (!campo) return false;
-
-        const encontrado = campos.find((c) => c.id === campo.id);
-        if (!encontrado) return false;
-
-        const valor = encontrado.fieldValue ?? encontrado.fieldValueArray;
-        const etiquetas = Array.isArray(valor) ? valor : valor ? [valor] : [];
-
-        // Se compara con la opción del picklist, no con "hay algo escrito": en
-        // la prueba del 21/09/2026 el campo llegó a guardar una cadena que no
-        // era ninguna opción, y en la ficha aparecía DESMARCADO.
-        return etiquetas.some((e) => String(e).trim() === campo.opcion);
-    };
+    const campos: Array<Record<string, unknown>> = oportunidad?.customFields ?? [];
 
     return {
-        PRESUPUESTO_GENERADO: estaMarcada("PRESUPUESTO_GENERADO"),
-        PRESUPUESTO_VALIDADO: estaMarcada("PRESUPUESTO_VALIDADO"),
+        PRESUPUESTO_GENERADO: casillaMarcadaEn(subcuenta, "PRESUPUESTO_GENERADO", campos),
+        PRESUPUESTO_VALIDADO: casillaMarcadaEn(subcuenta, "PRESUPUESTO_VALIDADO", campos),
     };
 }

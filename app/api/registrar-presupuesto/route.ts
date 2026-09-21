@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
             modulosElegidos: entrada.modulosElegidos,
             seleccion: entrada.seleccion ?? {},
             fotosPorModulo: entrada.fotosPorModulo ?? {},
-        });
+        }, session.user.usuarioGhl ?? null);
 
         return NextResponse.json({
             comunidad: resultado.comunidad,

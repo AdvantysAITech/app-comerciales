@@ -38,6 +38,7 @@ export async function POST(request: NextRequest) {
                 descripcionLibre: body.descripcionLibre,
                 camposEspecificos: body.camposEspecificos,
                 fotos: body.fotos,
+                asignadoA: session.user.usuarioGhl ?? null,
             });
             return NextResponse.json({ id: oportunidad.id, estado: "creada" });
         }

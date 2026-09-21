@@ -5,7 +5,6 @@ import { SelectorArbol } from "@/components/forms/SelectorArbol";
 import { BuscadorPartidas } from "@/components/forms/BuscadorPartidas";
 import { SubidorFotos } from "@/components/forms/SubidorFotos";
 import { SubidorDocumentos } from "@/components/forms/SubidorDocumentos";
-import { GrabadorVoz } from "@/components/forms/GrabadorVoz";
 import { AltaAdministrador, AltaComunidad } from "@/components/forms/AltaRapida";
 import type { Rol } from "@/lib/roles";
 import { getModulos, type ModuloTrabajo } from "@/lib/catalogo";
@@ -290,10 +289,6 @@ export function FormularioPresupuesto({ subcuenta, comunidades, administradores,
 
     // La transcripcion se ANADE a lo ya escrito, nunca lo sustituye: borrar
     // texto tecleado al pulsar un boton seria un fallo grave estando en obra.
-    function anadirTranscripcion(texto: string) {
-        setObservaciones((actual) => (actual.trim() ? `${actual.trim()}\n${texto}` : texto));
-    }
-
     const faltanDatosGenerales =
         nombreComunidad.trim() === "" || contacto.trim() === "" || telefono.trim() === "" || fecha === "";
 
@@ -531,21 +526,34 @@ export function FormularioPresupuesto({ subcuenta, comunidades, administradores,
                             />
                         </label>
 
+                        {/* Observaciones a teclado.
+                            La grabadora de voz (GrabadorVoz + Gemini) está
+                            RETIRADA de la interfaz desde el 21/09/2026 por los
+                            problemas de lentitud y de errores sin mensaje. El
+                            componente y la ruta /api/transcribir-audio siguen en
+                            el repo para poder volver a enchufarlos, pero hoy no
+                            los usa nadie.
+
+                            El dictado sigue estando disponible: es el del
+                            teclado del móvil, que transcribe sobre el propio
+                            campo mientras el comercial habla, sin subida de
+                            audio ni espera. `rows` sube a 5 porque ahora todo se
+                            escribe aquí. */}
                         <div>
                             <label>
                                 <span className={ESTILO_LABEL}>Observaciones</span>
                                 <textarea
                                     value={observaciones}
                                     onChange={(e) => setObservaciones(e.target.value)}
-                                    rows={3}
+                                    rows={5}
                                     placeholder="Accesos, incidencias, lo que convenga recordar..."
                                     className={`${ESTILO_CAMPO} resize-none`}
                                     disabled={enviando}
                                 />
                             </label>
-                            <div className="mt-2">
-                                <GrabadorVoz onTranscripcion={anadirTranscripcion} disabled={enviando} />
-                            </div>
+                            <p className="mt-1.5 text-xs text-muted">
+                                Puedes dictarlo con el micrófono del teclado del móvil.
+                            </p>
                         </div>
                     </div>
                 </section>

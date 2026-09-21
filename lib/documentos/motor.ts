@@ -62,6 +62,20 @@ export interface LineaSolicitada {
    * Si es null, el documento imprime solo la descripción corta.
    */
   descripcionLarga?: string | null;
+  /**
+   * Precio unitario impuesto por dirección, en euros. Si falta, manda
+   * `tarifaEmpresa`.
+   *
+   * Es el ÚNICO camino por el que un importe puede salirse de la tarifa, y
+   * existe porque Miguel ajusta precios caso a caso (accesos difíciles, obra
+   * repetida con el mismo administrador, competencia). No lo escribe nadie más:
+   * lo pone la capa de ajustes (`lib/documentos/ajustes.ts`) a partir de lo que
+   * dirección guarda en la oportunidad, y queda registrado con autor y fecha.
+   *
+   * El cálculo sigue siendo determinista: mismo payload + mismos ajustes ->
+   * mismo documento.
+   */
+  precioUnitario?: number | null;
 }
 
 export interface EntradaPresupuesto {
@@ -153,6 +167,8 @@ interface LineaAgregada {
   cantidad: number;
   unidadSeleccionada: UnidadSeleccionable | null;
   descripcionLarga: string | null;
+  /** Precio de dirección, o null para usar la tarifa. */
+  precioUnitario: number | null;
 }
 
 /**
@@ -184,6 +200,14 @@ function agregarLineas(
       );
     }
 
+    const precioAjustado = l.precioUnitario ?? null;
+    if (precioAjustado !== null && (!Number.isFinite(precioAjustado) || precioAjustado < 0)) {
+      throw new Error(
+        `[${codigo}] Precio unitario ajustado inválido: ${precioAjustado}. ` +
+          `Tiene que ser un número mayor o igual que 0.`
+      );
+    }
+
     const partida = obtenerPartidaOFallar(codigo);
     const existente = mapa.get(codigo);
 
@@ -193,6 +217,7 @@ function agregarLineas(
         cantidad: l.cantidad,
         unidadSeleccionada: l.unidadSeleccionada ?? null,
         descripcionLarga: l.descripcionLarga ?? null,
+        precioUnitario: precioAjustado,
       });
       continue;
     }
@@ -215,8 +240,24 @@ function agregarLineas(
           `"${nuevaUnidad}". Se conserva "${existente.unidadSeleccionada}". Revisa la medición.`,
       });
     }
+    if (
+      precioAjustado !== null &&
+      existente.precioUnitario !== null &&
+      precioAjustado !== existente.precioUnitario
+    ) {
+      avisos.push({
+        nivel: "atencion",
+        codigo,
+        mensaje:
+          `Dos precios ajustados distintos para la misma partida: ` +
+          `${existente.precioUnitario} y ${precioAjustado}. Se conserva ` +
+          `${existente.precioUnitario}.`,
+      });
+    }
+
     existente.unidadSeleccionada ??= nuevaUnidad;
     existente.descripcionLarga ??= l.descripcionLarga ?? null;
+    existente.precioUnitario ??= precioAjustado;
   }
 
   return [...mapa.values()];
@@ -266,8 +307,24 @@ export function calcularPresupuesto(entrada: EntradaPresupuesto): PresupuestoCal
     for (const a of agregadasCap) {
       const p = a.partida;
 
-      const impCent = importeEnCentimos(a.cantidad, p.tarifaEmpresa);
+      // El precio de dirección manda sobre la tarifa. El coste CYPE NO se toca:
+      // es el coste real y es lo que permite ver qué margen queda tras el
+      // ajuste, que es justo el dato que interesa cuando se baja un precio.
+      const precioUnitario = a.precioUnitario ?? p.tarifaEmpresa;
+
+      const impCent = importeEnCentimos(a.cantidad, precioUnitario);
       const cypeCent = importeEnCentimos(a.cantidad, p.precioCype);
+
+      if (a.precioUnitario !== null && a.precioUnitario !== p.tarifaEmpresa) {
+        avisos.push({
+          nivel: "atencion",
+          codigo: p.codigo,
+          mensaje:
+            `Precio ajustado por dirección: ${precioUnitario} €/${p.unidad} ` +
+            `(tarifa 2026: ${p.tarifaEmpresa} €/${p.unidad}). El importe se calcula ` +
+            `con el precio ajustado.`,
+        });
+      }
 
       totalCapCentimos += impCent;
       costeCypeCentimos += cypeCent;
@@ -301,7 +358,7 @@ export function calcularPresupuesto(entrada: EntradaPresupuesto): PresupuestoCal
         unidadNativa: p.unidad,
         unidadDivergente: divergente,
         cantidad: a.cantidad,
-        precioUnitario: p.tarifaEmpresa,
+        precioUnitario,
         importe: aEuros(impCent),
         interno: {
           precioCype: p.precioCype,
