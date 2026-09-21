@@ -158,10 +158,23 @@ export async function obtenerComunidad(
     return mapearComunidad(record);
 }
 
-type DatosNuevaComunidad = {
+export type DatosNuevaComunidad = {
     nombreDireccion: string;
     numeroViviendas?: number;
     notasAcceso?: string;
+    /**
+     * Localidad y provincia de la comunidad.
+     *
+     * POR QUÉ ESTÁN AQUÍ DESDE EL 18/09/2026: se imprimen en el presupuesto
+     * (`presup.ComunidadLocalidad`, `presup.ComunidadProvincia`) y la localidad
+     * es además la de la línea de firma (`doc.Localidad`). `crearComunidad` no
+     * las enviaba, así que TODA comunidad dada de alta desde la app generaba
+     * presupuestos con esos huecos en blanco y había que rellenarlos a mano en
+     * GHL. Los registros creados antes de esta fecha siguen incompletos: hay
+     * que repasarlos.
+     */
+    localidad?: string;
+    provincia?: string;
     /** Si se indica, se crea además la relación administrador -> comunidad. */
     administradorId?: string;
 };
@@ -190,6 +203,12 @@ export async function crearComunidad(
     }
     if (datos.notasAcceso) {
         properties[PROP.notasAcceso] = datos.notasAcceso;
+    }
+    if (datos.localidad?.trim()) {
+        properties[PROP.localidad] = datos.localidad.trim();
+    }
+    if (datos.provincia?.trim()) {
+        properties[PROP.provincia] = datos.provincia.trim();
     }
 
     const data = await saFetch(subcuenta, `/objects/${OBJECT_KEY_COMUNIDAD}/records`, {

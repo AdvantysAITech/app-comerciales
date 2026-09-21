@@ -1,6 +1,5 @@
 import { auth } from "@/auth";
-import { obtenerOportunidad } from "@/lib/ghl/oportunidades";
-import { NOMBRE_ETAPA } from "@/lib/ghl/ids";
+import { obtenerOportunidad, estadoVisible } from "@/lib/ghl/oportunidades";
 import { urlContactoSa, urlOportunidadSa } from "@/lib/ghl/urls";
 import { documentosDisponibles, leerRegistro } from "@/lib/documentos/estado";
 import { DocumentoPresupuesto } from "@/components/DocumentoPresupuesto";
@@ -34,8 +33,14 @@ export async function OportunidadDetalle({ id }: { id: string }) {
             </h2>
 
             <div className="mt-3 flex items-center justify-between gap-3">
-                <span className="inline-block rounded-full border border-hairline px-3 py-1 text-xs font-medium text-ink">
-                    {oportunidad.etapa ? NOMBRE_ETAPA[oportunidad.etapa] : "Desconocido"}
+                <span
+                    className={`inline-block rounded-full px-3 py-1 text-xs font-medium ${
+                        oportunidad.presupuestoValidado
+                            ? "border border-ink bg-ink text-canvas"
+                            : "border border-hairline text-ink"
+                    }`}
+                >
+                    {estadoVisible(oportunidad)}
                 </span>
                 <a
                     href={urlOportunidadSa(subcuenta, oportunidad.id)}
@@ -77,6 +82,28 @@ export async function OportunidadDetalle({ id }: { id: string }) {
                         registroInicial={registro}
                         disponible={disponible}
                     />
+
+                    {/* Solo dirección. Ocultar el botón no es control de acceso:
+                        la página y las dos rutas de API vuelven a comprobar el
+                        rol, porque quien entre ahí fija precios.
+
+                        `<a>` y no `<Link>`: esta ficha se abre como modal
+                        interceptado (@modal), y en una navegación de cliente
+                        Next MANTIENE viva la ranura paralela. El resultado era
+                        que la pantalla de revisión se cargaba DETRÁS del modal,
+                        con su fondo oscuro y su desenfoque por encima, y además
+                        heredaba el bloqueo de scroll que el modal pone en
+                        `body`. Una navegación real descarta la ranura (cae en
+                        `@modal/default.tsx`, que es null) y deja la pantalla
+                        limpia. */}
+                    {session.user.rol === "direccion" && disponible && (
+                        <a
+                            href={`/oportunidades/${oportunidad.id}/revision`}
+                            className="mt-2 block w-full rounded-xl border border-hairline py-2.5 text-center text-sm font-medium text-ink transition hover:bg-canvas"
+                        >
+                            Revisar y ajustar
+                        </a>
+                    )}
                 </div>
 
                 <div className="flex items-center justify-between gap-3">

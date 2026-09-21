@@ -3,6 +3,7 @@ import { auth } from "@/auth";
 import { esSubcuentaValida } from "@/lib/subcuenta";
 import { obtenerComunidad } from "@/lib/ghl/comunidades";
 import { obtenerAdministrador } from "@/lib/ghl/administradores";
+import { limpiarCasillasPresupuesto } from "@/lib/ghl/casillas";
 import type { PayloadVisita } from "@/lib/visita/payload";
 import { auditarPayload, presupuestar, RutasSinMapearError } from "@/lib/documentos/mapeo-capitulos";
 import type { PresupuestoCalculado } from "@/lib/documentos/motor";
@@ -317,6 +318,27 @@ async function generar(request: NextRequest): Promise<NextResponse> {
         // --- Envío -----------------------------------------------------------
         const requestId = construirRequestId(subcuenta, cuerpo.oportunidadId, version);
         const previo = await leerRegistro(subcuenta, cuerpo.oportunidadId);
+
+        // Circuito de validación a cero antes de encolar.
+        //
+        // Dos motivos, y ninguno es cosmético:
+        //  - El trigger del CRM es "Added": solo salta en la transición vacío ->
+        //    marcado. Sin limpiar, la segunda generación de esta oportunidad no
+        //    volvería a avisar a dirección.
+        //  - Una oportunidad marcada como VALIDADA mientras su documento se está
+        //    rehaciendo es el estado que enviaría al administrador un
+        //    presupuesto que ya no es el vigente.
+        //
+        // No bloquea: si falla, el presupuesto se genera igual. Lo que se pierde
+        // es el aviso, y eso se ve en el log y se arregla marcando a mano.
+        try {
+            await limpiarCasillasPresupuesto(subcuenta, cuerpo.oportunidadId);
+        } catch (error) {
+            const motivo = error instanceof Error ? error.message : "error desconocido";
+            console.error(
+                `[documentos] ${requestId}: no se han podido limpiar las casillas de validación: ${motivo}`
+            );
+        }
 
         await escribirRegistro(
             subcuenta,

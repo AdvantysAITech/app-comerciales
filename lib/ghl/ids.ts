@@ -64,7 +64,44 @@ export type CampoOportunidad =
     /** LARGE_TEXT con el JSON canónico de la visita. */
     | "DATOS_VISITA"
     /** FILE_UPLOAD donde se adjunta el presupuesto generado. */
-    | "PRESUPUESTO";
+    | "PRESUPUESTO"
+    /**
+     * LARGE_TEXT con los ajustes de dirección sobre el presupuesto calculado.
+     *
+     * Lo escribe la pantalla de revisión. Va en su propio campo y NO dentro del
+     * registro de estado: el registro es la máquina de estados de una generación
+     * concreta y es terminal, mientras que los ajustes tienen que sobrevivir a
+     * todas las versiones del documento.
+     */
+    | "AJUSTES_PRESUPUESTO";
+
+/**
+ * Casillas (CHECKBOX) de la oportunidad que gobiernan el circuito de validación.
+ *
+ * ---------------------------------------------------------------------------
+ * COMPORTAMIENTO VERIFICADO POR API (21/09/2026)
+ * ---------------------------------------------------------------------------
+ *  - El valor de un CHECKBOX es un ARRAY de etiquetas, no un booleano.
+ *  - La etiqueta tiene que coincidir EXACTAMENTE con una opción del picklist.
+ *    Cualquier otra cadena se guarda tal cual, GHL responde 200 y la casilla NO
+ *    queda marcada. Pasó en la prueba con el literal "<OPCIÓN EXACTA>".
+ *  - Para desmarcar se envía el array vacío. El campo entonces DESAPARECE de
+ *    `customFields`: en GHL, ausencia = vacío. Nunca es un error.
+ *  - El ciclo desmarcar -> marcar vuelve a disparar el trigger "Opportunity
+ *    Changed / Added" de los workflows. De eso depende que la segunda
+ *    generación de una misma oportunidad avise otra vez a dirección.
+ */
+export type CasillaOportunidad =
+    /** La app ha publicado un documento. Dispara el aviso de revisión. */
+    | "PRESUPUESTO_GENERADO"
+    /** Dirección da el presupuesto por bueno. Dispara el aviso al comercial. */
+    | "PRESUPUESTO_VALIDADO";
+
+export type CampoCasilla = {
+    id: string;
+    /** Opción EXACTA del picklist. Ver la nota de arriba. */
+    opcion: string;
+};
 
 export type AsociacionGhl =
     /** Comunidades De Propietarios -> Opportunity. */
@@ -75,7 +112,10 @@ export type AsociacionGhl =
 export type IdsGhl = {
     pipelineId: string;
     etapas: Readonly<Record<ClaveEtapa, string>>;
+    /** Cadena vacía = el campo no existe todavía en esa subcuenta. */
     campos: Readonly<Record<CampoOportunidad, string>>;
+    /** `null` = la casilla no existe todavía en esa subcuenta. */
+    casillas: Readonly<Record<CasillaOportunidad, CampoCasilla | null>>;
     asociaciones: Readonly<Record<AsociacionGhl, string>>;
 };
 
@@ -99,6 +139,17 @@ const IDS: Readonly<Record<Subcuenta, IdsGhl>> = {
             COMUNIDAD: "rUPG2ZYUgBLRlEvR1tHh",
             DATOS_VISITA: "xFXns9nopnKIR4RDRf2g",
             PRESUPUESTO: "BYt6QSQIz4jpDtDtL6J0",
+            AJUSTES_PRESUPUESTO: "4SKvql6JPwdb0yzdntHX",
+        },
+        casillas: {
+            PRESUPUESTO_GENERADO: {
+                id: "XU7CKhrlFDyLkcG1tHpb",
+                opcion: "¿El presupuesto se ha generado?",
+            },
+            PRESUPUESTO_VALIDADO: {
+                id: "Y1XKjicSib1ZiMJGtAhA",
+                opcion: "¿El presupuesto se ha validado?",
+            },
         },
         asociaciones: {
             COMUNIDAD_OPORTUNIDAD: "6a4b7ab79e37d62b69f3fced",
@@ -124,6 +175,21 @@ const IDS: Readonly<Record<Subcuenta, IdsGhl>> = {
             COMUNIDAD: "YdIlhdrVMpQBfY6EUxlc",
             DATOS_VISITA: "UcIGUjPWG4irzkC8xvMK",
             PRESUPUESTO: "F7oVIuDRIZSjjJC3WzC0",
+            AJUSTES_PRESUPUESTO: "RvO84KaawOdctS5G52jN",
+        },
+        // Creadas el 21/09/2026 con las MISMAS opciones que en Scala. El valor
+        // se escribe por etiqueta, no por índice: si alguien edita el texto de
+        // la opción en GHL, hay que cambiarlo también aquí o la casilla dejará
+        // de marcarse, y GHL no devolverá ningún error.
+        casillas: {
+            PRESUPUESTO_GENERADO: {
+                id: "9KzTORbBzuRrHQzrzfe9",
+                opcion: "¿El presupuesto se ha generado?",
+            },
+            PRESUPUESTO_VALIDADO: {
+                id: "XuJsSoXU5eh3U8SW3iC6",
+                opcion: "¿El presupuesto se ha validado?",
+            },
         },
         asociaciones: {
             COMUNIDAD_OPORTUNIDAD: "6aaaa70249f2efb5bad3ce5b",
@@ -148,6 +214,21 @@ export function claveEtapa(subcuenta: Subcuenta, pipelineStageId: string | null 
 /** Clave de etapa -> stage ID de GHL. */
 export function idEtapa(subcuenta: Subcuenta, clave: ClaveEtapa): string {
     return idsGhl(subcuenta).etapas[clave];
+}
+
+/**
+ * Id de un custom field, o `null` si esa subcuenta todavía no lo tiene creado.
+ *
+ * Devuelve `null` en vez de lanzar a propósito: quien escribe decide si eso es
+ * un no-op (lo normal) o un error (solo si el dato es imprescindible).
+ */
+export function idCampo(subcuenta: Subcuenta, campo: CampoOportunidad): string | null {
+    return idsGhl(subcuenta).campos[campo]?.trim() || null;
+}
+
+/** Id y opción de una casilla, o `null` si no existe en esa subcuenta. */
+export function casillaGhl(subcuenta: Subcuenta, casilla: CasillaOportunidad): CampoCasilla | null {
+    return idsGhl(subcuenta).casillas[casilla];
 }
 
 /**

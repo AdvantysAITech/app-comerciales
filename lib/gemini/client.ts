@@ -41,24 +41,69 @@ export type GeminiRespuesta = {
     promptFeedback?: { blockReason?: string };
 };
 
+/**
+ * Error de Gemini con el código HTTP accesible.
+ *
+ * POR QUÉ NO BASTA UN `Error` NORMAL (18/09/2026): quien llama necesita
+ * distinguir un 429 (cuota agotada: reintentar es contraproducente) de un 503
+ * (modelo saturado: reintentar con espera es justo lo correcto). Con el código
+ * enterrado en el texto del mensaje habría que parsear cadenas.
+ */
+export class ErrorGemini extends Error {
+    constructor(
+        public readonly status: number,
+        mensaje: string
+    ) {
+        super(mensaje);
+        this.name = "ErrorGemini";
+    }
+}
+
+/**
+ * Corte de la llamada a Gemini.
+ *
+ * ES OBLIGATORIO Y FALTABA. Sin él, una llamada que se queda colgada agota los
+ * 60 s de la función y Vercel devuelve un 504 de plataforma que NI SIQUIERA ES
+ * JSON: el cliente reventaba al parsearlo. Detectado en producción el
+ * 18/09/2026 con tres 504 seguidos de 60.001 ms exactos.
+ *
+ * 35 s deja margen para responder con un error legible dentro del minuto.
+ */
+const TIEMPO_MAXIMO_MS = 35000;
+
 export async function geminiGenerateContent(body: unknown): Promise<GeminiRespuesta> {
     const { apiKey, modelo } = getGeminiConfig();
 
-    const response = await fetch(`${GEMINI_BASE_URL}/models/${modelo}:generateContent`, {
-        method: "POST",
-        headers: {
-            "x-goog-api-key": apiKey,
-            "Content-Type": "application/json",
-        },
-        body: JSON.stringify(body),
-        // Igual que en la subida de media a GHL: sin esto el fetch parcheado de
-        // Next.js puede intentar cachear la petición.
-        cache: "no-store",
-    });
+    const controlador = new AbortController();
+    const corte = setTimeout(() => controlador.abort(), TIEMPO_MAXIMO_MS);
+
+    let response: Response;
+
+    try {
+        response = await fetch(`${GEMINI_BASE_URL}/models/${modelo}:generateContent`, {
+            method: "POST",
+            headers: {
+                "x-goog-api-key": apiKey,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify(body),
+            signal: controlador.signal,
+            // Igual que en la subida de media a GHL: sin esto el fetch parcheado de
+            // Next.js puede intentar cachear la petición.
+            cache: "no-store",
+        });
+    } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+            throw new ErrorGemini(504, `Gemini no ha respondido en ${TIEMPO_MAXIMO_MS / 1000} segundos`);
+        }
+        throw error;
+    } finally {
+        clearTimeout(corte);
+    }
 
     if (!response.ok) {
         const errorBody = await response.text();
-        throw new Error(`Error en Gemini (${response.status}): ${errorBody}`);
+        throw new ErrorGemini(response.status, `Error en Gemini (${response.status}): ${errorBody}`);
     }
 
     return response.json();

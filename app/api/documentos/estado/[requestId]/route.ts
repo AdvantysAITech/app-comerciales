@@ -386,18 +386,35 @@ export async function GET(
             const archivo = new File([contenido], nombre, { type: mimetype });
             const subido = await subirArchivoSa(subcuenta, archivo);
 
-            // Adjuntar al campo "Presupuesto" de la oportunidad. No bloquea: el
-            // documento ya está en Media Storage y se descarga desde la app.
+            // Adjuntar al campo "Presupuesto" de la oportunidad y, EN EL MISMO
+            // PUT, marcar la casilla "Presupuesto generado": es lo que dispara
+            // el aviso a dirección en el CRM.
+            //
+            // Van juntos por corrección, no por ahorro: en dos llamadas, el
+            // workflow podría arrancar con el campo "Presupuesto" apuntando
+            // todavía al documento anterior.
+            //
+            // No bloquea la publicación: el documento ya está en Media Storage y
+            // se descarga desde la app. Pero si esto falla, dirección NO se
+            // entera, así que el aviso se registra como tal.
             try {
-                await adjuntarPresupuesto(subcuenta, oportunidadId, {
-                    url: subido.url,
-                    nombre,
-                    mimetype,
-                    bytes: contenido.byteLength,
-                });
+                await adjuntarPresupuesto(
+                    subcuenta,
+                    oportunidadId,
+                    {
+                        url: subido.url,
+                        nombre,
+                        mimetype,
+                        bytes: contenido.byteLength,
+                    },
+                    { PRESUPUESTO_GENERADO: true }
+                );
             } catch (error) {
                 const motivo = error instanceof Error ? error.message : "error desconocido";
-                avisos.push(`Publicado pero NO adjuntado a la oportunidad en GHL: ${motivo}`);
+                avisos.push(
+                    `Publicado pero NO adjuntado a la oportunidad en GHL: ${motivo}. ` +
+                        `Dirección no ha recibido el aviso de revisión.`
+                );
             }
 
             const formato = mimetype === MIMETYPE_PDF ? "pdf" : "odt";

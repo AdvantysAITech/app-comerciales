@@ -1,6 +1,7 @@
 import { saFetch, getLocationId, type Subcuenta } from "./client";
 import { asociarComunidadConOportunidad } from "./comunidades";
-import { claveEtapa, idsGhl, type ClaveEtapa } from "./ids";
+import { casillaMarcadaEn, entradaCasilla } from "./casillas";
+import { claveEtapa, idsGhl, NOMBRE_ETAPA, type CasillaOportunidad, type ClaveEtapa } from "./ids";
 
 // Pipeline, etapas y custom fields viven en lib/ghl/ids.ts, por subcuenta.
 // Se reexportan para no romper a quien los importaba desde aquí.
@@ -32,6 +33,14 @@ type DatosOportunidad = {
     descripcionLibre: string;
     camposEspecificos: Record<string, string>;
     fotos: string[];
+    /**
+     * Id en GHL del comercial que crea la oportunidad (`assignedTo`).
+     *
+     * Los workflows del CRM notifican al "Assigned To": el aviso de presupuesto
+     * validado va dirigido a quien llevó la visita. Una oportunidad sin
+     * propietario ejecuta el workflow y no avisa a nadie.
+     */
+    asignadoA?: string | null;
 };
 
 type OportunidadAbierta = {
@@ -57,6 +66,8 @@ export type OportunidadListado = {
     comunidadNombre: string | null;
     fechaVisita: string | null;
     descripcionVisita: string | null;
+    /** Dirección ha dado el presupuesto por bueno. */
+    presupuestoValidado: boolean;
     administrador: {
         id: string | null;
         nombre: string | null;
@@ -158,6 +169,29 @@ function construirDescripcion(datos: {
     ].join("\n");
 }
 
+/**
+ * Estado que se le enseña al usuario en la app.
+ *
+ * La validación de dirección NO es una etapa del pipeline: es una casilla de la
+ * oportunidad. Mientras esté marcada y la oportunidad siga en revisión, el
+ * estado honesto es "Presupuesto validado" -- si se pintara la etapa a secas,
+ * el comercial seguiría leyendo "Presupuesto en revisión" en un presupuesto que
+ * dirección ya ha dado por bueno y que le toca enviar a él.
+ *
+ * En cuanto la oportunidad avanza a "Presupuesto enviado" manda la etapa otra
+ * vez: ahí la casilla ya no aporta nada.
+ */
+export function estadoVisible(oportunidad: {
+    etapa: ClaveEtapa | null;
+    presupuestoValidado: boolean;
+}): string {
+    if (oportunidad.presupuestoValidado && oportunidad.etapa === "PRESUPUESTO_EN_REVISION") {
+        return "Presupuesto validado";
+    }
+
+    return oportunidad.etapa ? NOMBRE_ETAPA[oportunidad.etapa] : "—";
+}
+
 function mapearOportunidadListado(subcuenta: Subcuenta, op: any): OportunidadListado {
     const { campos } = idsGhl(subcuenta);
     return {
@@ -170,6 +204,7 @@ function mapearOportunidadListado(subcuenta: Subcuenta, op: any): OportunidadLis
         comunidadNombre: valorCampo(op, campos.COMUNIDAD),
         fechaVisita: valorFecha(op, campos.FECHA_VISITA),
         descripcionVisita: valorCampo(op, campos.DESCRIPCION),
+        presupuestoValidado: casillaMarcadaEn(subcuenta, "PRESUPUESTO_VALIDADO", op.customFields),
         administrador: {
             id: op.contactId ?? op.contact?.id ?? null,
             nombre: op.contact?.name ?? null,
@@ -192,6 +227,7 @@ export async function crearOportunidad(subcuenta: Subcuenta, datos: DatosOportun
             contactId: datos.contactId,
             name: `${datos.comunidadNombre} - ${ETIQUETA_MODELO_NEGOCIO[datos.modeloNegocio]}`,
             status: "open",
+            ...(datos.asignadoA ? { assignedTo: datos.asignadoA } : {}),
             customFields: [
                 { id: campos.MODELO_NEGOCIO, field_value: ETIQUETA_MODELO_NEGOCIO[datos.modeloNegocio] },
                 { id: campos.DESCRIPCION, field_value: descripcionCompleta },
@@ -218,6 +254,7 @@ export async function crearOportunidadDesdeVisita(subcuenta: Subcuenta, datos: D
             contactId: datos.contactId,
             name: `${datos.comunidadNombre} - ${ETIQUETA_MODELO_NEGOCIO[datos.modeloNegocio]}`,
             status: "open",
+            ...(datos.asignadoA ? { assignedTo: datos.asignadoA } : {}),
             customFields: [
                 { id: campos.MODELO_NEGOCIO, field_value: ETIQUETA_MODELO_NEGOCIO[datos.modeloNegocio] },
                 { id: campos.DESCRIPCION, field_value: descripcionCompleta },
@@ -364,11 +401,22 @@ export type DocumentoAdjunto = {
  * Se envía un único elemento a propósito: cada regeneración PISA la anterior.
  * El campo admite varios, pero un administrador que ve tres presupuestos
  * adjuntos no sabe cuál vale. El histórico de versiones vive en el registro.
+ *
+ * ---------------------------------------------------------------------------
+ * LAS CASILLAS VIAJAN EN ESTE MISMO PUT (21/09/2026)
+ * ---------------------------------------------------------------------------
+ * `casillas` permite marcar `PRESUPUESTO_GENERADO` en la MISMA llamada que
+ * adjunta el fichero. No es comodidad, es corrección: esa casilla dispara el
+ * workflow que avisa a dirección, y escribirla en un PUT aparte abre una
+ * ventana en la que el workflow ya se ha disparado y el campo "Presupuesto"
+ * todavía apunta al documento ANTERIOR. Con un único PUT, o están las dos cosas
+ * o no está ninguna.
  */
 export async function adjuntarPresupuesto(
     subcuenta: Subcuenta,
     oportunidadId: string,
-    documento: DocumentoAdjunto
+    documento: DocumentoAdjunto,
+    casillas: Partial<Record<CasillaOportunidad, boolean>> = {}
 ) {
     if (!Number.isInteger(documento.bytes) || documento.bytes <= 0) {
         throw new Error(
@@ -377,26 +425,34 @@ export async function adjuntarPresupuesto(
         );
     }
 
-    const data = await saFetch(subcuenta, `/opportunities/${oportunidadId}`, {
-        method: "PUT",
-        body: JSON.stringify({
-            customFields: [
+    const campos: Array<Record<string, unknown>> = [
+        {
+            id: idsGhl(subcuenta).campos.PRESUPUESTO,
+            field_value: [
                 {
-                    id: idsGhl(subcuenta).campos.PRESUPUESTO,
-                    field_value: [
-                        {
-                            url: documento.url,
-                            meta: {
-                                mimetype: documento.mimetype,
-                                name: documento.nombre,
-                                size: documento.bytes,
-                            },
-                            deleted: false,
-                        },
-                    ],
+                    url: documento.url,
+                    meta: {
+                        mimetype: documento.mimetype,
+                        name: documento.nombre,
+                        size: documento.bytes,
+                    },
+                    deleted: false,
                 },
             ],
-        }),
+        },
+    ];
+
+    // Las casillas que la subcuenta no tenga creadas devuelven null y se omiten.
+    for (const [casilla, marcada] of Object.entries(casillas) as Array<
+        [CasillaOportunidad, boolean]
+    >) {
+        const entrada = entradaCasilla(subcuenta, casilla, marcada);
+        if (entrada) campos.push(entrada);
+    }
+
+    const data = await saFetch(subcuenta, `/opportunities/${oportunidadId}`, {
+        method: "PUT",
+        body: JSON.stringify({ customFields: campos }),
     });
 
     return data.opportunity ?? data;
