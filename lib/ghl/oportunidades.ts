@@ -1,5 +1,7 @@
 import { saFetch, getLocationId, type Subcuenta } from "./client";
 import { asociarComunidadConOportunidad } from "./comunidades";
+import { entradaCasilla } from "./casillas";
+import type { CasillaOportunidad } from "./ids";
 
 const PIPELINE_ID = "Lg3gwS0oqpYDiBm8bjcD";
 
@@ -382,11 +384,25 @@ export type DocumentoAdjunto = {
  * Se envía un único elemento a propósito: cada regeneración PISA la anterior.
  * El campo admite varios, pero un administrador que ve tres presupuestos
  * adjuntos no sabe cuál vale. El histórico de versiones vive en el registro.
+ *
+ * ---------------------------------------------------------------------------
+ * LAS CASILLAS VIAJAN EN ESTE MISMO PUT (21/09/2026)
+ * ---------------------------------------------------------------------------
+ * `casillas` permite marcar `PRESUPUESTO_GENERADO` (y, desde la pantalla de
+ * revisión, `PRESUPUESTO_VALIDADO`) en la MISMA llamada que adjunta el fichero.
+ *
+ * No es una comodidad, es correccion. Esas casillas son el disparador de los
+ * workflows del CRM: `GENERADO` avisa a dirección y `VALIDADO` envía el
+ * presupuesto al administrador. Escribirlas en un PUT aparte abre una ventana
+ * en la que el workflow ya se ha disparado y el campo "Presupuesto" todavía
+ * apunta al documento ANTERIOR: el administrador recibiría el presupuesto
+ * equivocado. Con un único PUT, o están las dos cosas o no está ninguna.
  */
 export async function adjuntarPresupuesto(
     subcuenta: Subcuenta,
     oportunidadId: string,
-    documento: DocumentoAdjunto
+    documento: DocumentoAdjunto,
+    casillas: Partial<Record<CasillaOportunidad, boolean>> = {}
 ) {
     if (!Number.isInteger(documento.bytes) || documento.bytes <= 0) {
         throw new Error(
@@ -395,26 +411,34 @@ export async function adjuntarPresupuesto(
         );
     }
 
-    const data = await saFetch(subcuenta, `/opportunities/${oportunidadId}`, {
-        method: "PUT",
-        body: JSON.stringify({
-            customFields: [
+    const campos: Array<Record<string, unknown>> = [
+        {
+            id: CUSTOM_FIELD_PRESUPUESTO,
+            field_value: [
                 {
-                    id: CUSTOM_FIELD_PRESUPUESTO,
-                    field_value: [
-                        {
-                            url: documento.url,
-                            meta: {
-                                mimetype: documento.mimetype,
-                                name: documento.nombre,
-                                size: documento.bytes,
-                            },
-                            deleted: false,
-                        },
-                    ],
+                    url: documento.url,
+                    meta: {
+                        mimetype: documento.mimetype,
+                        name: documento.nombre,
+                        size: documento.bytes,
+                    },
+                    deleted: false,
                 },
             ],
-        }),
+        },
+    ];
+
+    // Las casillas que la subcuenta no tenga creadas devuelven null y se omiten.
+    for (const [casilla, marcada] of Object.entries(casillas) as Array<
+        [CasillaOportunidad, boolean]
+    >) {
+        const entrada = entradaCasilla(subcuenta, casilla, marcada);
+        if (entrada) campos.push(entrada);
+    }
+
+    const data = await saFetch(subcuenta, `/opportunities/${oportunidadId}`, {
+        method: "PUT",
+        body: JSON.stringify({ customFields: campos }),
     });
 
     return data.opportunity ?? data;
