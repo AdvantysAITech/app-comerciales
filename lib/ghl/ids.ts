@@ -132,16 +132,21 @@ const IDS: Readonly<Record<Subcuenta, IdsGhl>> = {
             COMUNIDAD: "YdIlhdrVMpQBfY6EUxlc",
             DATOS_VISITA: "UcIGUjPWG4irzkC8xvMK",
             PRESUPUESTO: "F7oVIuDRIZSjjJC3WzC0",
-            // Sin crear todavía en Vertical Projects (21/09/2026). Vacío, no
-            // inventado: `idCampo` devuelve null y quien lo use no escribe nada.
-            AJUSTES_PRESUPUESTO: "",
+            AJUSTES_PRESUPUESTO: "RvO84KaawOdctS5G52jN",
         },
-        // Sin crear todavía en Vertical Projects. Al replicarlas hay que usar
-        // LAS MISMAS opciones de picklist o cambiar el texto también aquí: el
-        // valor se escribe por etiqueta, no por índice.
+        // Creadas el 21/09/2026 con las MISMAS opciones que en Scala. El valor
+        // se escribe por etiqueta, no por índice: si alguien edita el texto de
+        // la opción en GHL, hay que cambiarlo también aquí o la casilla dejará
+        // de marcarse, y GHL no devolverá ningún error.
         casillas: {
-            PRESUPUESTO_GENERADO: null,
-            PRESUPUESTO_VALIDADO: null,
+            PRESUPUESTO_GENERADO: {
+                id: "9KzTORbBzuRrHQzrzfe9",
+                opcion: "¿El presupuesto se ha generado?",
+            },
+            PRESUPUESTO_VALIDADO: {
+                id: "XuJsSoXU5eh3U8SW3iC6",
+                opcion: "¿El presupuesto se ha validado?",
+            },
         },
         asociaciones: {
             COMUNIDAD_OPORTUNIDAD: "6aaaa70249f2efb5bad3ce5b",
