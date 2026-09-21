@@ -10,6 +10,17 @@ type UsuarioConfigurado = {
   nombre: string;
   rol: Rol;
   subcuenta: SubcuentaSlug;
+  /**
+   * Id de este usuario DENTRO de GHL. Es lo que se manda como `assignedTo` al
+   * crear una oportunidad, y lo que permite que los workflows del CRM sepan a
+   * quién avisar.
+   *
+   * Va por variable de entorno como las credenciales: es un dato de
+   * parametrización de la subcuenta, no del código, y cambia al replicar el
+   * snapshot. Si falta, la oportunidad se crea SIN propietario -- que es lo que
+   * pasaba hasta ahora -- y queda constancia en el log.
+   */
+  usuarioGhl?: string;
 };
 
 const USUARIOS: UsuarioConfigurado[] = [
@@ -19,6 +30,7 @@ const USUARIOS: UsuarioConfigurado[] = [
     nombre: "Jose Garcia",
     rol: "comercial",
     subcuenta: "scala-valencia",
+    usuarioGhl: process.env.JOSE_GHL_USER_ID,
   },
   {
     email: process.env.TONI_EMAIL,
@@ -26,6 +38,7 @@ const USUARIOS: UsuarioConfigurado[] = [
     nombre: "Toni Yañez",
     rol: "comercial",
     subcuenta: "vertical-projects",
+    usuarioGhl: process.env.TONI_GHL_USER_ID,
   },
   {
     // DERCAS 9.1: Miguel es perfil Direccion con acceso multi-subcuenta.
@@ -35,6 +48,7 @@ const USUARIOS: UsuarioConfigurado[] = [
     nombre: "Miguel",
     rol: "direccion",
     subcuenta: "scala-valencia",
+    usuarioGhl: process.env.MIGUEL_GHL_USER_ID,
   },
 ];
 
@@ -70,6 +84,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           name: usuario.nombre,
           rol: usuario.rol,
           subcuenta: usuario.subcuenta,
+          usuarioGhl: usuario.usuarioGhl?.trim() || null,
         };
       },
     }),
@@ -82,6 +97,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       if (user) {
         token.subcuenta = user.subcuenta;
         token.rol = user.rol;
+        token.usuarioGhl = user.usuarioGhl ?? null;
       }
       return token;
     },
@@ -89,6 +105,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       if (session.user) {
         session.user.subcuenta = token.subcuenta;
         session.user.rol = token.rol;
+        session.user.usuarioGhl = token.usuarioGhl ?? null;
       }
       return session;
     },

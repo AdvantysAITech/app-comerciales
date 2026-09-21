@@ -1,6 +1,6 @@
 import { saFetch, getLocationId, type Subcuenta } from "./client";
 import { asociarComunidadConOportunidad } from "./comunidades";
-import { entradaCasilla } from "./casillas";
+import { casillaMarcadaEn, entradaCasilla } from "./casillas";
 import type { CasillaOportunidad } from "./ids";
 
 const PIPELINE_ID = "Lg3gwS0oqpYDiBm8bjcD";
@@ -57,6 +57,32 @@ export const NOMBRE_ETAPA: Record<string, string> = {
     [ETAPA.PERDIDA]: "Pérdida",
 };
 
+/**
+ * Estado que se le enseña al usuario en la app.
+ *
+ * La validación de dirección NO es una etapa del pipeline: es una casilla de la
+ * oportunidad. Mientras esté marcada y la oportunidad siga en revisión, el
+ * estado honesto es "Presupuesto validado" -- si se pintara la etapa a secas,
+ * el comercial seguiría leyendo "Presupuesto en revisión" en un presupuesto que
+ * Miguel ya ha dado por bueno y que le toca enviar a él.
+ *
+ * En cuanto la oportunidad avanza a "Presupuesto enviado" manda la etapa otra
+ * vez: ahí la casilla ya no aporta nada.
+ */
+export function estadoVisible(oportunidad: {
+    pipelineStageId: string;
+    presupuestoValidado: boolean;
+}): string {
+    if (
+        oportunidad.presupuestoValidado &&
+        oportunidad.pipelineStageId === ETAPA.PRESUPUESTO_EN_REVISION
+    ) {
+        return "Presupuesto validado";
+    }
+
+    return NOMBRE_ETAPA[oportunidad.pipelineStageId] ?? "—";
+}
+
 type DatosOportunidad = {
     contactId: string;
     comunidadId: string;
@@ -67,6 +93,14 @@ type DatosOportunidad = {
     descripcionLibre: string;
     camposEspecificos: Record<string, string>;
     fotos: string[];
+    /**
+     * Id en GHL del comercial que crea la oportunidad (`assignedTo`).
+     *
+     * Los workflows del CRM notifican al "Assigned To": el aviso de presupuesto
+     * validado va dirigido a quien llevó la visita. Una oportunidad sin
+     * propietario ejecuta el workflow y no avisa a nadie.
+     */
+    asignadoA?: string | null;
 };
 
 type OportunidadAbierta = {
@@ -86,6 +120,8 @@ export type OportunidadListado = {
     comunidadNombre: string | null;
     fechaVisita: string | null;
     descripcionVisita: string | null;
+    /** Dirección ha dado el presupuesto por bueno. */
+    presupuestoValidado: boolean;
     administrador: {
         id: string | null;
         nombre: string | null;
@@ -187,7 +223,7 @@ function construirDescripcion(datos: {
     ].join("\n");
 }
 
-function mapearOportunidadListado(op: any): OportunidadListado {
+function mapearOportunidadListado(subcuenta: Subcuenta, op: any): OportunidadListado {
     return {
         id: op.id,
         name: op.name,
@@ -197,6 +233,7 @@ function mapearOportunidadListado(op: any): OportunidadListado {
         comunidadNombre: valorCampo(op, CUSTOM_FIELD_COMUNIDAD),
         fechaVisita: valorFecha(op, CUSTOM_FIELD_FECHA_VISITA),
         descripcionVisita: valorCampo(op, CUSTOM_FIELD_DESCRIPCION),
+        presupuestoValidado: casillaMarcadaEn(subcuenta, "PRESUPUESTO_VALIDADO", op.customFields),
         administrador: {
             id: op.contactId ?? op.contact?.id ?? null,
             nombre: op.contact?.name ?? null,
@@ -218,6 +255,7 @@ export async function crearOportunidad(subcuenta: Subcuenta, datos: DatosOportun
             contactId: datos.contactId,
             name: `${datos.comunidadNombre} - ${ETIQUETA_MODELO_NEGOCIO[datos.modeloNegocio]}`,
             status: "open",
+            ...(datos.asignadoA ? { assignedTo: datos.asignadoA } : {}),
             customFields: [
                 { id: CUSTOM_FIELD_MODELO_NEGOCIO, field_value: ETIQUETA_MODELO_NEGOCIO[datos.modeloNegocio] },
                 { id: CUSTOM_FIELD_DESCRIPCION, field_value: descripcionCompleta },
@@ -243,6 +281,7 @@ export async function crearOportunidadDesdeVisita(subcuenta: Subcuenta, datos: D
             contactId: datos.contactId,
             name: `${datos.comunidadNombre} - ${ETIQUETA_MODELO_NEGOCIO[datos.modeloNegocio]}`,
             status: "open",
+            ...(datos.asignadoA ? { assignedTo: datos.asignadoA } : {}),
             customFields: [
                 { id: CUSTOM_FIELD_MODELO_NEGOCIO, field_value: ETIQUETA_MODELO_NEGOCIO[datos.modeloNegocio] },
                 { id: CUSTOM_FIELD_DESCRIPCION, field_value: descripcionCompleta },
@@ -306,7 +345,7 @@ export async function listarOportunidades(
                 op.pipelineId === PIPELINE_ID &&
                 etapasIncluidas.includes(op.pipelineStageId)
         )
-        .map(mapearOportunidadListado);
+        .map((op) => mapearOportunidadListado(subcuenta, op));
 }
 
 export async function obtenerOportunidad(
@@ -317,7 +356,7 @@ export async function obtenerOportunidad(
         const data = await saFetch(subcuenta, `/opportunities/${oportunidadId}`);
         const op = data.opportunity ?? data;
         if (!op?.id) return null;
-        return mapearOportunidadListado(op);
+        return mapearOportunidadListado(subcuenta, op);
     } catch {
         return null;
     }

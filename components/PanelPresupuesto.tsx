@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { ETAPAS_PRESUPUESTO, NOMBRE_ETAPA, type OportunidadListado } from "@/lib/ghl/oportunidades";
+import { ETAPAS_PRESUPUESTO, NOMBRE_ETAPA, estadoVisible, type OportunidadListado } from "@/lib/ghl/oportunidades";
 
 type Props = {
     oportunidades: OportunidadListado[];
@@ -113,8 +113,14 @@ export function PanelPresupuestos({ oportunidades }: Props) {
                             <p className="mt-1 text-xs text-muted">
                                 {op.modeloNegocio ?? "Sin modelo asignado"} · {op.administrador.nombre ?? "Sin administrador"}
                             </p>
-                            <span className="mt-3 inline-block rounded-full border border-hairline px-2.5 py-1 text-[11px] font-medium text-ink">
-                                {NOMBRE_ETAPA[op.pipelineStageId] ?? "—"}
+                            <span
+                                className={`mt-3 inline-block rounded-full px-2.5 py-1 text-[11px] font-medium ${
+                                    op.presupuestoValidado
+                                        ? "border border-ink bg-ink text-canvas"
+                                        : "border border-hairline text-ink"
+                                }`}
+                            >
+                                {estadoVisible(op)}
                             </span>
                         </Link>
                     ))}

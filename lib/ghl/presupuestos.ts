@@ -91,6 +91,8 @@ async function crearOportunidadPresupuesto(
         modeloNegocio: string | null;
         descripcion: string;
         json: string;
+        /** Id del comercial en GHL. Sin el, la oportunidad nace sin propietario. */
+        asignadoA?: string | null;
     }
 ): Promise<string> {
     const customFields: Array<{ id: string; field_value: string }> = [
@@ -110,6 +112,19 @@ async function crearOportunidadPresupuesto(
         });
     }
 
+    // Propietario de la oportunidad.
+    //
+    // No es cosmetico: los workflows del CRM avisan al "Assigned To", y el aviso
+    // de presupuesto validado va dirigido al comercial que llevo la visita. Sin
+    // propietario, ese workflow se ejecuta y no notifica a nadie.
+    if (!datos.asignadoA) {
+        console.warn(
+            `[presupuestos] Oportunidad "${datos.nombre}" creada SIN propietario: ` +
+                `el usuario de la sesion no tiene id de GHL configurado. ` +
+                `Revisa las variables *_GHL_USER_ID.`
+        );
+    }
+
     const data = await saFetch(subcuenta, "/opportunities/", {
         method: "POST",
         body: JSON.stringify({
@@ -119,6 +134,7 @@ async function crearOportunidadPresupuesto(
             contactId: datos.contactId,
             name: datos.nombre,
             status: "open",
+            ...(datos.asignadoA ? { assignedTo: datos.asignadoA } : {}),
             customFields,
         }),
     });
@@ -147,7 +163,9 @@ export async function registrarPresupuesto(
     subcuenta: Subcuenta,
     empresa: string,
     comercial: string,
-    entrada: EntradaPresupuesto
+    entrada: EntradaPresupuesto,
+    /** Id en GHL del comercial que ha iniciado sesion. Sale de la sesion. */
+    asignadoA: string | null = null
 ): Promise<ResultadoPresupuesto> {
     const avisos: string[] = [];
 
@@ -212,6 +230,7 @@ export async function registrarPresupuesto(
 
         const id = await crearOportunidadPresupuesto(subcuenta, {
             contactId,
+            asignadoA,
             nombre: nombreOportunidad(comunidad.nombreDireccion, grupo.etiqueta),
             comunidadNombre: comunidad.nombreDireccion,
             fechaVisita: payload.fechaVisita,

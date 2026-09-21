@@ -185,10 +185,35 @@ function construirModulos(
     // se ha quedado fuera del documento.
     const textoLibre = new Set(auditarPayload(payload).textoLibre.map((t) => t.ruta));
 
+    // Precio REALMENTE aplicado por partida, tomado del cálculo y no de la
+    // tarifa.
+    //
+    // Es la diferencia entre un documento que sale y uno que se cierra como
+    // fallido: si dirección ajusta un precio y aquí se sigue leyendo
+    // `tarifaEmpresa`, la IA recibe los importes viejos, los cita en
+    // `ObjetoYAlcance`, y `validarCifras` los rechaza porque no están en
+    // `cifrasDelCalculo` — que se construye sobre el presupuesto ajustado.
+    //
+    // Una partida excluida por dirección no está en el cálculo y por tanto
+    // tampoco aquí: no debe aparecer en el texto de un documento que no la
+    // presupuesta.
+    const precioAplicado = new Map<string, number>();
+    for (const capitulo of presupuesto?.capitulos ?? []) {
+        for (const linea of capitulo.lineas) precioAplicado.set(linea.codigo, linea.precioUnitario);
+    }
+
+    const enElCalculo = (ruta: string): boolean => {
+        if (!presupuesto) return true;
+        const tarifa = partidaDeRuta(ruta);
+        return tarifa ? precioAplicado.has(tarifa.codigo) : false;
+    };
+
     return payload.modulos
         .map((modulo) => ({
             ...modulo,
-            partidas: modulo.partidas.filter((partida) => !textoLibre.has(partida.ruta)),
+            partidas: modulo.partidas.filter(
+                (partida) => !textoLibre.has(partida.ruta) && enElCalculo(partida.ruta)
+            ),
         }))
         .filter((modulo) => modulo.partidas.length > 0)
         .map((modulo) => ({
@@ -196,10 +221,13 @@ function construirModulos(
             partidas: modulo.partidas.map((partida) => {
                 const tarifa = presupuesto ? partidaDeRuta(partida.ruta) : undefined;
                 const cantidad = partida.cantidad ?? 0;
+                const precio = tarifa
+                    ? precioAplicado.get(tarifa.codigo) ?? tarifa.tarifaEmpresa
+                    : null;
 
                 const importe =
-                    tarifa && cantidad > 0
-                        ? aEuros(Math.round(cantidad * aCentimos(tarifa.tarifaEmpresa)))
+                    precio !== null && cantidad > 0
+                        ? aEuros(Math.round(cantidad * aCentimos(precio)))
                         : null;
 
                 return {
@@ -207,7 +235,7 @@ function construirModulos(
                     descripcion: tarifa?.descripcionCorta ?? partida.camino.join(" > "),
                     unidad: partida.unidad ?? tarifa?.unidad ?? "",
                     cantidadFormateada: cantidad > 0 ? formatearCantidad(cantidad) : "",
-                    precioFormateado: tarifa ? formatearImporte(tarifa.tarifaEmpresa) : "",
+                    precioFormateado: precio !== null ? formatearImporte(precio) : "",
                     importeFormateado: importe !== null ? formatearImporte(importe) : "",
                 };
             }),

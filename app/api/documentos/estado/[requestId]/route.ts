@@ -16,7 +16,8 @@ import {
 import { escribirRegistro, extraerVersionesPrompt, leerRegistro } from "@/lib/documentos/estado";
 import { MARCADOR_PORTADA, MarcadorPortadaAusenteError, postprocesarOdt } from "@/lib/documentos/odf";
 import { leerPayloadVisita } from "@/lib/documentos/visitaGuardada";
-import { presupuestar } from "@/lib/documentos/mapeo-capitulos";
+import { presupuestarConAjustes } from "@/lib/documentos/mapeo-capitulos";
+import { leerAjustes } from "@/lib/documentos/ajustes";
 import { cifrasDelCalculo, type PresupuestoCalculado } from "@/lib/documentos/motor";
 import { prepararDocumento } from "@/lib/documentos/payloadDocumento";
 import { assertPortada, construirPortada } from "@/lib/documentos/portada";
@@ -64,7 +65,11 @@ async function reconstruirContexto(
     const payload = await leerPayloadVisita(subcuenta, oportunidadId);
     if (!payload) return null;
 
-    const presupuesto = presupuestar(payload);
+    // Los ajustes de dirección se releen aquí. El cálculo del cierre tiene que
+    // ser EL MISMO que el del envío: es el que compone el desglose de partidas,
+    // la portada y las cifras contra las que se verifica el documento.
+    const ajustes = await leerAjustes(subcuenta, oportunidadId);
+    const presupuesto = presupuestarConAjustes(payload, ajustes);
 
     if (!payload.comunidad.id || !payload.administrador.id) return null;
 
