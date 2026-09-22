@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { sesionApp } from "@/lib/sesion";
 import {
     listarComunidades,
     obtenerOCrearComunidad,
     type DatosNuevaComunidad,
 } from "@/lib/ghl/comunidades";
-import type { SubcuentaSlug } from "@/lib/subcuenta";
 
 /**
  * Alta y consulta de comunidades de propietarios.
@@ -28,14 +27,14 @@ function textoDe(body: Record<string, unknown>, clave: string): string | undefin
 }
 
 export async function GET() {
-    const session = await auth();
+    const sesion = await sesionApp();
 
-    if (!session?.user?.subcuenta) {
+    if (!sesion) {
         return NextResponse.json({ error: "No autenticado" }, { status: 401 });
     }
 
     try {
-        const comunidades = await listarComunidades(session.user.subcuenta as SubcuentaSlug);
+        const comunidades = await listarComunidades(sesion.subcuenta);
         return NextResponse.json({ comunidades });
     } catch (error) {
         const mensaje = error instanceof Error ? error.message : "Error desconocido";
@@ -45,13 +44,13 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-    const session = await auth();
+    const sesion = await sesionApp();
 
-    if (!session?.user?.subcuenta) {
+    if (!sesion) {
         return NextResponse.json({ error: "No autenticado" }, { status: 401 });
     }
 
-    const subcuenta = session.user.subcuenta as SubcuentaSlug;
+    const subcuenta = sesion.subcuenta;
     const body = (await request.json()) as Record<string, unknown>;
 
     const nombreDireccion = textoDe(body, "nombreDireccion");

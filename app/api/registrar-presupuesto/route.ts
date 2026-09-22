@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/auth";
-import { SUBCUENTAS, esSubcuentaValida } from "@/lib/subcuenta";
+import { sesionApp } from "@/lib/sesion";
+import { SUBCUENTAS } from "@/lib/subcuenta";
 import { registrarPresupuesto, type EntradaPresupuesto } from "@/lib/ghl/presupuestos";
 
 /**
@@ -11,15 +11,15 @@ import { registrarPresupuesto, type EntradaPresupuesto } from "@/lib/ghl/presupu
  * no deberia poder decidir en que subcuenta escribe.
  */
 export async function POST(request: NextRequest) {
-    const session = await auth();
+    const sesion = await sesionApp();
 
-    if (!session?.user?.subcuenta || !esSubcuentaValida(session.user.subcuenta)) {
+    if (!sesion) {
         return NextResponse.json({ error: "No autenticado" }, { status: 401 });
     }
 
-    const subcuenta = session.user.subcuenta;
+    const subcuenta = sesion.subcuenta;
     const empresa = SUBCUENTAS[subcuenta].nombre;
-    const comercial = session.user.name ?? "";
+    const comercial = sesion.nombre ?? "";
 
     let entrada: EntradaPresupuesto;
     try {
@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
             modulosElegidos: entrada.modulosElegidos,
             seleccion: entrada.seleccion ?? {},
             fotosPorModulo: entrada.fotosPorModulo ?? {},
-        }, session.user.usuarioGhl ?? null);
+        }, sesion.usuarioGhl ?? null);
 
         return NextResponse.json({
             comunidad: resultado.comunidad,

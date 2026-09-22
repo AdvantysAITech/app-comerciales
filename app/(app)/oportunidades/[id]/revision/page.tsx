@@ -1,6 +1,5 @@
 import Link from "next/link";
-import { auth } from "@/auth";
-import { esSubcuentaValida } from "@/lib/subcuenta";
+import { sesionApp } from "@/lib/sesion";
 import { obtenerOportunidad } from "@/lib/ghl/oportunidades";
 import { leerPayloadVisita } from "@/lib/documentos/visitaGuardada";
 import { presupuestarConAjustes, RutasSinMapearError } from "@/lib/documentos/mapeo-capitulos";
@@ -38,13 +37,13 @@ function Aviso({ titulo, detalle, id }: { titulo: string; detalle: string; id?: 
 
 export default async function RevisionPage({ params }: { params: Promise<{ id: string }> }) {
     const { id } = await params;
-    const session = await auth();
+    const sesion = await sesionApp();
 
-    if (!session?.user?.subcuenta || !esSubcuentaValida(session.user.subcuenta)) {
+    if (!sesion) {
         return <Aviso titulo="Sesión no válida" detalle="No se ha podido determinar tu subcuenta." />;
     }
 
-    if (session.user.rol !== "direccion") {
+    if (sesion.rol !== "direccion") {
         return (
             <Aviso
                 titulo="Sin acceso"
@@ -54,7 +53,7 @@ export default async function RevisionPage({ params }: { params: Promise<{ id: s
         );
     }
 
-    const subcuenta = session.user.subcuenta;
+    const subcuenta = sesion.subcuenta;
 
     const [oportunidad, payload, ajustes, estado] = await Promise.all([
         obtenerOportunidad(subcuenta, id),

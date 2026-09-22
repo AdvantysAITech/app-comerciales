@@ -1,17 +1,17 @@
-import { auth } from "@/auth";
+import { sesionApp } from "@/lib/sesion";
 import { listarOportunidades } from "@/lib/ghl/oportunidades";
 import { ETAPAS_PRESUPUESTO, type ClaveEtapa } from "@/lib/ghl/ids";
 import { PanelPresupuestos } from "@/components/PanelPresupuesto";
-import { LogoSubcuenta } from "@/components/LogoSubcuenta";
+import { SelectorSubcuenta } from "@/components/SelectorSubcuenta";
 
 export default async function DashboardPage() {
-    const session = await auth();
+    const sesion = await sesionApp();
 
-    if (!session?.user?.subcuenta) {
+    if (!sesion) {
         return <div className="p-6 text-sm text-muted">No se ha podido determinar la subcuenta del usuario</div>;
     }
 
-    const subcuenta = session.user.subcuenta as "scala-valencia" | "vertical-projects";
+    const subcuenta = sesion.subcuenta;
     const oportunidades = await listarOportunidades(subcuenta, ETAPAS_PRESUPUESTO);
 
     const total = oportunidades.length;
@@ -20,7 +20,7 @@ export default async function DashboardPage() {
     const ganados = oportunidades.filter((op) => op.etapa === "GANADA").length;
     const perdidos = oportunidades.filter((op) => op.etapa === "PERDIDA").length;
 
-    const nombre = session.user.name ?? "";
+    const nombre = sesion.nombre ?? "";
     const iniciales =
         nombre
             .split(" ")
@@ -35,7 +35,7 @@ export default async function DashboardPage() {
             <div className="pointer-events-none absolute -right-16 -top-16 h-48 w-48 rounded-full bg-ink/5 blur-3xl sm:h-64 sm:w-64" />
 
             <div className="relative mb-5 flex items-center">
-                <LogoSubcuenta subcuenta={subcuenta} variante="completo" alto={36} priority />
+                <SelectorSubcuenta subcuentas={sesion.subcuentas} activa={subcuenta} />
             </div>
 
             <div className="relative flex items-center gap-3">

@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/auth";
-import { esSubcuentaValida } from "@/lib/subcuenta";
+import { sesionApp } from "@/lib/sesion";
 import { leerPayloadVisita } from "@/lib/documentos/visitaGuardada";
 import { presupuestarConAjustes, RutasSinMapearError } from "@/lib/documentos/mapeo-capitulos";
 import { escribirAjustes, leerAjustes, type AjustesPresupuesto } from "@/lib/documentos/ajustes";
@@ -20,20 +19,20 @@ export async function POST(
     request: NextRequest,
     { params }: { params: Promise<{ id: string }> }
 ) {
-    const session = await auth();
+    const sesion = await sesionApp();
 
-    if (!session?.user?.subcuenta || !esSubcuentaValida(session.user.subcuenta)) {
+    if (!sesion) {
         return NextResponse.json({ error: "No autenticado" }, { status: 401 });
     }
 
-    if (session.user.rol !== "direccion") {
+    if (sesion.rol !== "direccion") {
         return NextResponse.json(
             { error: "Solo dirección puede ajustar un presupuesto." },
             { status: 403 }
         );
     }
 
-    const subcuenta = session.user.subcuenta;
+    const subcuenta = sesion.subcuenta;
     const { id: oportunidadId } = await params;
 
     let cuerpo: CuerpoAjustes;
@@ -73,7 +72,7 @@ export async function POST(
             ivaTipo: saneado.ivaTipo,
             // El autor sale de la sesión, nunca del cliente: es la firma de quien
             // ha puesto los precios y tiene que ser fiable.
-            autor: session.user.name ?? session.user.email ?? "dirección",
+            autor: sesion.nombre ?? sesion.email ?? "dirección",
             motivo: saneado.motivo ?? previos?.motivo,
             actualizadoEn: new Date().toISOString(),
         };

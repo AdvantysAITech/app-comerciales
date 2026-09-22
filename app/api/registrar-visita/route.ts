@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { sesionApp } from "@/lib/sesion";
 import { upsertContact } from "@/lib/ghl/contactos";
 import { buscarOportunidadesAbiertas, adjuntarDatosVisita, crearOportunidadDesdeVisita } from "@/lib/ghl/oportunidades";
 
 export async function POST(request: NextRequest) {
-    const session = await auth();
-    if (!session?.user?.subcuenta) {
+    const sesion = await sesionApp();
+    if (!sesion) {
         return NextResponse.json({ error: "No autenticado" }, { status: 401 });
     }
-    const subcuenta = session.user.subcuenta as "scala-valencia" | "vertical-projects";
+    const subcuenta = sesion.subcuenta;
     const body = await request.json();
 
     try {
@@ -38,7 +38,7 @@ export async function POST(request: NextRequest) {
                 descripcionLibre: body.descripcionLibre,
                 camposEspecificos: body.camposEspecificos,
                 fotos: body.fotos,
-                asignadoA: session.user.usuarioGhl ?? null,
+                asignadoA: sesion.usuarioGhl ?? null,
             });
             return NextResponse.json({ id: oportunidad.id, estado: "creada" });
         }
