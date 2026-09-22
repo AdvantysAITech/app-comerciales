@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { sesionApp } from "@/lib/sesion";
 import { transcribirAudio } from "@/lib/gemini/transcripcion";
 
 /**
@@ -14,9 +14,9 @@ import { transcribirAudio } from "@/lib/gemini/transcripcion";
 export const maxDuration = 60;
 
 export async function POST(request: NextRequest) {
-    const session = await auth();
+    const sesion = await sesionApp();
 
-    if (!session?.user?.subcuenta) {
+    if (!sesion) {
         return NextResponse.json({ error: "No autenticado" }, { status: 401 });
     }
 

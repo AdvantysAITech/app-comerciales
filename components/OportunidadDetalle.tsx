@@ -1,17 +1,17 @@
-import { auth } from "@/auth";
+import { sesionApp } from "@/lib/sesion";
 import { obtenerOportunidad, estadoVisible } from "@/lib/ghl/oportunidades";
 import { urlContactoSa, urlOportunidadSa } from "@/lib/ghl/urls";
 import { documentosDisponibles, leerRegistro } from "@/lib/documentos/estado";
 import { DocumentoPresupuesto } from "@/components/DocumentoPresupuesto";
 
 export async function OportunidadDetalle({ id }: { id: string }) {
-    const session = await auth();
+    const sesion = await sesionApp();
 
-    if (!session?.user?.subcuenta) {
+    if (!sesion) {
         return <p className="text-sm text-muted">No se ha podido determinar la subcuenta del usuario.</p>;
     }
 
-    const subcuenta = session.user.subcuenta as "scala-valencia" | "vertical-projects";
+    const subcuenta = sesion.subcuenta;
     const oportunidad = await obtenerOportunidad(subcuenta, id);
 
     // El registro se lee en servidor: al reabrir la ficha, el comercial ve en
@@ -96,7 +96,7 @@ export async function OportunidadDetalle({ id }: { id: string }) {
                         `body`. Una navegación real descarta la ranura (cae en
                         `@modal/default.tsx`, que es null) y deja la pantalla
                         limpia. */}
-                    {session.user.rol === "direccion" && disponible && (
+                    {sesion.rol === "direccion" && disponible && (
                         <a
                             href={`/oportunidades/${oportunidad.id}/revision`}
                             className="mt-2 block w-full rounded-xl border border-hairline py-2.5 text-center text-sm font-medium text-ink transition hover:bg-canvas"

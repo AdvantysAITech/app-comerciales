@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { sesionApp } from "@/lib/sesion";
 import { subirArchivoSa } from "@/lib/ghl/media";
 import { extensionDe, motivoRechazo, type ExtensionDocumento } from "@/lib/documentos/tipos";
 
@@ -17,9 +17,9 @@ import { extensionDe, motivoRechazo, type ExtensionDocumento } from "@/lib/docum
 export const maxDuration = 60;
 
 export async function POST(request: NextRequest) {
-    const session = await auth();
+    const sesion = await sesionApp();
 
-    if (!session?.user?.subcuenta) {
+    if (!sesion) {
         return NextResponse.json({ error: "No autenticado" }, { status: 401 });
     }
 
@@ -36,7 +36,7 @@ export async function POST(request: NextRequest) {
     }
 
     try {
-        const subcuenta = session.user.subcuenta as "scala-valencia" | "vertical-projects";
+        const subcuenta = sesion.subcuenta;
         const { url, fileId } = await subirArchivoSa(subcuenta, archivo);
 
         return NextResponse.json({

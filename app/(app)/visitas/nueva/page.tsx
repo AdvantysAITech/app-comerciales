@@ -1,16 +1,16 @@
-import { auth } from "@/auth";
+import { sesionApp } from "@/lib/sesion";
 import { listarAdministradores } from "@/lib/ghl/administradores";
 import { listarComunidades } from "@/lib/ghl/comunidades";
 import { FormularioPresupuesto } from "@/components/forms/FormularioPresupuesto";
 
 export default async function VisitasPage(){
-    const session = await auth();
+    const sesion = await sesionApp();
 
-    if (!session?.user?.subcuenta) {
+    if (!sesion) {
         return <div>No se ha podido determinar la subcuenta del usuario</div>;
     }
 
-    const subcuenta = session.user.subcuenta as "scala-valencia" | "vertical-projects";
+    const subcuenta = sesion.subcuenta;
 
     const [comunidades, administradores] = await Promise.all([
         listarComunidades(subcuenta),
@@ -22,7 +22,7 @@ export default async function VisitasPage(){
             subcuenta={subcuenta}
             comunidades={comunidades}
             administradores={administradores}
-            rol={session.user.rol}
+            rol={sesion.rol}
         />
     );
 }

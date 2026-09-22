@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { sesionApp } from "@/lib/sesion";
 import {
     listarAdministradores,
     obtenerOCrearAdministrador,
     type DatosNuevoAdministrador,
 } from "@/lib/ghl/administradores";
-import type { SubcuentaSlug } from "@/lib/subcuenta";
 
 /**
  * Alta y consulta de administradores de fincas.
@@ -34,14 +33,14 @@ function textoDe(body: Record<string, unknown>, clave: string): string | undefin
 }
 
 export async function GET() {
-    const session = await auth();
+    const sesion = await sesionApp();
 
-    if (!session?.user?.subcuenta) {
+    if (!sesion) {
         return NextResponse.json({ error: "No autenticado" }, { status: 401 });
     }
 
     try {
-        const administradores = await listarAdministradores(session.user.subcuenta as SubcuentaSlug);
+        const administradores = await listarAdministradores(sesion.subcuenta);
         return NextResponse.json({ administradores });
     } catch (error) {
         const mensaje = error instanceof Error ? error.message : "Error desconocido";
@@ -51,13 +50,13 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-    const session = await auth();
+    const sesion = await sesionApp();
 
-    if (!session?.user?.subcuenta) {
+    if (!sesion) {
         return NextResponse.json({ error: "No autenticado" }, { status: 401 });
     }
 
-    const subcuenta = session.user.subcuenta as SubcuentaSlug;
+    const subcuenta = sesion.subcuenta;
     const body = (await request.json()) as Record<string, unknown>;
 
     const nombreDespacho = textoDe(body, "nombreDespacho");
@@ -82,7 +81,7 @@ export async function POST(request: NextRequest) {
      * con comisión desde un perfil comercial solo puede venir de una petición
      * manipulada.
      */
-    if (session.user.rol === "direccion" && typeof body.comisionPactada === "number") {
+    if (sesion.rol === "direccion" && typeof body.comisionPactada === "number") {
         if (body.comisionPactada < 0 || body.comisionPactada > 100) {
             return NextResponse.json(
                 { error: "La comisión pactada debe estar entre 0 y 100" },

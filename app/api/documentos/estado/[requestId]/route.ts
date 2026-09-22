@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/auth";
-import { esSubcuentaValida, type SubcuentaSlug } from "@/lib/subcuenta";
+import { sesionApp } from "@/lib/sesion";
+import type { SubcuentaSlug } from "@/lib/subcuenta";
 import { subirArchivoSa } from "@/lib/ghl/media";
 import { obtenerComunidad } from "@/lib/ghl/comunidades";
 import { obtenerAdministrador } from "@/lib/ghl/administradores";
@@ -154,13 +154,13 @@ export async function GET(
     _request: NextRequest,
     { params }: { params: Promise<{ requestId: string }> }
 ) {
-    const session = await auth();
+    const sesion = await sesionApp();
 
-    if (!session?.user?.subcuenta || !esSubcuentaValida(session.user.subcuenta)) {
+    if (!sesion) {
         return NextResponse.json({ error: "No autenticado" }, { status: 401 });
     }
 
-    const subcuenta = session.user.subcuenta;
+    const subcuenta = sesion.subcuenta;
     const { requestId } = await params;
 
     // El requestId lleva la subcuenta por delante (instancia compartida entre

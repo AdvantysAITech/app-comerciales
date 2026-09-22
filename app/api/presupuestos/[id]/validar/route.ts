@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/auth";
-import { esSubcuentaValida } from "@/lib/subcuenta";
+import { sesionApp } from "@/lib/sesion";
 import { leerRegistro } from "@/lib/documentos/estado";
 import { leerAjustes } from "@/lib/documentos/ajustes";
 import { documentoAlDia } from "@/lib/documentos/revision";
@@ -27,20 +26,20 @@ export async function POST(
     _request: NextRequest,
     { params }: { params: Promise<{ id: string }> }
 ) {
-    const session = await auth();
+    const sesion = await sesionApp();
 
-    if (!session?.user?.subcuenta || !esSubcuentaValida(session.user.subcuenta)) {
+    if (!sesion) {
         return NextResponse.json({ error: "No autenticado" }, { status: 401 });
     }
 
-    if (session.user.rol !== "direccion") {
+    if (sesion.rol !== "direccion") {
         return NextResponse.json(
             { error: "Solo dirección puede validar un presupuesto." },
             { status: 403 }
         );
     }
 
-    const subcuenta = session.user.subcuenta;
+    const subcuenta = sesion.subcuenta;
     const { id: oportunidadId } = await params;
 
     try {
@@ -75,7 +74,7 @@ export async function POST(
 
         console.info(
             `[revision] ${oportunidadId}: presupuesto ${registro.numeroReferencia} validado por ` +
-                `${session.user.name ?? session.user.email}.`
+                `${sesion.nombre ?? sesion.email}.`
         );
 
         return NextResponse.json({

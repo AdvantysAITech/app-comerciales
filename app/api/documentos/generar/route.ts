@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/auth";
-import { esSubcuentaValida } from "@/lib/subcuenta";
+import { sesionApp } from "@/lib/sesion";
 import { obtenerComunidad } from "@/lib/ghl/comunidades";
 import { obtenerAdministrador } from "@/lib/ghl/administradores";
 import { limpiarCasillasPresupuesto } from "@/lib/ghl/casillas";
@@ -115,13 +114,13 @@ export async function POST(request: NextRequest) {
 }
 
 async function generar(request: NextRequest): Promise<NextResponse> {
-    const session = await auth();
+    const sesion = await sesionApp();
 
-    if (!session?.user?.subcuenta || !esSubcuentaValida(session.user.subcuenta)) {
+    if (!sesion) {
         return NextResponse.json({ error: "No autenticado" }, { status: 401 });
     }
 
-    const subcuenta = session.user.subcuenta;
+    const subcuenta = sesion.subcuenta;
 
     if (!documentosDisponibles(subcuenta)) {
         return NextResponse.json(
