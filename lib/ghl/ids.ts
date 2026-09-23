@@ -248,12 +248,30 @@ export const NOMBRE_ETAPA: Readonly<Record<ClaveEtapa, string>> = {
     PERDIDA: "Pérdida",
 };
 
-/** Etapas que muestra el panel de presupuestos. */
+/**
+ * Etapas que muestra el panel de presupuestos.
+ *
+ * "Visita concertada" entra el 23/09/2026: es la etapa en la que el comercial
+ * va a la finca y toma los datos. Desde su ficha abre el formulario, y al
+ * guardar la MISMA oportunidad pasa a "Datos recogidos".
+ */
 export const ETAPAS_PRESUPUESTO: readonly ClaveEtapa[] = [
+    "VISITA_CONCERTADA",
     "DATOS_RECOGIDOS",
     "PRESUPUESTO_EN_REVISION",
     "PRESUPUESTO_ENVIADO",
     "EN_NEGOCIACION",
     "GANADA",
     "PERDIDA",
+];
+
+/**
+ * Etapas desde las que publicar un presupuesto hace avanzar la oportunidad a
+ * "Presupuesto en revisión". Desde cualquier otra (ya enviado, en negociación,
+ * ganada...) regenerar el documento NO la mueve: no se retrocede una
+ * oportunidad por rehacer su presupuesto.
+ */
+export const ETAPAS_ANTES_DE_REVISION: readonly ClaveEtapa[] = [
+    "VISITA_CONCERTADA",
+    "DATOS_RECOGIDOS",
 ];

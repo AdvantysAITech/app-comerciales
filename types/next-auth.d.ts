@@ -16,15 +16,19 @@ declare module "next-auth" {
          */
         subcuentas: SubcuentaSlug[];
         rol: Rol;
-        /** Id del usuario en GHL. Se manda como `assignedTo` al crear oportunidades. */
-        usuarioGhl?: string | null;
+        /**
+         * Id del usuario en GHL POR SUBCUENTA. Se manda como `assignedTo` al
+         * crear oportunidades. Es por subcuenta porque un usuario de GHL dado
+         * de alta solo en una location tiene otro id (o ninguno) en la otra.
+         */
+        usuariosGhl?: Partial<Record<SubcuentaSlug, string>>;
     }
 
     interface Session {
         user: {
             subcuentas: SubcuentaSlug[];
             rol: Rol;
-            usuarioGhl?: string | null;
+            usuariosGhl?: Partial<Record<SubcuentaSlug, string>>;
         } & DefaultSession["user"];
     }
 }
@@ -33,6 +37,6 @@ declare module "next-auth/jwt" {
     interface JWT extends DefaultJWT {
         subcuentas: SubcuentaSlug[];
         rol: Rol;
-        usuarioGhl?: string | null;
+        usuariosGhl?: Partial<Record<SubcuentaSlug, string>>;
     }
 }

@@ -1,7 +1,14 @@
 import { saFetch, getLocationId, type Subcuenta } from "./client";
 import { asociarComunidadConOportunidad } from "./comunidades";
 import { casillaMarcadaEn, entradaCasilla } from "./casillas";
-import { claveEtapa, idsGhl, NOMBRE_ETAPA, type CasillaOportunidad, type ClaveEtapa } from "./ids";
+import {
+    claveEtapa,
+    ETAPAS_ANTES_DE_REVISION,
+    idsGhl,
+    NOMBRE_ETAPA,
+    type CasillaOportunidad,
+    type ClaveEtapa,
+} from "./ids";
 
 // Pipeline, etapas y custom fields viven en lib/ghl/ids.ts, por subcuenta.
 // Se reexportan para no romper a quien los importaba desde aquí.
@@ -68,11 +75,28 @@ export type OportunidadListado = {
     descripcionVisita: string | null;
     /** Dirección ha dado el presupuesto por bueno. */
     presupuestoValidado: boolean;
-    administrador: {
+    /**
+     * Id en GHL del usuario propietario (`assignedTo`). Es lo que decide qué
+     * oportunidades ve un comercial: solo las suyas.
+     */
+    asignadoA: string | null;
+    /**
+     * Contacto PRINCIPAL de la oportunidad en GHL: el vecino o propietario que
+     * avisa (decision 23/09/2026). En oportunidades anteriores a ese cambio,
+     * si se eligio administrador, aqui aparece el administrador.
+     */
+    contacto: {
         id: string | null;
         nombre: string | null;
         email: string | null;
         telefono: string | null;
+    };
+    /**
+     * Administrador de la finca. Sale del JSON de la visita, NO del contacto
+     * de la oportunidad: desde el 23/09/2026 el contacto es el vecino.
+     */
+    administrador: {
+        nombre: string | null;
     };
 };
 
@@ -192,6 +216,23 @@ export function estadoVisible(oportunidad: {
     return oportunidad.etapa ? NOMBRE_ETAPA[oportunidad.etapa] : "—";
 }
 
+/**
+ * Nombre del administrador guardado en el JSON de la visita (`DATOS_VISITA`).
+ *
+ * `null` si la oportunidad no tiene JSON (flujo antiguo) o no lleva
+ * administrador. No lanza: un JSON corrupto no debe tumbar el listado.
+ */
+function administradorDeLaVisita(op: unknown, campoId: string): string | null {
+    const bruto = valorCampo(op, campoId);
+    if (!bruto) return null;
+    try {
+        const payload = JSON.parse(bruto) as { administrador?: { nombre?: string | null } };
+        return payload.administrador?.nombre?.trim() || null;
+    } catch {
+        return null;
+    }
+}
+
 function mapearOportunidadListado(subcuenta: Subcuenta, op: any): OportunidadListado {
     const { campos } = idsGhl(subcuenta);
     return {
@@ -205,11 +246,15 @@ function mapearOportunidadListado(subcuenta: Subcuenta, op: any): OportunidadLis
         fechaVisita: valorFecha(op, campos.FECHA_VISITA),
         descripcionVisita: valorCampo(op, campos.DESCRIPCION),
         presupuestoValidado: casillaMarcadaEn(subcuenta, "PRESUPUESTO_VALIDADO", op.customFields),
-        administrador: {
+        asignadoA: op.assignedTo ?? null,
+        contacto: {
             id: op.contactId ?? op.contact?.id ?? null,
             nombre: op.contact?.name ?? null,
             email: op.contact?.email ?? null,
             telefono: op.contact?.phone ?? null,
+        },
+        administrador: {
+            nombre: administradorDeLaVisita(op, campos.DATOS_VISITA),
         },
     };
 }
@@ -302,28 +347,145 @@ export async function buscarOportunidadesAbiertas(
         }));
 }
 
+/**
+ * Tope de páginas al listar. Existe para que un fallo de paginación nunca se
+ * convierta en un bucle infinito: 20 x 100 = 2.000 oportunidades por pipeline.
+ */
+const MAX_PAGINAS_OPORTUNIDADES = 20;
+
+/** Máximo que admite GHL en `/opportunities/search`. Sin `limit`, devuelve 20. */
+const LIMITE_PAGINA_OPORTUNIDADES = 100;
+
+/**
+ * Filtro de visibilidad del listado.
+ *
+ * - `{ tipo: "todas" }`: dirección. Ve todo el pipeline de la subcuenta.
+ * - `{ tipo: "propias", usuarioGhl }`: comercial. Solo las oportunidades cuyo
+ *   `assignedTo` es él. `usuarioGhl` null = no se sabe quién es en GHL, y
+ *   entonces no ve NINGUNA: mejor vacío que enseñarle las de otro.
+ */
+export type FiltroPropietario =
+    | { tipo: "todas" }
+    | { tipo: "propias"; usuarioGhl: string | null };
+
+/**
+ * Filtro que corresponde a la sesión: dirección ve todas, el resto (comercial)
+ * solo las suyas. Tipo estructural para no importar lib/sesion desde aquí.
+ */
+export function filtroPropietario(sesion: {
+    rol: string;
+    usuarioGhl: string | null;
+}): FiltroPropietario {
+    return sesion.rol === "direccion"
+        ? { tipo: "todas" }
+        : { tipo: "propias", usuarioGhl: sesion.usuarioGhl?.trim() || null };
+}
+
+/**
+ * ¿Puede este usuario ver esta oportunidad? Mismo criterio para el listado y
+ * para abrir la ficha por URL: ocultar una fila no es control de acceso.
+ */
+export function puedeVerOportunidad(
+    filtro: FiltroPropietario,
+    oportunidad: { asignadoA: string | null }
+): boolean {
+    if (filtro.tipo === "todas") return true;
+    return filtro.usuarioGhl !== null && oportunidad.asignadoA === filtro.usuarioGhl;
+}
+
+/**
+ * Oportunidades del pipeline en las etapas pedidas, TODAS (paginando).
+ *
+ * ---------------------------------------------------------------------------
+ * POR QUE PAGINA (23/09/2026)
+ * ---------------------------------------------------------------------------
+ * Antes se hacía una sola llamada sin `limit`. GHL devuelve 20 por defecto, así
+ * que a partir de la oportunidad 21 el listado se quedaba corto sin avisar, y
+ * los contadores de la cabecera (Total, Ganados...) salían mal.
+ *
+ * ---------------------------------------------------------------------------
+ * POR QUE FILTRA POR PROPIETARIO (23/09/2026)
+ * ---------------------------------------------------------------------------
+ * Toni tiene acceso a Scala además de a Vertical y veía las oportunidades de
+ * Jose. Un comercial solo ve las suyas; dirección las ve todas.
+ *
+ * El filtro va dos veces a propósito: `assigned_to` en la consulta (GHL
+ * devuelve menos datos) y otra vez aquí sobre `assignedTo`. Si GHL ignorase el
+ * parámetro, el segundo filtro evita que se cuele nada.
+ */
 export async function listarOportunidades(
     subcuenta: Subcuenta,
-    etapasIncluidas: readonly ClaveEtapa[]
+    etapasIncluidas: readonly ClaveEtapa[],
+    filtro: FiltroPropietario
 ): Promise<OportunidadListado[]> {
+    // Comercial sin id de GHL: no hay forma de saber cuáles son suyas.
+    if (filtro.tipo === "propias" && !filtro.usuarioGhl) {
+        console.warn(
+            `[oportunidades] Comercial sin id de GHL en ${subcuenta}: el listado sale vacío. ` +
+                `Revisa las variables *_GHL_USER_ID.`
+        );
+        return [];
+    }
+
     const locationId = getLocationId(subcuenta);
     const { pipelineId, etapas } = idsGhl(subcuenta);
     const idsIncluidos = etapasIncluidas.map((clave) => etapas[clave]);
 
-    const data = await saFetch(
-        subcuenta,
-        `/opportunities/search?location_id=${locationId}&pipeline_id=${pipelineId}`
-    );
+    const parametrosBase = new URLSearchParams({
+        location_id: locationId,
+        pipeline_id: pipelineId,
+        limit: String(LIMITE_PAGINA_OPORTUNIDADES),
+    });
+    if (filtro.tipo === "propias" && filtro.usuarioGhl) {
+        parametrosBase.set("assigned_to", filtro.usuarioGhl);
+    }
 
-    const oportunidades: any[] = data.opportunities ?? [];
+    // Por id: si una página se repite (paginación mal interpretada), no duplica.
+    const porId = new Map<string, unknown>();
+    let total: number | null = null;
 
-    return oportunidades
+    for (let page = 1; page <= MAX_PAGINAS_OPORTUNIDADES; page++) {
+        const parametros = new URLSearchParams(parametrosBase);
+        parametros.set("page", String(page));
+
+        const data = await saFetch(subcuenta, `/opportunities/search?${parametros.toString()}`);
+        const lote: Array<{ id?: string }> = data.opportunities ?? [];
+
+        const antes = porId.size;
+        for (const op of lote) if (op?.id) porId.set(op.id, op);
+
+        if (typeof data.meta?.total === "number") total = data.meta.total;
+
+        const ultimaPagina =
+            lote.length < LIMITE_PAGINA_OPORTUNIDADES ||
+            porId.size === antes ||
+            (total !== null && porId.size >= total);
+        if (ultimaPagina) break;
+
+        if (page === MAX_PAGINAS_OPORTUNIDADES) {
+            console.warn(
+                `[oportunidades] Tope de ${MAX_PAGINAS_OPORTUNIDADES} páginas alcanzado en ${subcuenta}: ` +
+                    `el listado puede estar incompleto.`
+            );
+        }
+    }
+
+    if (total !== null && porId.size < total) {
+        console.warn(
+            `[oportunidades] ${subcuenta}: GHL anuncia ${total} oportunidades y se han leído ${porId.size}.`
+        );
+    }
+
+    return [...porId.values()]
+        .map((op) => op as { pipelineId?: string; pipelineStageId?: string })
         .filter(
             (op) =>
                 op.pipelineId === pipelineId &&
+                op.pipelineStageId !== undefined &&
                 idsIncluidos.includes(op.pipelineStageId)
         )
-        .map((op) => mapearOportunidadListado(subcuenta, op));
+        .map((op) => mapearOportunidadListado(subcuenta, op))
+        .filter((op) => puedeVerOportunidad(filtro, op));
 }
 
 export async function obtenerOportunidad(
@@ -411,12 +573,23 @@ export type DocumentoAdjunto = {
  * ventana en la que el workflow ya se ha disparado y el campo "Presupuesto"
  * todavía apunta al documento ANTERIOR. Con un único PUT, o están las dos cosas
  * o no está ninguna.
+ *
+ * ---------------------------------------------------------------------------
+ * Y TAMBIÉN EL CAMBIO DE ETAPA (23/09/2026)
+ * ---------------------------------------------------------------------------
+ * Generar el presupuesto hace avanzar la oportunidad a "Presupuesto en
+ * revisión", pero SOLO si viene de "Visita concertada" o "Datos recogidos"
+ * (`etapaActual`). Una regeneración con la oportunidad ya enviada o en
+ * negociación no la hace retroceder. Va en el mismo PUT por el mismo motivo que
+ * la casilla: el documento, el aviso y la etapa llegan juntos o no llega nada.
  */
 export async function adjuntarPresupuesto(
     subcuenta: Subcuenta,
     oportunidadId: string,
     documento: DocumentoAdjunto,
-    casillas: Partial<Record<CasillaOportunidad, boolean>> = {}
+    casillas: Partial<Record<CasillaOportunidad, boolean>> = {},
+    /** Etapa en la que está la oportunidad al publicar. `null` = desconocida: no se mueve. */
+    etapaActual: ClaveEtapa | null = null
 ) {
     if (!Number.isInteger(documento.bytes) || documento.bytes <= 0) {
         throw new Error(
@@ -450,9 +623,16 @@ export async function adjuntarPresupuesto(
         if (entrada) campos.push(entrada);
     }
 
+    const avanzaARevision = etapaActual !== null && ETAPAS_ANTES_DE_REVISION.includes(etapaActual);
+
     const data = await saFetch(subcuenta, `/opportunities/${oportunidadId}`, {
         method: "PUT",
-        body: JSON.stringify({ customFields: campos }),
+        body: JSON.stringify({
+            customFields: campos,
+            ...(avanzaARevision
+                ? { pipelineStageId: idsGhl(subcuenta).etapas.PRESUPUESTO_EN_REVISION }
+                : {}),
+        }),
     });
 
     return data.opportunity ?? data;

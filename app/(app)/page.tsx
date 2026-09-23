@@ -1,5 +1,5 @@
 import { sesionApp } from "@/lib/sesion";
-import { listarOportunidades } from "@/lib/ghl/oportunidades";
+import { filtroPropietario, listarOportunidades } from "@/lib/ghl/oportunidades";
 import { ETAPAS_PRESUPUESTO, type ClaveEtapa } from "@/lib/ghl/ids";
 import { PanelPresupuestos } from "@/components/PanelPresupuesto";
 import { SelectorSubcuenta } from "@/components/SelectorSubcuenta";
@@ -12,7 +12,8 @@ export default async function DashboardPage() {
     }
 
     const subcuenta = sesion.subcuenta;
-    const oportunidades = await listarOportunidades(subcuenta, ETAPAS_PRESUPUESTO);
+    // Comercial: solo las suyas en la subcuenta activa. Dirección: todas.
+    const oportunidades = await listarOportunidades(subcuenta, ETAPAS_PRESUPUESTO, filtroPropietario(sesion));
 
     const total = oportunidades.length;
     const etapasPorRevisar: readonly ClaveEtapa[] = ["PRESUPUESTO_EN_REVISION", "PRESUPUESTO_ENVIADO", "EN_NEGOCIACION"];

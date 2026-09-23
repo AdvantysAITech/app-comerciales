@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sesionApp } from "@/lib/sesion";
 import { SUBCUENTAS } from "@/lib/subcuenta";
-import { registrarPresupuesto, type EntradaPresupuesto } from "@/lib/ghl/presupuestos";
+import {
+    registrarPresupuesto,
+    type EntradaPresupuesto,
+    type OportunidadExistente,
+} from "@/lib/ghl/presupuestos";
+import { filtroPropietario, obtenerOportunidad, puedeVerOportunidad } from "@/lib/ghl/oportunidades";
 
 /**
  * Alta de un presupuesto del flujo v2.
@@ -21,9 +26,9 @@ export async function POST(request: NextRequest) {
     const empresa = SUBCUENTAS[subcuenta].nombre;
     const comercial = sesion.nombre ?? "";
 
-    let entrada: EntradaPresupuesto;
+    let entrada: EntradaPresupuesto & { oportunidadId?: string | null };
     try {
-        entrada = (await request.json()) as EntradaPresupuesto;
+        entrada = (await request.json()) as EntradaPresupuesto & { oportunidadId?: string | null };
     } catch {
         return NextResponse.json({ error: "Cuerpo de la peticion invalido" }, { status: 400 });
     }
@@ -43,6 +48,33 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: `Faltan datos: ${faltan.join(", ")}` }, { status: 400 });
     }
 
+    // Datos tomados sobre una oportunidad en "Visita concertada".
+    //
+    // Se comprueba AQUI, en servidor, que la oportunidad es de quien envia y
+    // que sigue en esa etapa. Lo segundo evita que un doble envio, o un
+    // formulario que se quedo abierto, pise los datos de una oportunidad que
+    // ya avanzo (con presupuesto generado o incluso enviado).
+    let oportunidadExistente: OportunidadExistente | null = null;
+    if (entrada.oportunidadId) {
+        const oportunidad = await obtenerOportunidad(subcuenta, entrada.oportunidadId);
+
+        if (!oportunidad || !puedeVerOportunidad(filtroPropietario(sesion), oportunidad)) {
+            return NextResponse.json({ error: "No se ha encontrado la oportunidad" }, { status: 404 });
+        }
+        if (oportunidad.etapa !== "VISITA_CONCERTADA") {
+            return NextResponse.json(
+                {
+                    error:
+                        "Esta oportunidad ya no esta en Visita concertada: sus datos ya se tomaron. " +
+                        "Abrela desde el panel para ver en que punto esta.",
+                },
+                { status: 409 }
+            );
+        }
+
+        oportunidadExistente = { id: oportunidad.id, contactId: oportunidad.contacto.id };
+    }
+
     try {
         const resultado = await registrarPresupuesto(subcuenta, empresa, comercial, {
             comunidadNombre: entrada.comunidadNombre,
@@ -54,7 +86,7 @@ export async function POST(request: NextRequest) {
             modulosElegidos: entrada.modulosElegidos,
             seleccion: entrada.seleccion ?? {},
             fotosPorModulo: entrada.fotosPorModulo ?? {},
-        }, sesion.usuarioGhl ?? null);
+        }, sesion.usuarioGhl ?? null, oportunidadExistente);
 
         return NextResponse.json({
             comunidad: resultado.comunidad,

@@ -1,5 +1,5 @@
 import { sesionApp } from "@/lib/sesion";
-import { obtenerOportunidad, estadoVisible } from "@/lib/ghl/oportunidades";
+import { obtenerOportunidad, estadoVisible, filtroPropietario, puedeVerOportunidad } from "@/lib/ghl/oportunidades";
 import { urlContactoSa, urlOportunidadSa } from "@/lib/ghl/urls";
 import { documentosDisponibles, leerRegistro } from "@/lib/documentos/estado";
 import { DocumentoPresupuesto } from "@/components/DocumentoPresupuesto";
@@ -19,7 +19,9 @@ export async function OportunidadDetalle({ id }: { id: string }) {
     const disponible = documentosDisponibles(subcuenta);
     const registro = disponible ? await leerRegistro(subcuenta, id) : null;
 
-    if (!oportunidad) {
+    // Un comercial que abra por URL la oportunidad de otro ve lo mismo que si
+    // no existiera: no se le confirma ni que está ahí.
+    if (!oportunidad || !puedeVerOportunidad(filtroPropietario(sesion), oportunidad)) {
         return <p className="text-sm text-muted">No se ha encontrado esta oportunidad.</p>
     }
 
@@ -67,44 +69,59 @@ export async function OportunidadDetalle({ id }: { id: string }) {
                     valor={oportunidad.fechaVisita ?? "Sin fecha registrada"}
                 />
 
-                <div>
-                    <div className="mb-2 flex items-center gap-2.5">
-                        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-ink/5 text-muted">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
-                                <path d="M14 2v6h6" />
-                                <path d="M6 2h8l6 6v14H6z" />
-                            </svg>
+                {oportunidad.etapa === "VISITA_CONCERTADA" ? (
+                    // Visita concertada: todavía no hay datos, así que no hay
+                    // presupuesto que generar. Lo que toca es tomarlos. Al
+                    // guardar el formulario, ESTA oportunidad pasa a "Datos
+                    // recogidos" y aquí aparecerá el bloque del presupuesto.
+                    //
+                    // `<a>` y no `<Link>`: ver la nota del botón de revisión.
+                    <a
+                        href={`/presupuestos/nuevo?oportunidad=${oportunidad.id}`}
+                        className="block w-full rounded-xl bg-ink py-3 text-center text-sm font-semibold text-canvas"
+                    >
+                        Tomar datos de la visita
+                    </a>
+                ) : (
+                    <div>
+                        <div className="mb-2 flex items-center gap-2.5">
+                            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-ink/5 text-muted">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
+                                    <path d="M14 2v6h6" />
+                                    <path d="M6 2h8l6 6v14H6z" />
+                                </svg>
+                            </div>
+                            <p className="text-[11px] text-muted">Presupuesto</p>
                         </div>
-                        <p className="text-[11px] text-muted">Presupuesto</p>
+                        <DocumentoPresupuesto
+                            oportunidadId={oportunidad.id}
+                            registroInicial={registro}
+                            disponible={disponible}
+                        />
+
+                        {/* Solo dirección. Ocultar el botón no es control de acceso:
+                            la página y las dos rutas de API vuelven a comprobar el
+                            rol, porque quien entre ahí fija precios.
+
+                            `<a>` y no `<Link>`: esta ficha se abre como modal
+                            interceptado (@modal), y en una navegación de cliente
+                            Next MANTIENE viva la ranura paralela. El resultado era
+                            que la pantalla de revisión se cargaba DETRÁS del modal,
+                            con su fondo oscuro y su desenfoque por encima, y además
+                            heredaba el bloqueo de scroll que el modal pone en
+                            `body`. Una navegación real descarta la ranura (cae en
+                            `@modal/default.tsx`, que es null) y deja la pantalla
+                            limpia. */}
+                        {sesion.rol === "direccion" && disponible && (
+                            <a
+                                href={`/oportunidades/${oportunidad.id}/revision`}
+                                className="mt-2 block w-full rounded-xl border border-hairline py-2.5 text-center text-sm font-medium text-ink transition hover:bg-canvas"
+                            >
+                                Revisar y ajustar
+                            </a>
+                        )}
                     </div>
-                    <DocumentoPresupuesto
-                        oportunidadId={oportunidad.id}
-                        registroInicial={registro}
-                        disponible={disponible}
-                    />
-
-                    {/* Solo dirección. Ocultar el botón no es control de acceso:
-                        la página y las dos rutas de API vuelven a comprobar el
-                        rol, porque quien entre ahí fija precios.
-
-                        `<a>` y no `<Link>`: esta ficha se abre como modal
-                        interceptado (@modal), y en una navegación de cliente
-                        Next MANTIENE viva la ranura paralela. El resultado era
-                        que la pantalla de revisión se cargaba DETRÁS del modal,
-                        con su fondo oscuro y su desenfoque por encima, y además
-                        heredaba el bloqueo de scroll que el modal pone en
-                        `body`. Una navegación real descarta la ranura (cae en
-                        `@modal/default.tsx`, que es null) y deja la pantalla
-                        limpia. */}
-                    {sesion.rol === "direccion" && disponible && (
-                        <a
-                            href={`/oportunidades/${oportunidad.id}/revision`}
-                            className="mt-2 block w-full rounded-xl border border-hairline py-2.5 text-center text-sm font-medium text-ink transition hover:bg-canvas"
-                        >
-                            Revisar y ajustar
-                        </a>
-                    )}
-                </div>
+                )}
 
                 <div className="flex items-center justify-between gap-3">
                     <Fila
@@ -114,12 +131,16 @@ export async function OportunidadDetalle({ id }: { id: string }) {
                                 <path d="M4 21c0-4 3.5-7 8-7s8 3 8 7" />
                             </>
                         }
-                        etiqueta="Administrador de la finca"
-                        valor={oportunidad.administrador.nombre ?? "Sin identificar"}
+                        etiqueta="Contacto de la finca"
+                        valor={
+                            [oportunidad.contacto.nombre, oportunidad.contacto.telefono]
+                                .filter(Boolean)
+                                .join(" · ") || "Sin identificar"
+                        }
                     />
-                    {oportunidad.administrador.id && (
+                    {oportunidad.contacto.id && (
                         <a
-                            href={urlContactoSa(subcuenta, oportunidad.administrador.id)}
+                            href={urlContactoSa(subcuenta, oportunidad.contacto.id)}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-hairline px-2.5 py-1.5 text-xs font-medium text-ink transition hover:bg-canvas"
@@ -131,6 +152,19 @@ export async function OportunidadDetalle({ id }: { id: string }) {
                         </a>
                     )}
                 </div>
+
+                <Fila
+                    icono={
+                        <>
+                            <path d="M3 21h18" />
+                            <path d="M5 21V7l7-4 7 4v14" />
+                            <path d="M9 21v-6h6v6" />
+                        </>
+                    }
+                    etiqueta="Administrador de la finca"
+                    valor={oportunidad.administrador.nombre ?? "Sin administrador"}
+                    valorMuted={!oportunidad.administrador.nombre}
+                />
 
                 {oportunidad.descripcionVisita && (
                     <div>

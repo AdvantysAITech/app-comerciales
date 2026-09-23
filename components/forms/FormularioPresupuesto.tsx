@@ -36,7 +36,24 @@ import {
  * Envia a /api/registrar-presupuesto, que crea comunidad, contacto y
  * oportunidad(es) en GHL con el payload canonico de la visita. Ese payload es
  * despues la entrada del generador de documentos.
+ *
+ * Con `oportunidadOrigen` (23/09/2026) el formulario toma los datos de una
+ * oportunidad en "Visita concertada": sale precargado con lo que ya hay en el
+ * CRM y, al guardar, esa oportunidad pasa a "Datos recogidos" en vez de crearse
+ * otra.
  */
+
+/** Oportunidad en "Visita concertada" de la que se toman los datos. */
+export type OportunidadOrigen = {
+    id: string;
+    /** Para el titulo. */
+    nombre: string;
+    comunidadNombre: string;
+    contacto: string;
+    telefono: string;
+    /** "aaaa-mm-dd" o vacio. */
+    fecha: string;
+};
 
 type ComunidadListado = { id: string; nombreDireccion: string; administradorId?: string };
 type AdministradorListado = { id: string; nombreDespacho?: string };
@@ -52,6 +69,8 @@ type Props = {
      * perfil comercial. Por defecto `comercial`, que es el caso restrictivo.
      */
     rol?: Rol;
+    /** Oportunidad de la que se toman los datos. `null` = visita nueva. */
+    oportunidadOrigen?: OportunidadOrigen | null;
 };
 
 type OportunidadCreada = { id: string; nombre: string; modeloNegocio: string | null };
@@ -74,7 +93,28 @@ const MINIMO_FOTOS_CON_ALERTA = 3;
 /** Espera del autoguardado. Escribir en cada pulsacion castiga al movil. */
 const RETARDO_AUTOGUARDADO = 800;
 
-export function FormularioPresupuesto({ subcuenta, comunidades, administradores, rol = "comercial" }: Props) {
+export function FormularioPresupuesto({
+    subcuenta,
+    comunidades,
+    administradores,
+    rol = "comercial",
+    oportunidadOrigen = null,
+}: Props) {
+    /**
+     * Clave del borrador local. Con oportunidad de origen, una por oportunidad:
+     * el borrador de la visita de ayer no puede aparecer al abrir la de hoy,
+     * y dos visitas a medias no se pisan. Sin origen, la de siempre.
+     */
+    const claveLocal = oportunidadOrigen ? `${subcuenta}:oportunidad:${oportunidadOrigen.id}` : subcuenta;
+
+    /** Valores con los que arranca (y a los que vuelve "Empezar de cero"). */
+    const inicial = {
+        nombreComunidad: oportunidadOrigen?.comunidadNombre ?? "",
+        contacto: oportunidadOrigen?.contacto ?? "",
+        telefono: oportunidadOrigen?.telefono ?? "",
+        fecha: oportunidadOrigen?.fecha ?? "",
+    };
+
     /**
      * Las listas llegan del servidor pero viven en estado local: cuando el
      * comercial crea un administrador o una comunidad desde el modal, el
@@ -86,12 +126,12 @@ export function FormularioPresupuesto({ subcuenta, comunidades, administradores,
     const [listaAdministradores, setListaAdministradores] = useState<AdministradorListado[]>(administradores);
     const [alta, setAlta] = useState<"administrador" | "comunidad" | null>(null);
 
-    const [nombreComunidad, setNombreComunidad] = useState("");
+    const [nombreComunidad, setNombreComunidad] = useState(inicial.nombreComunidad);
     const [comunidadElegidaId, setComunidadElegidaId] = useState<string | null>(null);
     const [administradorId, setAdministradorId] = useState("");
-    const [contacto, setContacto] = useState("");
-    const [telefono, setTelefono] = useState("");
-    const [fecha, setFecha] = useState("");
+    const [contacto, setContacto] = useState(inicial.contacto);
+    const [telefono, setTelefono] = useState(inicial.telefono);
+    const [fecha, setFecha] = useState(inicial.fecha);
     const [observaciones, setObservaciones] = useState("");
     const [modulosElegidos, setModulosElegidos] = useState<string[]>([]);
     const [seleccion, setSeleccion] = useState<SeleccionVisita>(seleccionVacia);
@@ -146,7 +186,7 @@ export function FormularioPresupuesto({ subcuenta, comunidades, administradores,
     );
 
     useEffect(() => {
-        const borrador = cargarBorrador(subcuenta);
+        const borrador = cargarBorrador(claveLocal);
 
         if (borrador && tieneContenido(borrador)) {
             setNombreComunidad(borrador.nombreComunidad);
@@ -164,15 +204,15 @@ export function FormularioPresupuesto({ subcuenta, comunidades, administradores,
         }
 
         rehidratado.current = true;
-    }, [subcuenta]);
+    }, [claveLocal]);
 
     useEffect(() => {
         if (!rehidratado.current) return;
         if (!tieneContenido(datosActuales)) return;
 
-        const id = setTimeout(() => guardarBorrador(subcuenta, datosActuales), RETARDO_AUTOGUARDADO);
+        const id = setTimeout(() => guardarBorrador(claveLocal, datosActuales), RETARDO_AUTOGUARDADO);
         return () => clearTimeout(id);
-    }, [subcuenta, datosActuales]);
+    }, [claveLocal, datosActuales]);
 
     const sugerencias = useMemo(() => {
         const texto = normalizarNombre(nombreComunidad);
@@ -272,13 +312,13 @@ export function FormularioPresupuesto({ subcuenta, comunidades, administradores,
     }
 
     function descartarBorrador() {
-        limpiarBorrador(subcuenta);
-        setNombreComunidad("");
+        limpiarBorrador(claveLocal);
+        setNombreComunidad(inicial.nombreComunidad);
         setComunidadElegidaId(null);
         setAdministradorId("");
-        setContacto("");
-        setTelefono("");
-        setFecha("");
+        setContacto(inicial.contacto);
+        setTelefono(inicial.telefono);
+        setFecha(inicial.fecha);
         setObservaciones("");
         setModulosElegidos([]);
         setSeleccion(seleccionVacia);
@@ -320,6 +360,7 @@ export function FormularioPresupuesto({ subcuenta, comunidades, administradores,
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
+                    oportunidadId: oportunidadOrigen?.id ?? null,
                     comunidadNombre: nombreComunidad.trim(),
                     administradorId: administradorId || null,
                     contacto: contacto.trim(),
@@ -337,7 +378,7 @@ export function FormularioPresupuesto({ subcuenta, comunidades, administradores,
 
             // Solo se limpia el borrador con el alta CONFIRMADA. Si falla, el
             // comercial conserva la visita y puede reintentar sin recapturar.
-            limpiarBorrador(subcuenta);
+            limpiarBorrador(claveLocal);
             setResultado(datos as ResultadoAlta);
         } catch (error) {
             setErrorEnvio(error instanceof Error ? error.message : "Error desconocido");
@@ -349,7 +390,9 @@ export function FormularioPresupuesto({ subcuenta, comunidades, administradores,
     if (resultado) {
         return (
             <div className="px-4 pb-24 pt-6 sm:px-10">
-                <h1 className="mb-5 text-xl font-semibold text-ink sm:text-2xl">Presupuesto registrado</h1>
+                <h1 className="mb-5 text-xl font-semibold text-ink sm:text-2xl">
+                    {oportunidadOrigen ? "Datos de la visita guardados" : "Presupuesto registrado"}
+                </h1>
 
                 <section className={ESTILO_SECCION}>
                     <p className={ESTILO_TITULO}>Comunidad</p>
@@ -378,23 +421,44 @@ export function FormularioPresupuesto({ subcuenta, comunidades, administradores,
                     )}
                 </section>
 
-                <button
-                    type="button"
-                    onClick={() => {
-                        setResultado(null);
-                        descartarBorrador();
-                    }}
-                    className="mt-4 w-full cursor-pointer rounded-xl bg-ink py-3 text-sm font-semibold text-canvas"
-                >
-                    Registrar otro presupuesto
-                </button>
+                {oportunidadOrigen ? (
+                    // La oportunidad ya está en "Datos recogidos": desde su
+                    // ficha se genera el presupuesto. `<a>` y no `<Link>` por
+                    // el mismo motivo que en OportunidadDetalle (modal @modal).
+                    <a
+                        href={`/oportunidades/${oportunidadOrigen.id}`}
+                        className="mt-4 block w-full rounded-xl bg-ink py-3 text-center text-sm font-semibold text-canvas"
+                    >
+                        Ir a la oportunidad para generar el presupuesto
+                    </a>
+                ) : (
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setResultado(null);
+                            descartarBorrador();
+                        }}
+                        className="mt-4 w-full cursor-pointer rounded-xl bg-ink py-3 text-sm font-semibold text-canvas"
+                    >
+                        Registrar otro presupuesto
+                    </button>
+                )}
             </div>
         );
     }
 
     return (
         <div className="px-4 pb-24 pt-6 sm:px-10">
-            <h1 className="mb-5 text-xl font-semibold text-ink sm:text-2xl">Nuevo presupuesto</h1>
+            {oportunidadOrigen ? (
+                <div className="mb-5">
+                    <h1 className="text-xl font-semibold text-ink sm:text-2xl">Datos de la visita</h1>
+                    <p className="mt-1 text-xs text-muted">
+                        {oportunidadOrigen.nombre} · al guardar pasa a Datos recogidos
+                    </p>
+                </div>
+            ) : (
+                <h1 className="mb-5 text-xl font-semibold text-ink sm:text-2xl">Nuevo presupuesto</h1>
+            )}
 
             {borradorRecuperado && (
                 <div className="mb-3 flex items-center justify-between gap-3 rounded-2xl border border-hairline bg-ink/[0.04] px-4 py-3">

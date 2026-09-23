@@ -25,17 +25,45 @@ type UsuarioConfigurado = {
    */
   subcuentas: SubcuentaSlug[];
   /**
-   * Id de este usuario DENTRO de GHL. Es lo que se manda como `assignedTo` al
-   * crear una oportunidad, y lo que permite que los workflows del CRM sepan a
-   * quién avisar.
+   * Id de este usuario DENTRO de GHL, por subcuenta. Es lo que se manda como
+   * `assignedTo` al crear una oportunidad, lo que permite que los workflows del
+   * CRM sepan a quién avisar y lo que decide qué oportunidades ve un comercial.
    *
-   * Va por variable de entorno como las credenciales: es un dato de
-   * parametrización de la subcuenta, no del código, y cambia al replicar el
-   * snapshot. Si falta, la oportunidad se crea SIN propietario -- que es lo que
-   * pasaba hasta ahora -- y queda constancia en el log.
+   * POR SUBCUENTA (23/09/2026): un usuario de GHL puede existir solo en una
+   * location, o tener un usuario distinto en cada una. Con Toni entrando en
+   * Scala, mandar a Scala su id de Vertical daba 400 "Invalid assigned to
+   * user" y el presupuesto no se guardaba. Ver `idsGhlPorSubcuenta`.
    */
-  usuarioGhl?: string;
+  usuariosGhl: Partial<Record<SubcuentaSlug, string>>;
 };
+
+/** Sufijo de la variable de entorno de cada subcuenta. */
+const SUFIJO_SUBCUENTA: Record<SubcuentaSlug, string> = {
+  "scala-valencia": "SCALA",
+  "vertical-projects": "VERTICAL",
+};
+
+/**
+ * Ids de GHL de un usuario en cada una de sus subcuentas.
+ *
+ * Por cada subcuenta se busca primero `<PREFIJO>_GHL_USER_ID_<SCALA|VERTICAL>`
+ * y, si no existe, `<PREFIJO>_GHL_USER_ID` (la variable de siempre). Así las
+ * configuraciones actuales siguen funcionando igual y solo hay que añadir la
+ * variable con sufijo cuando el usuario tiene un id distinto en otra subcuenta.
+ */
+function idsGhlPorSubcuenta(
+  prefijo: string,
+  subcuentas: readonly SubcuentaSlug[]
+): Partial<Record<SubcuentaSlug, string>> {
+  const ids: Partial<Record<SubcuentaSlug, string>> = {};
+  for (const subcuenta of subcuentas) {
+    const id =
+      process.env[`${prefijo}_GHL_USER_ID_${SUFIJO_SUBCUENTA[subcuenta]}`]?.trim() ||
+      process.env[`${prefijo}_GHL_USER_ID`]?.trim();
+    if (id) ids[subcuenta] = id;
+  }
+  return ids;
+}
 
 const USUARIOS: UsuarioConfigurado[] = [
   {
@@ -44,15 +72,21 @@ const USUARIOS: UsuarioConfigurado[] = [
     nombre: "Jose Garcia",
     rol: "comercial",
     subcuentas: ["scala-valencia"],
-    usuarioGhl: process.env.JOSE_GHL_USER_ID,
+    usuariosGhl: idsGhlPorSubcuenta("JOSE", ["scala-valencia"]),
   },
   {
     email: process.env.TONI_EMAIL,
     passwordHashB64: process.env.TONI_PASSWORD_HASH_B64,
     nombre: "Toni Yañez",
     rol: "comercial",
-    subcuentas: ["vertical-projects"],
-    usuarioGhl: process.env.TONI_GHL_USER_ID,
+    // Excepcion al DERCAS 9.1 (decision de Jacob, 23/09/2026): Toni es
+    // comercial pero trabaja las dos empresas, asi que tiene el mismo selector
+    // de subcuenta que Miguel. Vertical va primero: es la que ve al entrar.
+    // Sigue siendo perfil comercial: no valida presupuestos ni toca comisiones.
+    subcuentas: ["vertical-projects", "scala-valencia"],
+    // TONI_GHL_USER_ID_SCALA: su id en la subcuenta de Scala, si es distinto
+    // del de Vertical. Sin ella se usa TONI_GHL_USER_ID en las dos.
+    usuariosGhl: idsGhlPorSubcuenta("TONI", ["vertical-projects", "scala-valencia"]),
   },
   {
     // DERCAS 9.1: Miguel es perfil Direccion con acceso multi-subcuenta.
@@ -64,7 +98,7 @@ const USUARIOS: UsuarioConfigurado[] = [
     nombre: "Miguel",
     rol: "direccion",
     subcuentas: ["scala-valencia", "vertical-projects"],
-    usuarioGhl: process.env.MIGUEL_GHL_USER_ID,
+    usuariosGhl: idsGhlPorSubcuenta("MIGUEL", ["scala-valencia", "vertical-projects"]),
   },
 ];
 
@@ -100,7 +134,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           name: usuario.nombre,
           rol: usuario.rol,
           subcuentas: usuario.subcuentas,
-          usuarioGhl: usuario.usuarioGhl?.trim() || null,
+          usuariosGhl: usuario.usuariosGhl,
         };
       },
     }),
@@ -113,7 +147,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       if (user) {
         token.subcuentas = user.subcuentas;
         token.rol = user.rol;
-        token.usuarioGhl = user.usuarioGhl ?? null;
+        token.usuariosGhl = user.usuariosGhl ?? {};
       }
 
       /**
@@ -133,7 +167,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       if (configurado) {
         token.subcuentas = configurado.subcuentas;
         token.rol = configurado.rol;
-        token.usuarioGhl = configurado.usuarioGhl?.trim() || null;
+        token.usuariosGhl = configurado.usuariosGhl;
       }
 
       return token;
@@ -142,7 +176,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       if (session.user) {
         session.user.subcuentas = token.subcuentas ?? [];
         session.user.rol = token.rol;
-        session.user.usuarioGhl = token.usuarioGhl ?? null;
+        session.user.usuariosGhl = token.usuariosGhl ?? {};
       }
       return session;
     },
