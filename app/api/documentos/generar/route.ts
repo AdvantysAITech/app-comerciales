@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sesionApp } from "@/lib/sesion";
+import { oportunidadAutorizada } from "@/lib/permisos";
 import { obtenerComunidad } from "@/lib/ghl/comunidades";
 import { obtenerAdministrador } from "@/lib/ghl/administradores";
 import { limpiarCasillasPresupuesto } from "@/lib/ghl/casillas";
@@ -138,6 +139,20 @@ async function generar(request: NextRequest): Promise<NextResponse> {
 
     if (!cuerpo.oportunidadId?.trim()) {
         return NextResponse.json({ error: "Falta oportunidadId" }, { status: 400 });
+    }
+
+    // Solo el comercial propietario o dirección. Regenerar desmarca la
+    // validación, así que un comercial no puede hacerlo sobre una ajena.
+    try {
+        if (!(await oportunidadAutorizada(sesion, cuerpo.oportunidadId))) {
+            return NextResponse.json({ error: "Oportunidad no encontrada." }, { status: 404 });
+        }
+    } catch (error) {
+        const motivo = error instanceof Error ? error.message : "error desconocido";
+        return NextResponse.json(
+            { error: `No se ha podido comprobar la oportunidad. Vuelve a intentarlo en unos segundos. (${motivo})` },
+            { status: 503 }
+        );
     }
 
     try {

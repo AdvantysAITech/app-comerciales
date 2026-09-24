@@ -6,7 +6,7 @@ import {
     type EntradaPresupuesto,
     type OportunidadExistente,
 } from "@/lib/ghl/presupuestos";
-import { filtroPropietario, obtenerOportunidad, puedeVerOportunidad } from "@/lib/ghl/oportunidades";
+import { oportunidadAutorizada } from "@/lib/permisos";
 
 /**
  * Alta de un presupuesto del flujo v2.
@@ -56,9 +56,24 @@ export async function POST(request: NextRequest) {
     // ya avanzo (con presupuesto generado o incluso enviado).
     let oportunidadExistente: OportunidadExistente | null = null;
     if (entrada.oportunidadId) {
-        const oportunidad = await obtenerOportunidad(subcuenta, entrada.oportunidadId);
+        // Un fallo de GHL ya no se confunde con "no existe": el comercial está
+        // en obra y "No se ha encontrado" le haría creer que ha perdido la visita.
+        let oportunidad;
+        try {
+            oportunidad = await oportunidadAutorizada(sesion, entrada.oportunidadId);
+        } catch (error) {
+            const motivo = error instanceof Error ? error.message : "error desconocido";
+            return NextResponse.json(
+                {
+                    error:
+                        "No se ha podido comprobar la oportunidad. Tu visita sigue guardada en el " +
+                        `borrador: vuelve a enviarla en unos segundos. (${motivo})`,
+                },
+                { status: 503 }
+            );
+        }
 
-        if (!oportunidad || !puedeVerOportunidad(filtroPropietario(sesion), oportunidad)) {
+        if (!oportunidad) {
             return NextResponse.json({ error: "No se ha encontrado la oportunidad" }, { status: 404 });
         }
         if (oportunidad.etapa !== "VISITA_CONCERTADA") {

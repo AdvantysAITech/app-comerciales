@@ -1,4 +1,4 @@
-import { saFetch, getLocationId, type Subcuenta } from "./client";
+import { saFetch, getLocationId, ErrorSistemaAdvantys, type Subcuenta } from "./client";
 import { asociarComunidadConOportunidad } from "./comunidades";
 import { casillaMarcadaEn, entradaCasilla } from "./casillas";
 import {
@@ -493,13 +493,38 @@ export async function obtenerOportunidad(
     oportunidadId: string
 ): Promise<OportunidadListado | null> {
     try {
-        const data = await saFetch(subcuenta, `/opportunities/${oportunidadId}`);
-        const op = data.opportunity ?? data;
-        if (!op?.id) return null;
-        return mapearOportunidadListado(subcuenta, op);
+        return await leerOportunidad(subcuenta, oportunidadId);
     } catch {
         return null;
     }
+}
+
+/**
+ * Como `obtenerOportunidad`, pero sin tragarse los fallos.
+ *
+ * `null` = GHL dice que no existe (400/404; GHL responde 400 a un id que no es
+ * de la location). Cualquier otro fallo (red, 401, 429, 5xx) LANZA: quien
+ * llama tiene que poder distinguir "no existe" de "no he podido mirarlo". Lo
+ * necesita la ruta de estado, que se consulta en bucle y no puede dar por
+ * fallida una generación por un corte de un segundo (24/09/2026).
+ */
+export async function leerOportunidad(
+    subcuenta: Subcuenta,
+    oportunidadId: string
+): Promise<OportunidadListado | null> {
+    let data;
+    try {
+        data = await saFetch(subcuenta, `/opportunities/${encodeURIComponent(oportunidadId)}`);
+    } catch (error) {
+        if (error instanceof ErrorSistemaAdvantys && (error.status === 400 || error.status === 404)) {
+            return null;
+        }
+        throw error;
+    }
+
+    const op = data.opportunity ?? data;
+    if (!op?.id) return null;
+    return mapearOportunidadListado(subcuenta, op);
 }
 
 export async function adjuntarDatosVisita(

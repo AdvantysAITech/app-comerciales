@@ -22,7 +22,7 @@ function getSaConfig(subcuenta: Subcuenta): SaConfig {
         const locationId = process.env.SA_VERTICAL_LOCATION_ID;
 
         if (!apiToken || !locationId) {
-            throw new Error("Faltan credenciales del Sistema Advantys para Vertcial Projects en .env.local");
+            throw new Error("Faltan credenciales del Sistema Advantys para Vertical Projects en .env.local");
         }
 
         return { apiToken, locationId };
@@ -31,6 +31,21 @@ function getSaConfig(subcuenta: Subcuenta): SaConfig {
 }
 
 const SA_BASE_URL = "https://services.leadconnectorhq.com";
+
+/**
+ * Respuesta no-OK de la API. Mismo mensaje que antes; lo nuevo es `status`,
+ * para poder distinguir "no existe" (400/404) de un fallo pasajero sin tener
+ * que leer el texto del error.
+ */
+export class ErrorSistemaAdvantys extends Error {
+    constructor(
+        readonly status: number,
+        readonly cuerpo: string
+    ) {
+        super(`Error en Sistema Advantys (${status}): ${cuerpo}`);
+        this.name = "ErrorSistemaAdvantys";
+    }
+}
 
 export async function saFetch(
     subcuenta: Subcuenta,
@@ -51,7 +66,7 @@ export async function saFetch(
 
     if (!response.ok) {
         const errorBody = await response.text();
-        throw new Error(`Error en Sistema Advantys (${response.status}): ${errorBody}`);
+        throw new ErrorSistemaAdvantys(response.status, errorBody);
     }
     return response.json();
 }

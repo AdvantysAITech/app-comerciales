@@ -12,6 +12,7 @@
     "motor:probar": "tsx scripts/tarifa/probar-motor.ts",
     "ajustes:probar": "tsx scripts/tarifa/probar-ajustes.ts",
     "numero:probar": "tsx scripts/tarifa/probar-numero.ts",
+    "permisos:probar": "tsx scripts/tarifa/probar-permisos.ts",
     "mapeo:auditar": "tsx scripts/tarifa/auditar-mapeo.ts",
     "estado:probar": "tsx scripts/tarifa/probar-estado.ts",
     "contador:probar": "tsx scripts/tarifa/probar-contador.ts",

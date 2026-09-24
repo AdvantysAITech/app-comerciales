@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sesionApp } from "@/lib/sesion";
+import { oportunidadAutorizada } from "@/lib/permisos";
 import type { SubcuentaSlug } from "@/lib/subcuenta";
 import { subirArchivoSa } from "@/lib/ghl/media";
 import { obtenerComunidad } from "@/lib/ghl/comunidades";
@@ -174,6 +175,21 @@ export async function GET(
 
     // "scala-valencia-<oportunidadId>-v<n>"
     const oportunidadId = requestId.slice(subcuenta.length + 1).replace(/-v\d+$/, "");
+
+    // Esta ruta también CIERRA la generación (sube el documento y escribe en la
+    // oportunidad): solo la puede consultar quien puede ver la oportunidad.
+    try {
+        if (!(await oportunidadAutorizada(sesion, oportunidadId))) {
+            return NextResponse.json({ error: "No encontrado" }, { status: 404 });
+        }
+    } catch (error) {
+        // No se ha podido comprobar (GHL caído un momento). Se responde "sigue
+        // generando" a propósito: el cliente trata cualquier `error` como
+        // generación fallida, y esto es solo un corte. En la siguiente vuelta
+        // del bucle se vuelve a comprobar; todavía no se ha escrito nada.
+        console.error(`[documentos] ${requestId}: no se ha podido comprobar el acceso:`, error);
+        return NextResponse.json({ requestId, estado: "generando" });
+    }
 
     try {
         let detalle;

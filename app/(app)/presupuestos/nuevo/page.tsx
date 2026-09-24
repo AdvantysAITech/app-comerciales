@@ -2,7 +2,7 @@ import Link from "next/link";
 import { sesionApp } from "@/lib/sesion";
 import { listarAdministradores } from "@/lib/ghl/administradores";
 import { listarComunidades } from "@/lib/ghl/comunidades";
-import { filtroPropietario, obtenerOportunidad, puedeVerOportunidad } from "@/lib/ghl/oportunidades";
+import { oportunidadAutorizada } from "@/lib/permisos";
 import { FormularioPresupuesto, type OportunidadOrigen } from "@/components/forms/FormularioPresupuesto";
 
 /**
@@ -33,7 +33,9 @@ export default async function NuevoPresupuestoPage({
     const [comunidades, administradores, oportunidad] = await Promise.all([
         listarComunidades(subcuenta),
         listarAdministradores(subcuenta),
-        oportunidadId ? obtenerOportunidad(subcuenta, oportunidadId) : Promise.resolve(null),
+        // Un fallo de GHL aquí cuenta como "no encontrada": no hay nada que
+        // escribir todavía, y reabrir desde la ficha lo resuelve.
+        oportunidadId ? oportunidadAutorizada(sesion, oportunidadId).catch(() => null) : Promise.resolve(null),
     ]);
 
     let origen: OportunidadOrigen | null = null;
@@ -41,7 +43,7 @@ export default async function NuevoPresupuestoPage({
     if (oportunidadId) {
         // Misma respuesta si no existe o si es de otro comercial: no se le
         // confirma que esta ahi.
-        if (!oportunidad || !puedeVerOportunidad(filtroPropietario(sesion), oportunidad)) {
+        if (!oportunidad) {
             return <Aviso texto="No se ha encontrado esta oportunidad." />;
         }
         if (oportunidad.etapa !== "VISITA_CONCERTADA") {

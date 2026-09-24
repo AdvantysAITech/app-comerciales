@@ -1,7 +1,8 @@
 import { sesionApp } from "@/lib/sesion";
-import { obtenerOportunidad, estadoVisible, filtroPropietario, puedeVerOportunidad } from "@/lib/ghl/oportunidades";
+import { estadoVisible } from "@/lib/ghl/oportunidades";
+import { oportunidadAutorizada } from "@/lib/permisos";
 import { urlContactoSa, urlOportunidadSa } from "@/lib/ghl/urls";
-import { documentosDisponibles, leerRegistro } from "@/lib/documentos/estado";
+import { documentosDisponibles, leerRegistroParaUI } from "@/lib/documentos/estado";
 import { DocumentoPresupuesto } from "@/components/DocumentoPresupuesto";
 
 export async function OportunidadDetalle({ id }: { id: string }) {
@@ -12,18 +13,30 @@ export async function OportunidadDetalle({ id }: { id: string }) {
     }
 
     const subcuenta = sesion.subcuenta;
-    const oportunidad = await obtenerOportunidad(subcuenta, id);
+    // Solo si es suya (o si es dirección): lib/permisos.ts. Una ajena responde
+    // igual que una que no existe: no se le confirma ni que está ahí.
+    let oportunidad;
+    try {
+        oportunidad = await oportunidadAutorizada(sesion, id);
+    } catch (error) {
+        console.error(`[ficha] No se ha podido leer la oportunidad ${id}:`, error);
+        return (
+            <p className="text-sm text-muted">
+                No se ha podido cargar la oportunidad. Comprueba la conexión y vuelve a abrirla.
+            </p>
+        );
+    }
+
+    if (!oportunidad) {
+        return <p className="text-sm text-muted">No se ha encontrado esta oportunidad.</p>;
+    }
 
     // El registro se lee en servidor: al reabrir la ficha, el comercial ve en
     // que punto esta el documento sin depender de que el polling siguiera vivo.
+    // Después de comprobar el acceso, y con `leerRegistroParaUI`: un fallo
+    // puntual al leer el registro ya no tumba la ficha entera.
     const disponible = documentosDisponibles(subcuenta);
-    const registro = disponible ? await leerRegistro(subcuenta, id) : null;
-
-    // Un comercial que abra por URL la oportunidad de otro ve lo mismo que si
-    // no existiera: no se le confirma ni que está ahí.
-    if (!oportunidad || !puedeVerOportunidad(filtroPropietario(sesion), oportunidad)) {
-        return <p className="text-sm text-muted">No se ha encontrado esta oportunidad.</p>
-    }
+    const registro = disponible ? (await leerRegistroParaUI(subcuenta, id)).registro : null;
 
     return (
         <div>
