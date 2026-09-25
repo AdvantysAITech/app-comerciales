@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sesionApp } from "@/lib/sesion";
-import { oportunidadAutorizada } from "@/lib/permisos";
+import { motivoNoRegenerar, oportunidadAutorizada } from "@/lib/permisos";
 import { obtenerComunidad } from "@/lib/ghl/comunidades";
 import { obtenerAdministrador } from "@/lib/ghl/administradores";
 import { limpiarCasillasPresupuesto } from "@/lib/ghl/casillas";
@@ -144,8 +144,16 @@ async function generar(request: NextRequest): Promise<NextResponse> {
     // Solo el comercial propietario o dirección. Regenerar desmarca la
     // validación, así que un comercial no puede hacerlo sobre una ajena.
     try {
-        if (!(await oportunidadAutorizada(sesion, cuerpo.oportunidadId))) {
+        const oportunidad = await oportunidadAutorizada(sesion, cuerpo.oportunidadId);
+        if (!oportunidad) {
             return NextResponse.json({ error: "Oportunidad no encontrada." }, { status: 404 });
+        }
+
+        // Validado, enviado o cerrado: regenerar pisaría el documento que ya
+        // tiene el administrador y la validación de dirección (lib/permisos.ts).
+        const motivo = motivoNoRegenerar(sesion, oportunidad);
+        if (motivo) {
+            return NextResponse.json({ error: motivo }, { status: 409 });
         }
     } catch (error) {
         const motivo = error instanceof Error ? error.message : "error desconocido";

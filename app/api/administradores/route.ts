@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sesionApp } from "@/lib/sesion";
 import {
+    administradorParaRol,
     listarAdministradores,
     obtenerOCrearAdministrador,
     type DatosNuevoAdministrador,
@@ -32,6 +33,9 @@ function textoDe(body: Record<string, unknown>, clave: string): string | undefin
     return limpio === "" ? undefined : limpio;
 }
 
+/** Hasta 60 s en Vercel (24/09/2026): lista paginada + alta en serie. */
+export const maxDuration = 60;
+
 export async function GET() {
     const sesion = await sesionApp();
 
@@ -41,7 +45,9 @@ export async function GET() {
 
     try {
         const administradores = await listarAdministradores(sesion.subcuenta);
-        return NextResponse.json({ administradores });
+        return NextResponse.json({
+            administradores: administradores.map((a) => administradorParaRol(a, sesion.rol)),
+        });
     } catch (error) {
         const mensaje = error instanceof Error ? error.message : "Error desconocido";
         console.error("[administradores:GET]", mensaje);
@@ -93,7 +99,12 @@ export async function POST(request: NextRequest) {
 
     try {
         const { administrador, creado } = await obtenerOCrearAdministrador(subcuenta, datos);
-        return NextResponse.json({ administrador, creado }, { status: creado ? 201 : 200 });
+        // Si reutiliza uno existente, el registro trae la comisión que tenga:
+        // tampoco se devuelve a un comercial.
+        return NextResponse.json(
+            { administrador: administradorParaRol(administrador, sesion.rol), creado },
+            { status: creado ? 201 : 200 }
+        );
     } catch (error) {
         const mensaje = error instanceof Error ? error.message : "Error desconocido";
         // El detalle se queda en los logs; al comercial en obra no le sirve un

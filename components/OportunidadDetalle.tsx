@@ -1,6 +1,6 @@
 import { sesionApp } from "@/lib/sesion";
 import { estadoVisible } from "@/lib/ghl/oportunidades";
-import { oportunidadAutorizada } from "@/lib/permisos";
+import { motivoNoRegenerar, oportunidadAutorizada } from "@/lib/permisos";
 import { urlContactoSa, urlOportunidadSa } from "@/lib/ghl/urls";
 import { documentosDisponibles, leerRegistroParaUI } from "@/lib/documentos/estado";
 import { DocumentoPresupuesto } from "@/components/DocumentoPresupuesto";
@@ -110,6 +110,7 @@ export async function OportunidadDetalle({ id }: { id: string }) {
                             oportunidadId={oportunidad.id}
                             registroInicial={registro}
                             disponible={disponible}
+                            bloqueo={motivoNoRegenerar(sesion, oportunidad)}
                         />
 
                         {/* Solo dirección. Ocultar el botón no es control de acceso:

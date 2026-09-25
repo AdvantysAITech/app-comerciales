@@ -26,6 +26,9 @@ function textoDe(body: Record<string, unknown>, clave: string): string | undefin
     return limpio === "" ? undefined : limpio;
 }
 
+/** Hasta 60 s en Vercel (24/09/2026): lista paginada + alta + asociación en serie. */
+export const maxDuration = 60;
+
 export async function GET() {
     const sesion = await sesionApp();
 

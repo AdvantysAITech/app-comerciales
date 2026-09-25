@@ -1,5 +1,5 @@
 import { sesionApp } from "@/lib/sesion";
-import { listarAdministradores } from "@/lib/ghl/administradores";
+import { administradorParaRol, listarAdministradores } from "@/lib/ghl/administradores";
 import { listarComunidades } from "@/lib/ghl/comunidades";
 import { FormularioPresupuesto } from "@/components/forms/FormularioPresupuesto";
 
@@ -21,7 +21,9 @@ export default async function VisitasPage(){
         <FormularioPresupuesto
             subcuenta={subcuenta}
             comunidades={comunidades}
-            administradores={administradores}
+            // Sin la comisión pactada si no es dirección: estas props viajan al
+            // navegador (DERCAS §3.3).
+            administradores={administradores.map((a) => administradorParaRol(a, sesion.rol))}
             rol={sesion.rol}
         />
     );

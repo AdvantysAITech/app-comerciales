@@ -2,6 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { sesionApp } from "@/lib/sesion";
 import { subirFotoSa } from "@/lib/ghl/media";
 
+/**
+ * Hasta 60 s en Vercel (24/09/2026): una foto grande con 4G en obra más la
+ * subida a GHL no siempre cabe en los 10 s por defecto de Hobby, y el corte
+ * llegaba sin mensaje.
+ */
+export const maxDuration = 60;
+
 export async function POST(request: NextRequest) {
     const sesion = await sesionApp();
 

@@ -19,6 +19,13 @@ type Props = {
     registroInicial: RegistroDocumento | null;
     /** Falso mientras la subcuenta no tenga configurado el campo de estado. */
     disponible: boolean;
+    /**
+     * Por qué no se puede (re)generar ahora, o `null` si se puede. Lo decide
+     * `motivoNoRegenerar` (lib/permisos.ts): presupuesto validado, enviado u
+     * oportunidad cerrada. La ruta lo vuelve a comprobar; esto solo evita
+     * ofrecer un botón que va a fallar.
+     */
+    bloqueo?: string | null;
 };
 
 type Respuesta = {
@@ -47,7 +54,7 @@ const ETIQUETA: Record<string, string> = {
 const INTERVALO_MS = 5000;
 const INTENTOS_MAXIMOS = 30;
 
-export function DocumentoPresupuesto({ oportunidadId, registroInicial, disponible }: Props) {
+export function DocumentoPresupuesto({ oportunidadId, registroInicial, disponible, bloqueo = null }: Props) {
     const [registro, setRegistro] = useState<Respuesta | null>(registroInicial);
     const [trabajando, setTrabajando] = useState(false);
     // Solo se guarda SI hubo error, no el texto: el detalle técnico va al log
@@ -211,16 +218,20 @@ export function DocumentoPresupuesto({ oportunidadId, registroInicial, disponibl
                 </p>
             )}
 
-            <button
-                type="button"
-                onClick={generar}
-                disabled={enCurso}
-                className={`w-full rounded-xl border border-hairline py-2.5 text-sm font-medium text-ink transition ${
-                    enCurso ? "cursor-not-allowed opacity-40" : "cursor-pointer hover:bg-canvas"
-                }`}
-            >
-                {enCurso ? "Generando..." : estado ? "Volver a generar" : "Generar presupuesto"}
-            </button>
+            {bloqueo && !enCurso ? (
+                <p className="text-[11px] leading-relaxed text-muted">{bloqueo}</p>
+            ) : (
+                <button
+                    type="button"
+                    onClick={generar}
+                    disabled={enCurso}
+                    className={`w-full rounded-xl border border-hairline py-2.5 text-sm font-medium text-ink transition ${
+                        enCurso ? "cursor-not-allowed opacity-40" : "cursor-pointer hover:bg-canvas"
+                    }`}
+                >
+                    {enCurso ? "Generando..." : estado ? "Volver a generar" : "Generar presupuesto"}
+                </button>
+            )}
         </div>
     );
 }

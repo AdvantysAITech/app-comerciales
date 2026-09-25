@@ -7,6 +7,16 @@ import {
     type OportunidadExistente,
 } from "@/lib/ghl/presupuestos";
 import { oportunidadAutorizada } from "@/lib/permisos";
+import { validarSeleccion } from "@/lib/visita/seleccion";
+
+/**
+ * Hasta 60 s en Vercel (24/09/2026). Sin esto vale el límite por defecto de
+ * Hobby, 10 s, y el alta hace en serie: comunidades (paginado), administradores,
+ * contacto, oportunidad y asociación. Con GHL lento se cortaba DESPUÉS de crear
+ * la oportunidad: el móvil recibía error, el comercial reintentaba y quedaba
+ * duplicada.
+ */
+export const maxDuration = 60;
 
 /**
  * Alta de un presupuesto del flujo v2.
@@ -46,6 +56,18 @@ export async function POST(request: NextRequest) {
 
     if (faltan.length > 0) {
         return NextResponse.json({ error: `Faltan datos: ${faltan.join(", ")}` }, { status: 400 });
+    }
+
+    // La misma validación que el formulario, repetida en servidor (24/09/2026).
+    // Sin ella, una petición con una partida sin medir (un formulario viejo en
+    // caché, un fallo del cliente) se registraba y esa partida desaparecía del
+    // presupuesto sin aviso.
+    const errores = validarSeleccion(subcuenta, entrada.modulosElegidos, entrada.seleccion ?? {});
+    if (errores.length > 0) {
+        return NextResponse.json(
+            { error: `Revisa las partidas: ${errores.map((e) => e.mensaje).join(" · ")}` },
+            { status: 422 }
+        );
     }
 
     // Datos tomados sobre una oportunidad en "Visita concertada".
