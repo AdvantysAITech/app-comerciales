@@ -219,14 +219,22 @@ function esUnidad(valor: unknown): valor is UnidadSeleccionable {
  *    documento como tal; un negativo no significa nada en un presupuesto.
  *  - IVA en tanto por uno entre 0 y 1.
  */
-export function sanearAjustes(cuerpo: CuerpoAjustes): ResultadoSaneado {
+export function sanearAjustes(
+    cuerpo: CuerpoAjustes,
+    /**
+     * Códigos de fuera de la tarifa que SÍ están en esta visita: partidas de
+     * CYPE o manuales de la propuesta por IA (27/09/2026). Dirección tiene que
+     * poder ajustarlas igual que las de la tarifa.
+     */
+    codigosDeLaVisita: ReadonlySet<string> = new Set()
+): ResultadoSaneado {
     const errores: string[] = [];
     const lineas: Record<string, AjusteLinea> = {};
     const anadidas: LineaAnadida[] = [];
 
     for (const [codigoBruto, ajusteBruto] of Object.entries(cuerpo.lineas ?? {})) {
         const codigo = String(codigoBruto).trim().toUpperCase();
-        if (!obtenerPartida(codigo)) {
+        if (!obtenerPartida(codigo) && !codigosDeLaVisita.has(codigo)) {
             errores.push(`La partida "${codigo}" no existe en la tarifa 2026.`);
             continue;
         }

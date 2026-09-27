@@ -1,8 +1,8 @@
 /**
  * lib/ia/prompts.ts
  *
- * Prompts de la propuesta de presupuesto por IA (dictado + fotos -> partidas).
- * TODAVÍA NO SE USAN: se enchufan en el bloque de la ruta /api/presupuestos/propuesta.
+ * Prompts de la propuesta de presupuesto por IA (dictado -> partidas). Los usa
+ * lib/propuesta/generar.ts, desde /api/propuesta/extraer y /api/propuesta/cype.
  *
  * ---------------------------------------------------------------------------
  * EL CIRCUITO
@@ -31,7 +31,7 @@
 // 1. Extracción del dictado
 // ---------------------------------------------------------------------------
 
-export const PROMPT_EXTRAER = `Eres el asistente de un comercial de una empresa de rehabilitación de edificios (comunidades de propietarios, Valencia). El comercial ha visitado la finca y ha dictado con el micrófono del móvil los trabajos a presupuestar. El dictado llega agrupado por tipo de trabajo (por ejemplo "Fachadas", "Cubiertas", "Medianeras").
+export const PROMPT_EXTRAER = `Eres el asistente de un comercial de una empresa de rehabilitación de edificios (comunidades de propietarios, Valencia). El comercial ha visitado la finca y ha dictado con el micrófono del móvil los trabajos a presupuestar. El dictado llega agrupado por tipo de trabajo (por ejemplo "Fachadas", "Cubiertas", "Medianeras"), cada uno con su clave entre corchetes: [clave: fachada_principal]. Copia esa clave tal cual en "moduloKey" de cada trabajo.
 
 Tu única tarea es convertir el dictado en una lista de trabajos. No presupuestas, no eliges partidas y no calculas nada.
 
@@ -49,6 +49,7 @@ Responde SOLO con JSON válido, sin texto antes ni después, con esta forma:
   "trabajos": [
     {
       "id": "t1",
+      "moduloKey": "fachada_principal",
       "tipoTrabajo": "Fachadas",
       "accion": "reparar",
       "elemento": "frentes de forjado",
@@ -69,19 +70,19 @@ Responde SOLO con JSON válido, sin texto antes ni después, con esta forma:
 // 2. Casar un trabajo con la tarifa 2026
 // ---------------------------------------------------------------------------
 
-export const PROMPT_CASAR_TARIFA = `Eres técnico de presupuestos de una empresa de rehabilitación. Recibes UN trabajo dictado por el comercial y una lista cerrada de partidas candidatas de la tarifa de la empresa (código, descripción, unidad).
+export const PROMPT_CASAR_TARIFA = `Eres técnico de presupuestos de una empresa de rehabilitación. Recibes una lista de trabajos dictados por el comercial. Cada trabajo trae su propia lista cerrada de partidas candidatas de la tarifa de la empresa (código, descripción, unidad).
 
-Elige la partida que describe ese trabajo o responde que ninguna encaja.
+Para cada trabajo, elige la partida que lo describe o responde que ninguna encaja.
 
 REGLAS
-1. Solo puedes devolver un código que esté en la lista de candidatas. Nunca inventes ni modifiques un código.
+1. Solo puedes devolver un código que esté en la lista de candidatas DE ESE TRABAJO. Nunca inventes ni modifiques un código.
 2. Encaja si la partida describe la MISMA acción sobre el MISMO elemento. Material o sistema distinto al dictado = no encaja (lámina asfáltica no es lo mismo que impermeabilización líquida).
 3. Si dudas entre dos, elige la más específica y explica la duda en "motivo".
 4. Si ninguna encaja, codigo=null. Es preferible null a un encaje forzado: el sistema buscará la partida en CYPE.
-5. La unidad de la partida puede diferir de la dictada; eso no descarta la partida, pero indícalo en "unidadDivergente".
+5. La unidad de la partida puede diferir de la dictada; eso no descarta la partida.
 
-Responde SOLO con JSON:
-{ "codigo": "IMP003" | null, "confianza": "alta" | "media" | "baja", "unidadDivergente": false, "motivo": "..." }`;
+Responde SOLO con JSON, un resultado por trabajo y en el mismo orden:
+{ "resultados": [ { "id": "t1", "codigo": "IMP003", "confianza": "alta", "motivo": "..." }, { "id": "t2", "codigo": null, "confianza": "baja", "motivo": "..." } ] }`;
 
 // ---------------------------------------------------------------------------
 // 3. Buscar en el Generador de Precios de CYPE
@@ -95,13 +96,14 @@ export const HERRAMIENTAS_CYPE = [
     {
         type: "web_search_20250305",
         name: "web_search",
-        max_uses: 3,
+        max_uses: 2,
         allowed_domains: ["generadordeprecios.info"],
     },
     {
         type: "web_fetch_20260318",
         name: "web_fetch",
-        max_uses: 4,
+        // Cada descarga son segundos: con 3 cabe en el minuto que da Vercel.
+        max_uses: 3,
         allowed_domains: ["generadordeprecios.info"],
         max_content_tokens: 20000,
     },
@@ -124,6 +126,7 @@ TRANSCRIPCIÓN (literal, sin redondear ni recalcular)
 - descripcionLarga: el texto completo de la descripción de la unidad de obra.
 - precio: el precio total por unidad EXACTAMENTE como aparece en la página, como texto (ej. "23,97"). Es el precio de CYPE: no le apliques margen, IVA ni ningún ajuste.
 - url: la dirección exacta de la página descargada.
+- capitulo: el código del capítulo de NUESTRO presupuesto al que pertenece el trabajo, elegido de la lista que viene en el mensaje ("01".."12").
 
 PROHIBIDO
 - Estimar, promediar o "ajustar" un precio. Si no has podido descargar la página o no ves el precio, encontrado=false.
@@ -139,6 +142,7 @@ Responde SOLO con JSON válido:
   "descripcionLarga": "Sustitución de capa de impermeabilización deteriorada, en cubierta plana, ...",
   "precio": "23,97",
   "url": "https://www.generadordeprecios.info/rehabilitacion/...",
+  "capitulo": "06",
   "opciones": "monocapa, adherida, SBS, gris (por defecto)",
   "confianza": "alta" | "media" | "baja",
   "motivo": "por qué esta unidad y no otra"
@@ -146,14 +150,17 @@ Responde SOLO con JSON válido:
 Si no encuentras nada adecuado: { "encontrado": false, "motivo": "..." }`;
 
 /** Mensaje de usuario para el paso 3. Un trabajo por llamada: se lanzan en paralelo. */
-export function mensajeCype(trabajo: {
-    tipoTrabajo: string;
-    accion: string;
-    elemento: string;
-    detalle: string;
-    unidad: string | null;
-    textoOriginal: string;
-}): string {
+export function mensajeCype(
+    trabajo: {
+        tipoTrabajo: string;
+        accion: string;
+        elemento: string;
+        detalle: string;
+        unidad: string | null;
+        textoOriginal: string;
+    },
+    capitulos: { codigo: string; nombre: string }[]
+): string {
     return [
         `Tipo de trabajo: ${trabajo.tipoTrabajo}`,
         `Acción: ${trabajo.accion}`,
@@ -161,5 +168,8 @@ export function mensajeCype(trabajo: {
         `Detalle técnico: ${trabajo.detalle || "(sin detalle)"}`,
         `Unidad dictada: ${trabajo.unidad ?? "(no dicha)"}`,
         `Lo que dijo el comercial: "${trabajo.textoOriginal}"`,
+        "",
+        "Capítulos de nuestro presupuesto:",
+        ...capitulos.map((c) => `${c.codigo} ${c.nombre}`),
     ].join("\n");
 }

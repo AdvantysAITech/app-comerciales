@@ -1,4 +1,10 @@
 import { ETIQUETA_UNIDAD, getModulo, type ModeloNegocioDercas } from "@/lib/catalogo";
+import {
+    PREFIJO_RUTA_PROPUESTA,
+    type LineaDocumento,
+    type LineaPropuesta,
+    type Propuesta,
+} from "@/lib/propuesta/tipos";
 import { VERSION_CATALOGO } from "@/lib/catalogo";
 import {
     alertasActivas,
@@ -35,6 +41,12 @@ export type PartidaPayload = {
     unidad?: string;
     cantidad?: number;
     nota?: string;
+    /**
+     * Partida propuesta por IA y revisada por el comercial (27/09/2026). Con
+     * esto la partida no se resuelve por `ruta` en el mapa de la tarifa: trae su
+     * código, precio y unidad. `ruta` empieza por "ia:".
+     */
+    linea?: LineaDocumento;
 };
 
 export type ModuloPayload = {
@@ -44,6 +56,8 @@ export type ModuloPayload = {
     partidas: PartidaPayload[];
     fotos: string[];
     alertas: string[];
+    /** Dictado del comercial para este tipo de trabajo (flujo con IA, 27/09/2026). */
+    dictado?: string;
 };
 
 export type PayloadVisita = {
@@ -89,7 +103,36 @@ export type DatosCaptura = {
     modulosElegidos: string[];
     seleccion: SeleccionVisita;
     fotosPorModulo: Record<string, string[]>;
+    /**
+     * Propuesta por IA revisada por el comercial (27/09/2026). Si viene, las
+     * partidas de cada módulo salen de aquí y `seleccion` se ignora.
+     */
+    propuesta?: Propuesta | null;
+    dictadoPorModulo?: Record<string, string>;
 };
+
+function lineaAPartidaPayload(l: LineaPropuesta): PartidaPayload {
+    const linea: LineaDocumento = {
+        codigo: l.codigo,
+        origen: l.origen,
+        descripcionCorta: l.descripcionCorta,
+        descripcionLarga: l.descripcionLarga,
+        unidad: l.unidad,
+        precioUnitario: l.precioUnitario,
+        precioCype: l.precioCype,
+        capitulo: l.capitulo,
+        url: l.url,
+    };
+    return {
+        ruta: `${PREFIJO_RUTA_PROPUESTA}${l.id}`,
+        camino: [l.descripcionCorta],
+        label: l.descripcionCorta,
+        unidad: l.unidad,
+        cantidad: l.cantidad ?? undefined,
+        nota: l.textoOriginal || undefined,
+        linea,
+    };
+}
 
 function aPartidaPayload(partida: PartidaResuelta): PartidaPayload {
     return {
@@ -107,6 +150,19 @@ export function construirPayload(datos: DatosCaptura): PayloadVisita {
         .map((key) => {
             const modulo = getModulo(datos.subcuenta, key);
             if (!modulo) return null;
+
+            if (datos.propuesta) {
+                const dictado = datos.dictadoPorModulo?.[key]?.trim();
+                return {
+                    key: modulo.key,
+                    label: modulo.label,
+                    modeloNegocioDercas: modulo.modeloNegocioDercas,
+                    partidas: datos.propuesta.lineas.filter((l) => l.moduloKey === key).map(lineaAPartidaPayload),
+                    fotos: datos.fotosPorModulo[key] ?? [],
+                    alertas: [],
+                    ...(dictado ? { dictado } : {}),
+                };
+            }
 
             return {
                 key: modulo.key,
@@ -185,7 +241,12 @@ export function resumenLegible(payload: PayloadVisita): string {
                         ? ` - ${formatearCantidad(partida.cantidad)} ${partida.unidad ?? ""}`.trimEnd()
                         : " - sin medir";
                 const nota = partida.nota ? ` (${partida.nota})` : "";
-                lineas.push(`- ${partida.camino.join(" > ")}${medicion}${nota}`);
+                // Partida propuesta: código y precio, para que Miguel lo lea sin abrir la app.
+                const precio =
+                    partida.linea && partida.linea.precioUnitario !== null
+                        ? ` · ${partida.linea.codigo} · ${formatearCantidad(partida.linea.precioUnitario)} €/${partida.linea.unidad}`
+                        : "";
+                lineas.push(`- ${partida.camino.join(" > ")}${medicion}${precio}${nota}`);
             }
         }
 

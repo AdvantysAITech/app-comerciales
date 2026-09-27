@@ -8,6 +8,9 @@ import {
     type BorradorServidor,
     type OportunidadOrigen,
 } from "@/components/forms/FormularioPresupuesto";
+import { listarCapitulos, listarPartidas } from "@/lib/documentos/tarifa";
+import { iaDisponible } from "@/lib/ia/claude";
+import type { CapituloCatalogo, PartidaCatalogo } from "@/lib/propuesta/tipos";
 import {
     almacenDisponible,
     borradorDeOportunidad,
@@ -116,8 +119,25 @@ export default async function NuevoPresupuestoPage({
             oportunidadOrigen={origen}
             borrador={borradorServidor}
             almacenDisponible={almacen}
+            catalogo={catalogoParaNavegador()}
+            capitulos={listarCapitulos().map((c): CapituloCatalogo => ({ codigo: c.codigo, nombre: c.nombre }))}
+            iaDisponible={iaDisponible()}
         />
     );
+}
+
+/**
+ * Tarifa para buscar y añadir partidas en la revisión. SIN `precioCype`: es el
+ * coste interno y estas props viajan al navegador.
+ */
+function catalogoParaNavegador(): PartidaCatalogo[] {
+    return listarPartidas().map((p) => ({
+        codigo: p.codigo,
+        descripcion: p.descripcionCorta,
+        unidad: p.unidad,
+        precio: p.tarifaEmpresa,
+        capitulo: p.capitulo,
+    }));
 }
 
 /** "dd/mm/aaaa" (como la lee `valorFecha`) -> "aaaa-mm-dd" (lo que pide `<input type="date">`). */

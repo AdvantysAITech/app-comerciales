@@ -198,13 +198,19 @@ function construirModulos(
     // tampoco aquí: no debe aparecer en el texto de un documento que no la
     // presupuesta.
     const precioAplicado = new Map<string, number>();
+    const lineaCalculada = new Map<string, PresupuestoCalculado["capitulos"][number]["lineas"][number]>();
     for (const capitulo of presupuesto?.capitulos ?? []) {
-        for (const linea of capitulo.lineas) precioAplicado.set(linea.codigo, linea.precioUnitario);
+        for (const linea of capitulo.lineas) {
+            precioAplicado.set(linea.codigo, linea.precioUnitario);
+            lineaCalculada.set(linea.codigo, linea);
+        }
     }
 
-    const enElCalculo = (ruta: string): boolean => {
+    const enElCalculo = (partida: PayloadVisita["modulos"][number]["partidas"][number]): boolean => {
         if (!presupuesto) return true;
-        const tarifa = partidaDeRuta(ruta);
+        // Partida propuesta por IA: trae su código, no se resuelve por ruta.
+        if (partida.linea) return precioAplicado.has(partida.linea.codigo);
+        const tarifa = partidaDeRuta(partida.ruta);
         return tarifa ? precioAplicado.has(tarifa.codigo) : false;
     };
 
@@ -212,13 +218,30 @@ function construirModulos(
         .map((modulo) => ({
             ...modulo,
             partidas: modulo.partidas.filter(
-                (partida) => !textoLibre.has(partida.ruta) && enElCalculo(partida.ruta)
+                (partida) => !textoLibre.has(partida.ruta) && enElCalculo(partida)
             ),
         }))
         .filter((modulo) => modulo.partidas.length > 0)
         .map((modulo) => ({
             label: modulo.label,
             partidas: modulo.partidas.map((partida) => {
+                if (partida.linea) {
+                    const l = partida.linea;
+                    const calculada = lineaCalculada.get(l.codigo);
+                    const cantidad = partida.cantidad ?? 0;
+                    const precio = calculada?.precioUnitario ?? l.precioUnitario;
+                    const importe =
+                        precio !== null && cantidad > 0 ? aEuros(Math.round(cantidad * aCentimos(precio))) : null;
+                    return {
+                        codigo: calculada?.codigoJerarquico ?? "",
+                        descripcion: calculada?.resumen ?? l.descripcionCorta,
+                        unidad: calculada?.unidad ?? l.unidad,
+                        cantidadFormateada: cantidad > 0 ? formatearCantidad(cantidad) : "",
+                        precioFormateado: precio !== null ? formatearImporte(precio) : "",
+                        importeFormateado: importe !== null ? formatearImporte(importe) : "",
+                    };
+                }
+
                 const tarifa = presupuesto ? partidaDeRuta(partida.ruta) : undefined;
                 const cantidad = partida.cantidad ?? 0;
                 const precio = tarifa

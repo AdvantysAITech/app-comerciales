@@ -36,8 +36,8 @@ import {
   obtenerCapitulo,
   listarCapitulos,
   resolverUnidadImpresa,
-  unidadDivergente,
   catalogo,
+  partidasDeCapitulo,
   type PartidaTarifa,
   type Unidad,
   type UnidadSeleccionable,
@@ -76,6 +76,32 @@ export interface LineaSolicitada {
    * mismo documento.
    */
   precioUnitario?: number | null;
+  /**
+   * Unidad que se imprime, cualquiera de las 8 (27/09/2026). La pone la
+   * propuesta por IA y el comercial la puede cambiar ("1 ud" en vez de
+   * "12 m²"). Si falta, manda `unidadSeleccionada` / la unidad nativa.
+   * Solo es etiqueta: el importe es siempre cantidad x precio.
+   */
+  unidadImpresa?: Unidad | null;
+  /**
+   * Partida que NO está en la tarifa 2026: unidad de obra de CYPE o partida
+   * escrita por el comercial (27/09/2026). Trae con ella lo que el motor
+   * normalmente saca del catálogo. Con esto `codigo` no se busca en la tarifa.
+   */
+  partidaExterna?: PartidaExterna | null;
+}
+
+export interface PartidaExterna {
+  resumen: string;
+  descripcionLarga: string | null;
+  /** Unidad real de la partida (la de CYPE). */
+  unidad: Unidad;
+  /** Capítulo del documento ("01".."12"). Tiene que existir. */
+  capitulo: string;
+  /** Precio CYPE sin margen. `null` en las manuales: se estima con el margen. */
+  precioCype: number | null;
+  /** Precio de venta. Es el que se imprime si no hay `precioUnitario`. */
+  precioVenta: number;
 }
 
 export interface EntradaPresupuesto {
@@ -164,8 +190,11 @@ function importeEnCentimos(cantidad: number, precioEuros: number): number {
 
 interface LineaAgregada {
   partida: PartidaTarifa;
+  /** La partida viene de fuera de la tarifa (CYPE o manual). */
+  externa: boolean;
   cantidad: number;
   unidadSeleccionada: UnidadSeleccionable | null;
+  unidadImpresa: Unidad | null;
   descripcionLarga: string | null;
   /** Precio de dirección, o null para usar la tarifa. */
   precioUnitario: number | null;
@@ -208,14 +237,18 @@ function agregarLineas(
       );
     }
 
-    const partida = obtenerPartidaOFallar(codigo);
+    const partida = l.partidaExterna
+      ? partidaDesdeExterna(codigo, l.partidaExterna)
+      : obtenerPartidaOFallar(codigo);
     const existente = mapa.get(codigo);
 
     if (!existente) {
       mapa.set(codigo, {
         partida,
+        externa: Boolean(l.partidaExterna),
         cantidad: l.cantidad,
         unidadSeleccionada: l.unidadSeleccionada ?? null,
+        unidadImpresa: l.unidadImpresa ?? null,
         descripcionLarga: l.descripcionLarga ?? null,
         precioUnitario: precioAjustado,
       });
@@ -256,11 +289,46 @@ function agregarLineas(
     }
 
     existente.unidadSeleccionada ??= nuevaUnidad;
+    existente.unidadImpresa ??= l.unidadImpresa ?? null;
     existente.descripcionLarga ??= l.descripcionLarga ?? null;
     existente.precioUnitario ??= precioAjustado;
   }
 
   return [...mapa.values()];
+}
+
+/**
+ * Partida externa con la forma de una de la tarifa, para que el resto del motor
+ * no distinga. `codigoJerarquico` se asigna al ordenar el capítulo.
+ */
+function partidaDesdeExterna(codigo: string, e: PartidaExterna): PartidaTarifa {
+  if (!obtenerCapitulo(e.capitulo)) {
+    throw new Error(`[${codigo}] Capítulo "${e.capitulo}" inexistente en la tarifa ${catalogo.meta.version}.`);
+  }
+  if (!Number.isFinite(e.precioVenta) || e.precioVenta < 0) {
+    throw new Error(`[${codigo}] Precio de venta inválido: ${e.precioVenta}.`);
+  }
+  if (!e.resumen?.trim()) {
+    throw new Error(`[${codigo}] Partida sin descripción.`);
+  }
+
+  // Coste interno. En las manuales no se conoce: se estima deshaciendo el
+  // margen, para que el análisis de rentabilidad no las cuente como 100 % margen.
+  const margen = catalogo.meta.margenEmpresa || 1;
+  const precioCype = e.precioCype ?? aEuros(aCentimos(e.precioVenta / margen));
+
+  return {
+    codigo,
+    codigoJerarquico: "",
+    capitulo: e.capitulo,
+    orden: Number.MAX_SAFE_INTEGER,
+    descripcionCorta: e.resumen.trim(),
+    descripcionLarga: e.descripcionLarga,
+    unidad: e.unidad,
+    precioCype,
+    tarifaEmpresa: e.precioVenta,
+    excepcionAceptada: null,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -298,8 +366,22 @@ export function calcularPresupuesto(entrada: EntradaPresupuesto): PresupuestoCal
     const agregadasCap = porCapitulo.get(cap.codigo);
     if (!agregadasCap || agregadasCap.length === 0) continue;
 
-    // Dentro del capítulo, orden del catálogo (no de captura).
-    agregadasCap.sort((a, b) => a.partida.orden - b.partida.orden);
+    // Dentro del capítulo, orden del catálogo (no de captura). Las externas,
+    // al final y por código, con numeración a continuación de la última de la
+    // tarifa en ese capítulo (1.06.14, 1.06.15...). Las de tarifa conservan la
+    // suya: un presupuesto sin externas sale exactamente igual que antes.
+    agregadasCap.sort(
+      (a, b) => a.partida.orden - b.partida.orden || a.partida.codigo.localeCompare(b.partida.codigo)
+    );
+    let siguienteExterna = partidasDeCapitulo(cap.codigo).length;
+    for (const a of agregadasCap) {
+      if (!a.externa) continue;
+      siguienteExterna += 1;
+      a.partida = {
+        ...a.partida,
+        codigoJerarquico: `${cap.codigoJerarquico}.${String(siguienteExterna).padStart(2, "0")}`,
+      };
+    }
 
     const lineas: LineaCalculada[] = [];
     let totalCapCentimos = 0;
@@ -320,22 +402,23 @@ export function calcularPresupuesto(entrada: EntradaPresupuesto): PresupuestoCal
           nivel: "atencion",
           codigo: p.codigo,
           mensaje:
-            `Precio ajustado por dirección: ${precioUnitario} €/${p.unidad} ` +
-            `(tarifa 2026: ${p.tarifaEmpresa} €/${p.unidad}). El importe se calcula ` +
-            `con el precio ajustado.`,
+            `Precio ajustado a mano: ${precioUnitario} €/${p.unidad} ` +
+            `(${a.externa ? "referencia" : "tarifa 2026"}: ${p.tarifaEmpresa} €/${p.unidad}). ` +
+            `El importe se calcula con el precio ajustado.`,
         });
       }
 
       totalCapCentimos += impCent;
       costeCypeCentimos += cypeCent;
 
-      const divergente = unidadDivergente(p, a.unidadSeleccionada);
+      const unidadImpresa = a.unidadImpresa ?? resolverUnidadImpresa(p, a.unidadSeleccionada);
+      const divergente = unidadImpresa !== p.unidad;
       if (divergente) {
         avisos.push({
           nivel: "atencion",
           codigo: p.codigo,
           mensaje:
-            `Se imprime "${a.unidadSeleccionada}" pero la unidad real de medición es ` +
+            `Se imprime "${unidadImpresa}" pero la unidad real de medición es ` +
             `"${p.unidad}" (${p.tarifaEmpresa} €/${p.unidad}). Desviación aceptada; ` +
             `revisable en el ajuste de mediciones en obra.`,
         });
@@ -354,7 +437,7 @@ export function calcularPresupuesto(entrada: EntradaPresupuesto): PresupuestoCal
         codigoJerarquico: p.codigoJerarquico,
         resumen: p.descripcionCorta,
         descripcionLarga: a.descripcionLarga ?? p.descripcionLarga ?? null,
-        unidad: resolverUnidadImpresa(p, a.unidadSeleccionada),
+        unidad: unidadImpresa,
         unidadNativa: p.unidad,
         unidadDivergente: divergente,
         cantidad: a.cantidad,

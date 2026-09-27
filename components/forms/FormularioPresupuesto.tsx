@@ -1,8 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { SelectorArbol } from "@/components/forms/SelectorArbol";
-import { BuscadorPartidas } from "@/components/forms/BuscadorPartidas";
+import { problemasDeLinea, RevisionPropuesta } from "@/components/forms/RevisionPropuesta";
+import type {
+    CapituloCatalogo,
+    LineaPropuesta,
+    PartidaCatalogo,
+    Propuesta,
+} from "@/lib/propuesta/tipos";
 import { SubidorFotos } from "@/components/forms/SubidorFotos";
 import { SubidorDocumentos } from "@/components/forms/SubidorDocumentos";
 import { AltaAdministrador, AltaComunidad } from "@/components/forms/AltaRapida";
@@ -22,17 +27,21 @@ import {
 } from "@/lib/visita/borrador";
 import {
     alertasActivas,
-    contarPorModulo,
     limpiarModulo,
-    partidasSeleccionadas,
     seleccionVacia,
-    validarSeleccion,
     type SeleccionVisita,
     type Subcuenta,
 } from "@/lib/visita/seleccion";
 
 /**
  * Formulario de captura de presupuesto (flujo v2).
+ *
+ * Flujo con IA (27/09/2026): por cada tipo de trabajo, fotos + dictado de
+ * trabajos y medidas (micrófono del teclado). "Generar propuesta" manda el
+ * dictado a la IA (lib/propuesta/generar.ts), que devuelve partidas de la
+ * tarifa o de CYPE; el comercial las revisa en `RevisionPropuesta` y "Crear
+ * presupuesto" registra en GHL y genera el documento. Todo queda en el borrador
+ * de la app mientras tanto.
  *
  * Envia a /api/registrar-presupuesto, que crea comunidad, contacto y
  * oportunidad(es) en GHL con el payload canonico de la visita. Ese payload es
@@ -86,7 +95,17 @@ type Props = {
      * funciona como antes: solo con la copia del móvil.
      */
     almacenDisponible?: boolean;
+    /** Tarifa sin costes internos, para añadir o sustituir partidas en la revisión. */
+    catalogo?: PartidaCatalogo[];
+    capitulos?: CapituloCatalogo[];
+    /** Hay ANTHROPIC_API_KEY. Sin ella no se puede generar la propuesta. */
+    iaDisponible?: boolean;
 };
+
+type Generacion = { fase: "extrayendo" } | { fase: "cype"; hechas: number; total: number } | { fase: "creando" };
+
+/** Búsquedas en CYPE a la vez. Más satura la API y no acaba antes. */
+const CYPE_EN_PARALELO = 4;
 
 type EstadoNube =
     | { estado: "sin-guardar" }
@@ -131,6 +150,9 @@ export function FormularioPresupuesto({
     oportunidadOrigen = null,
     borrador = null,
     almacenDisponible = false,
+    catalogo = [],
+    capitulos = [],
+    iaDisponible = false,
 }: Props) {
     /**
      * Clave de la copia local. Con borrador de la app, una por borrador. Con
@@ -195,6 +217,15 @@ export function FormularioPresupuesto({
         base?.documentosPorModulo ?? {}
     );
 
+    // --- Dictado y propuesta por IA -----------------------------------------
+    const [dictadoPorModulo, setDictadoPorModulo] = useState<Record<string, string>>(base?.dictadoPorModulo ?? {});
+    const [propuesta, setPropuesta] = useState<Propuesta | null>(base?.propuesta ?? null);
+    /** En la pantalla de revisión. Un borrador que ya tiene propuesta se abre ahí. */
+    const [revisando, setRevisando] = useState(Boolean(base?.propuesta));
+    const [generacion, setGeneracion] = useState<Generacion | null>(null);
+    const [errorPropuesta, setErrorPropuesta] = useState<string | null>(null);
+    const [confirmandoRehacer, setConfirmandoRehacer] = useState(false);
+
     // --- Borrador en la app ------------------------------------------------
     const [borradorId, setBorradorId] = useState<string | null>(borrador?.id ?? null);
     const [nube, setNube] = useState<EstadoNube>(
@@ -242,6 +273,8 @@ export function FormularioPresupuesto({
             seleccion,
             fotosPorModulo,
             documentosPorModulo,
+            dictadoPorModulo,
+            propuesta,
         }),
         [
             nombreComunidad,
@@ -255,6 +288,8 @@ export function FormularioPresupuesto({
             seleccion,
             fotosPorModulo,
             documentosPorModulo,
+            dictadoPorModulo,
+            propuesta,
         ]
     );
 
@@ -283,6 +318,9 @@ export function FormularioPresupuesto({
             setSeleccion(local.seleccion);
             setFotosPorModulo(local.fotosPorModulo);
             setDocumentosPorModulo(local.documentosPorModulo ?? {});
+            setDictadoPorModulo(local.dictadoPorModulo ?? {});
+            setPropuesta(local.propuesta ?? null);
+            setRevisando(Boolean(local.propuesta));
             setBorradorRecuperado(local.guardadoEn);
             // Un borrador con finca ya elegida vuelve directo al formulario.
             if (local.nombreComunidad.trim() !== "") setEligiendoFinca(false);
@@ -418,18 +456,12 @@ export function FormularioPresupuesto({
 
     const seCrearaComunidad = nombreComunidad.trim() !== "" && !comunidadElegida && !coincidenciaExacta;
 
-    const conteo = useMemo(
-        () => contarPorModulo(subcuenta, modulosElegidos, seleccion),
-        [subcuenta, modulosElegidos, seleccion]
-    );
-    const partidas = useMemo(
-        () => partidasSeleccionadas(subcuenta, modulosElegidos, seleccion),
-        [subcuenta, modulosElegidos, seleccion]
-    );
-    const errores = useMemo(
-        () => validarSeleccion(subcuenta, modulosElegidos, seleccion),
-        [subcuenta, modulosElegidos, seleccion]
-    );
+    /** Partidas de la propuesta por tipo de trabajo, para el contador de los botones. */
+    const conteo = useMemo(() => {
+        const cuenta: Record<string, number> = {};
+        for (const l of propuesta?.lineas ?? []) cuenta[l.moduloKey] = (cuenta[l.moduloKey] ?? 0) + 1;
+        return cuenta;
+    }, [propuesta]);
     const alertas = useMemo(
         () => alertasActivas(subcuenta, modulosElegidos, seleccion),
         [subcuenta, modulosElegidos, seleccion]
@@ -458,6 +490,12 @@ export function FormularioPresupuesto({
                 // huerfanas en el estado y viajarian al presupuesto sin que
                 // nadie las vea en pantalla.
                 setSeleccion((s) => limpiarModulo(s, modulo.key));
+                setDictadoPorModulo((d) => {
+                    const siguiente = { ...d };
+                    delete siguiente[modulo.key];
+                    return siguiente;
+                });
+                setPropuesta((p) => (p ? { ...p, lineas: p.lineas.filter((l) => l.moduloKey !== modulo.key) } : p));
                 setFotosPorModulo((f) => {
                     const siguiente = { ...f };
                     delete siguiente[modulo.key];
@@ -511,6 +549,9 @@ export function FormularioPresupuesto({
         setSeleccion(seleccionVacia);
         setFotosPorModulo({});
         setDocumentosPorModulo({});
+        setDictadoPorModulo({});
+        setPropuesta(null);
+        setRevisando(false);
         setBorradorRecuperado(null);
         setEligiendoFinca(!oportunidadOrigen);
     }
@@ -520,19 +561,140 @@ export function FormularioPresupuesto({
     const faltanDatosGenerales =
         nombreComunidad.trim() === "" || contacto.trim() === "" || telefono.trim() === "" || fecha === "";
 
+    const etiqueta = (k: string) => modulos.find((m) => m.key === k)?.label ?? k;
+    const modulosSinDictado = modulosElegidos.filter((k) => !(dictadoPorModulo[k] ?? "").trim());
+
+    /** Qué falta para pedir la propuesta a la IA. */
+    const motivoNoPropuesta = !iaDisponible
+        ? "La IA no está configurada (falta ANTHROPIC_API_KEY)"
+        : faltanDatosGenerales
+          ? "Completa comunidad, contacto, teléfono y fecha"
+          : modulosElegidos.length === 0
+            ? "Elige al menos un tipo de trabajo"
+            : modulosSinDictado.length > 0
+              ? `Dicta los trabajos de: ${modulosSinDictado.map(etiqueta).join(", ")}`
+              : modulosSinFotosSuficientes.length > 0
+                ? `Faltan fotos en: ${modulosSinFotosSuficientes.map(etiqueta).join(", ")}`
+                : null;
+
+    const lineasConProblemas = (propuesta?.lineas ?? []).filter((l) => problemasDeLinea(l).length > 0);
+    const buscandoCype = (propuesta?.lineas ?? []).some((l) => l.pendienteCype);
+
+    /** Qué falta para crear el presupuesto desde la revisión. */
     const motivoBloqueo = faltanDatosGenerales
         ? "Completa comunidad, contacto, teléfono y fecha"
-        : errores.length > 0
-          ? "Hay partidas marcadas sin resolver"
-          : partidas.length === 0
-            ? "Selecciona al menos una partida"
-            : modulosSinFotosSuficientes.length > 0
-              ? `Faltan fotos en: ${modulosSinFotosSuficientes
-                    .map((k) => modulos.find((m) => m.key === k)?.label ?? k)
-                    .join(", ")}`
-              : null;
+        : !propuesta || propuesta.lineas.length === 0
+          ? "No hay ninguna partida"
+          : buscandoCype
+            ? "Espera a que termine la búsqueda en CYPE"
+            : lineasConProblemas.length > 0
+              ? `Completa ${lineasConProblemas.length === 1 ? "1 partida" : `${lineasConProblemas.length} partidas`} (medición, precio o descripción)`
+              : modulosSinFotosSuficientes.length > 0
+                ? `Faltan fotos en: ${modulosSinFotosSuficientes.map(etiqueta).join(", ")}`
+                : null;
 
-    const puedeEnviar = motivoBloqueo === null && !enviando;
+    const puedeEnviar = motivoBloqueo === null && !enviando && generacion === null;
+
+    /** Busca en CYPE las líneas indicadas, de `CYPE_EN_PARALELO` en `CYPE_EN_PARALELO`. */
+    async function completarCype(pendientes: LineaPropuesta[]) {
+        if (pendientes.length === 0) return;
+        let hechas = 0;
+        setGeneracion({ fase: "cype", hechas, total: pendientes.length });
+
+        const actualizar = (id: string, cambio: Partial<LineaPropuesta>) =>
+            setPropuesta((p) =>
+                p ? { ...p, lineas: p.lineas.map((l) => (l.id === id ? { ...l, ...cambio } : l)) } : p
+            );
+
+        const cola = [...pendientes];
+        const trabajador = async () => {
+            for (let l = cola.shift(); l; l = cola.shift()) {
+                try {
+                    const respuesta = await fetch("/api/propuesta/cype", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ consulta: l.consulta, capitulo: l.capitulo }),
+                    });
+                    const cuerpo = await respuesta.json();
+                    if (!respuesta.ok) throw new Error(cuerpo.error ?? `Error ${respuesta.status}`);
+
+                    const r = cuerpo.resultado;
+                    const avisoPrevio = l.aviso ? [l.aviso] : [];
+                    if (r?.encontrado) {
+                        actualizar(l.id, {
+                            pendienteCype: false,
+                            codigo: r.codigo,
+                            origen: "cype",
+                            descripcionCorta: r.descripcionCorta,
+                            descripcionLarga: r.descripcionLarga,
+                            unidad: r.unidad,
+                            precioUnitario: r.precioVenta,
+                            precioReferencia: r.precioVenta,
+                            precioCype: r.precioCype,
+                            capitulo: r.capitulo,
+                            url: r.url,
+                            aviso: [...avisoPrevio, r.aviso].filter(Boolean).join(" · ") || null,
+                        });
+                    } else {
+                        actualizar(l.id, {
+                            pendienteCype: false,
+                            codigo: "",
+                            aviso: [...avisoPrevio, `CYPE: ${r?.motivo ?? "no encontrado"}`].join(" · "),
+                        });
+                    }
+                } catch (error) {
+                    actualizar(l.id, {
+                        pendienteCype: false,
+                        codigo: "",
+                        aviso: `No se ha podido consultar CYPE (${error instanceof Error ? error.message : "sin conexión"}).`,
+                    });
+                } finally {
+                    hechas += 1;
+                    setGeneracion({ fase: "cype", hechas, total: pendientes.length });
+                }
+            }
+        };
+
+        await Promise.all(Array.from({ length: Math.min(CYPE_EN_PARALELO, pendientes.length) }, trabajador));
+        setGeneracion(null);
+    }
+
+    async function generarPropuestaIA() {
+        if (motivoNoPropuesta || generacion) return;
+        setConfirmandoRehacer(false);
+        setErrorPropuesta(null);
+        setGeneracion({ fase: "extrayendo" });
+
+        try {
+            const respuesta = await fetch("/api/propuesta/extraer", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    modulos: modulosElegidos.map((key) => ({ key, dictado: dictadoPorModulo[key] ?? "" })),
+                }),
+            });
+            const cuerpo = await respuesta.json();
+            if (!respuesta.ok) throw new Error(cuerpo.error ?? `Error ${respuesta.status}`);
+
+            const nueva = cuerpo.propuesta as Propuesta;
+            setPropuesta(nueva);
+            setRevisando(true);
+            window.scrollTo({ top: 0 });
+            setGeneracion(null);
+            await completarCype(nueva.lineas.filter((l) => l.pendienteCype));
+        } catch (error) {
+            setGeneracion(null);
+            setErrorPropuesta(error instanceof Error ? error.message : "No se ha podido generar la propuesta.");
+        }
+    }
+
+    function reintentarCype(id: string) {
+        const linea = propuesta?.lineas.find((l) => l.id === id);
+        if (!linea?.consulta || generacion) return;
+        const pendiente = { ...linea, pendienteCype: true, aviso: null };
+        setPropuesta((p) => (p ? { ...p, lineas: p.lineas.map((l) => (l.id === id ? pendiente : l)) } : p));
+        void completarCype([pendiente]);
+    }
 
     async function enviar() {
         if (!puedeEnviar) return;
@@ -560,6 +722,8 @@ export function FormularioPresupuesto({
                     modulosElegidos,
                     seleccion,
                     fotosPorModulo,
+                    propuesta,
+                    dictadoPorModulo,
                 }),
             });
 
@@ -569,6 +733,36 @@ export function FormularioPresupuesto({
             // Solo se limpia el borrador con el alta CONFIRMADA. Si falla, el
             // comercial conserva la visita y puede reintentar sin recapturar.
             limpiarBorrador(claveLocal);
+
+            // Flujo con IA: el presupuesto ya está revisado, así que se genera el
+            // documento sin pasar por la ficha. La ficha sigue la generación.
+            const oportunidadId = (datos as ResultadoAlta).oportunidades[0]?.id;
+            if (propuesta && oportunidadId) {
+                setGeneracion({ fase: "creando" });
+                try {
+                    const gen = await fetch("/api/documentos/generar", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ oportunidadId, version: 1 }),
+                    });
+                    if (gen.ok) {
+                        window.location.href = `/oportunidades/${oportunidadId}`;
+                        return;
+                    }
+                    const cuerpoGen = await gen.json().catch(() => ({}));
+                    (datos as ResultadoAlta).avisos.push(
+                        `El presupuesto está creado pero el documento no se ha podido generar: ${
+                            cuerpoGen.error ?? `error ${gen.status}`
+                        }. Ábrelo desde la oportunidad para reintentarlo.`
+                    );
+                } catch {
+                    (datos as ResultadoAlta).avisos.push(
+                        "El presupuesto está creado pero no se ha podido pedir el documento. Ábrelo desde la oportunidad."
+                    );
+                } finally {
+                    setGeneracion(null);
+                }
+            }
             setResultado(datos as ResultadoAlta);
         } catch (error) {
             // No se ha creado: el borrador sigue vivo y se sigue guardando.
@@ -738,6 +932,52 @@ export function FormularioPresupuesto({
                     </div>
                 )}
 
+                {revisando && propuesta ? (
+                    <div className="flex flex-col gap-3">
+                        <div className="flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                                <p className="text-[11px] font-medium uppercase tracking-wide text-muted">
+                                    Revisa la propuesta
+                                </p>
+                                <p className="truncate text-sm text-ink">{nombreComunidad}</p>
+                            </div>
+                            <button
+                                type="button"
+                                disabled={generacion !== null || enviando}
+                                onClick={() => setRevisando(false)}
+                                className="shrink-0 cursor-pointer rounded-lg border border-hairline px-2.5 py-1.5 text-xs text-ink transition hover:bg-surface disabled:opacity-40"
+                            >
+                                Volver al dictado
+                            </button>
+                        </div>
+
+                        {generacion?.fase === "cype" && (
+                            <p className="rounded-xl border border-hairline bg-ink/[0.04] px-3 py-2 text-xs text-muted">
+                                Buscando en CYPE las partidas que no están en la tarifa ({generacion.hechas}/
+                                {generacion.total})…
+                            </p>
+                        )}
+
+                        <RevisionPropuesta
+                            propuesta={propuesta}
+                            modulos={modulosElegidos.map((k) => ({ key: k, label: etiqueta(k) }))}
+                            catalogo={catalogo}
+                            capitulos={capitulos}
+                            onCambiar={setPropuesta}
+                            onReintentarCype={reintentarCype}
+                            deshabilitado={enviando || generacion?.fase === "creando"}
+                        />
+
+                        {errorEnvio && (
+                            <section className="rounded-2xl border border-red-500/30 bg-red-500/10 p-4">
+                                <p className="text-xs text-red-700 dark:text-red-400">{errorEnvio}</p>
+                                <p className="mt-1 text-[11px] text-muted">
+                                    La visita sigue guardada en el borrador: puedes reintentar sin recapturar nada.
+                                </p>
+                            </section>
+                        )}
+                    </div>
+                ) : (
                 <div className="flex flex-col gap-3">
                     <section className={ESTILO_SECCION}>
                         <p className={ESTILO_TITULO}>Datos generales</p>
@@ -896,21 +1136,30 @@ export function FormularioPresupuesto({
                             <section key={key} className={ESTILO_SECCION}>
                                 <p className={ESTILO_TITULO}>{modulo.label}</p>
 
-                                {modulo.captura === "arbol" ? (
-                                    <SelectorArbol
-                                        subcuenta={subcuenta}
-                                        modulo={modulo}
-                                        seleccion={seleccion}
-                                        onSeleccionChange={setSeleccion}
+                                {/* Dictado de trabajos y medidas (27/09/2026). Sustituye al
+                                    árbol de partidas: la IA saca las partidas del texto y el
+                                    comercial las revisa después. El micrófono es el del
+                                    teclado del móvil. */}
+                                <label className="block">
+                                    <span className={ESTILO_LABEL}>Trabajos y medidas</span>
+                                    <textarea
+                                        value={dictadoPorModulo[key] ?? ""}
+                                        onChange={(e) =>
+                                            setDictadoPorModulo((anterior) => ({ ...anterior, [key]: e.target.value }))
+                                        }
+                                        rows={5}
+                                        disabled={enviando || generacion !== null}
+                                        placeholder="Ej.: picar y reparar frentes de forjado, unos 40 metros lineales. La fachada tiene 400 m² y hay que pintar toda con pintura pétrea…"
+                                        className={`${ESTILO_CAMPO} resize-y`}
                                     />
-                                ) : modulo.captura === "buscador" ? (
-                                    <BuscadorPartidas
-                                        subcuenta={subcuenta}
-                                        modulo={modulo}
-                                        seleccion={seleccion}
-                                        onSeleccionChange={setSeleccion}
-                                    />
-                                ) : modulo.captura === "importacion" ? (
+                                </label>
+                                <p className="mt-1.5 text-xs text-muted">
+                                    Díctalo con el micrófono del teclado: qué hay que hacer, en qué elemento y cuánto
+                                    mide (o la medida total y el % a reparar).
+                                </p>
+
+                                {modulo.captura === "importacion" && (
+                                    <div className="mt-4 border-t border-hairline pt-4">
                                     <SubidorDocumentos
                                         documentos={documentosPorModulo[key] ?? []}
                                         onDocumentosChange={(docs) =>
@@ -918,10 +1167,7 @@ export function FormularioPresupuesto({
                                         }
                                         disabled={enviando}
                                     />
-                                ) : (
-                                    <p className="rounded-xl border border-dashed border-hairline px-3 py-4 text-center text-xs text-muted">
-                                        Módulo sin estructura definida todavía
-                                    </p>
+                                    </div>
                                 )}
 
                                 <div className="mt-4 border-t border-hairline pt-4">
@@ -950,36 +1196,10 @@ export function FormularioPresupuesto({
                         </section>
                     )}
 
-                    {(partidas.length > 0 || errores.length > 0) && (
-                        <section className={ESTILO_SECCION}>
-                            <p className={ESTILO_TITULO}>Resumen ({partidas.length} partidas)</p>
-
-                            <div className="flex flex-col gap-1.5">
-                                {partidas.map((p) => (
-                                    <div
-                                        key={p.ruta}
-                                        className="flex items-baseline justify-between gap-3 border-b border-hairline pb-1.5 last:border-0"
-                                    >
-                                        <span className="text-xs text-ink">
-                                            <span className="text-muted">{p.moduloLabel} · </span>
-                                            {p.caminoLabels.join(" › ")}
-                                        </span>
-                                        <span className="shrink-0 text-xs text-muted">
-                                            {p.cantidad !== undefined ? `${p.cantidad} ${p.unidad ?? ""}` : "sin medir"}
-                                        </span>
-                                    </div>
-                                ))}
-                            </div>
-
-                            {errores.length > 0 && (
-                                <ul className="mt-3 flex flex-col gap-1 border-t border-hairline pt-3">
-                                    {errores.map((e) => (
-                                        <li key={e.ruta} className="text-xs text-red-600 dark:text-red-400">
-                                            {e.mensaje}
-                                        </li>
-                                    ))}
-                                </ul>
-                            )}
+                    {errorPropuesta && (
+                        <section className="rounded-2xl border border-red-500/30 bg-red-500/10 p-4">
+                            <p className="text-xs text-red-700 dark:text-red-400">{errorPropuesta}</p>
+                            <p className="mt-1 text-[11px] text-muted">El dictado sigue guardado: puedes volver a intentarlo.</p>
                         </section>
                     )}
 
@@ -992,19 +1212,90 @@ export function FormularioPresupuesto({
                         </section>
                     )}
                 </div>
+                )}
 
                 <div className="sticky bottom-24 z-30 mt-4 rounded-2xl border border-hairline bg-canvas/95 p-3 backdrop-blur-md">
-                    {motivoBloqueo && <p className="mb-2 text-center text-xs text-muted">{motivoBloqueo}</p>}
-                    <button
-                        type="button"
-                        onClick={enviar}
-                        disabled={!puedeEnviar}
-                        className={`w-full rounded-xl bg-ink py-3 text-sm font-semibold text-canvas transition ${
-                            puedeEnviar ? "cursor-pointer" : "cursor-not-allowed opacity-40"
-                        }`}
-                    >
-                        {enviando ? "Enviando..." : "Enviar presupuesto"}
-                    </button>
+                    {revisando && propuesta ? (
+                        <>
+                            {motivoBloqueo && <p className="mb-2 text-center text-xs text-muted">{motivoBloqueo}</p>}
+                            <button
+                                type="button"
+                                onClick={enviar}
+                                disabled={!puedeEnviar}
+                                className={`w-full rounded-xl bg-ink py-3 text-sm font-semibold text-canvas transition ${
+                                    puedeEnviar ? "cursor-pointer" : "cursor-not-allowed opacity-40"
+                                }`}
+                            >
+                                {generacion?.fase === "creando"
+                                    ? "Generando el documento..."
+                                    : enviando
+                                      ? "Creando el presupuesto..."
+                                      : "Crear presupuesto"}
+                            </button>
+                        </>
+                    ) : (
+                        <>
+                            {(motivoNoPropuesta || generacion) && (
+                                <p className="mb-2 text-center text-xs text-muted">
+                                    {generacion?.fase === "extrayendo"
+                                        ? "Analizando el dictado. Tarda unos segundos…"
+                                        : motivoNoPropuesta}
+                                </p>
+                            )}
+                            {propuesta && !confirmandoRehacer ? (
+                                <div className="flex gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => setRevisando(true)}
+                                        className="flex-1 cursor-pointer rounded-xl bg-ink py-3 text-sm font-semibold text-canvas"
+                                    >
+                                        Ver propuesta ({propuesta.lineas.length})
+                                    </button>
+                                    <button
+                                        type="button"
+                                        disabled={Boolean(motivoNoPropuesta) || generacion !== null}
+                                        onClick={() => setConfirmandoRehacer(true)}
+                                        className="shrink-0 cursor-pointer rounded-xl border border-hairline px-3 py-3 text-sm text-ink disabled:opacity-40"
+                                    >
+                                        Rehacer con IA
+                                    </button>
+                                </div>
+                            ) : (
+                                <>
+                                    {confirmandoRehacer && (
+                                        <p className="mb-2 text-center text-xs text-amber-700 dark:text-amber-400">
+                                            Se sustituirán las partidas y los cambios que hayas hecho en la revisión.
+                                        </p>
+                                    )}
+                                    <div className="flex gap-2">
+                                        {confirmandoRehacer && (
+                                            <button
+                                                type="button"
+                                                onClick={() => setConfirmandoRehacer(false)}
+                                                className="shrink-0 cursor-pointer rounded-xl border border-hairline px-4 py-3 text-sm text-ink"
+                                            >
+                                                Cancelar
+                                            </button>
+                                        )}
+                                        <button
+                                            type="button"
+                                            onClick={generarPropuestaIA}
+                                            disabled={Boolean(motivoNoPropuesta) || generacion !== null}
+                                            className={`flex-1 rounded-xl bg-ink py-3 text-sm font-semibold text-canvas transition ${
+                                                motivoNoPropuesta || generacion ? "cursor-not-allowed opacity-40" : "cursor-pointer"
+                                            }`}
+                                        >
+                                            {generacion?.fase === "extrayendo"
+                                                ? "Generando propuesta..."
+                                                : confirmandoRehacer
+                                                  ? "Sí, rehacer la propuesta"
+                                                  : "Generar propuesta con IA"}
+                                        </button>
+                                    </div>
+                                </>
+                            )}
+                        </>
+                    )}
                 </div>
                 </>
             )}

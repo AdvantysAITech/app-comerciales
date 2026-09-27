@@ -42,7 +42,23 @@ export async function POST(
         return NextResponse.json({ error: "Cuerpo de la petición inválido" }, { status: 400 });
     }
 
-    const saneado = sanearAjustes(cuerpo);
+    // La visita se lee antes de sanear: sus partidas de fuera de la tarifa
+    // (CYPE, manuales) también se pueden ajustar.
+    let payload;
+    try {
+        payload = await leerPayloadVisita(subcuenta, oportunidadId);
+    } catch (error) {
+        const mensaje = error instanceof Error ? error.message : "Error desconocido";
+        return NextResponse.json({ error: mensaje }, { status: 500 });
+    }
+    if (!payload) {
+        return NextResponse.json({ error: "La oportunidad no tiene datos de visita guardados." }, { status: 404 });
+    }
+    const codigosDeLaVisita = new Set(
+        payload.modulos.flatMap((m) => m.partidas).flatMap((p) => (p.linea ? [p.linea.codigo.toUpperCase()] : []))
+    );
+
+    const saneado = sanearAjustes(cuerpo, codigosDeLaVisita);
     if (!saneado.ok) {
         return NextResponse.json(
             {
@@ -55,14 +71,6 @@ export async function POST(
     }
 
     try {
-        const payload = await leerPayloadVisita(subcuenta, oportunidadId);
-        if (!payload) {
-            return NextResponse.json(
-                { error: "La oportunidad no tiene datos de visita guardados." },
-                { status: 404 }
-            );
-        }
-
         const previos = await leerAjustes(subcuenta, oportunidadId);
 
         const ajustes: AjustesPresupuesto = {

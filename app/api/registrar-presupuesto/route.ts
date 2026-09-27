@@ -9,6 +9,8 @@ import {
 import { oportunidadAutorizada } from "@/lib/permisos";
 import { validarSeleccion } from "@/lib/visita/seleccion";
 import { almacenDisponible, eliminarBorrador } from "@/lib/borradores/almacen";
+import { validarPropuesta } from "@/lib/propuesta/validar";
+import type { Propuesta } from "@/lib/propuesta/tipos";
 
 /**
  * Hasta 60 s en Vercel (24/09/2026). Sin esto vale el límite por defecto de
@@ -60,16 +62,30 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: `Faltan datos: ${faltan.join(", ")}` }, { status: 400 });
     }
 
-    // La misma validación que el formulario, repetida en servidor (24/09/2026).
-    // Sin ella, una petición con una partida sin medir (un formulario viejo en
-    // caché, un fallo del cliente) se registraba y esa partida desaparecía del
-    // presupuesto sin aviso.
-    const errores = validarSeleccion(subcuenta, entrada.modulosElegidos, entrada.seleccion ?? {});
-    if (errores.length > 0) {
-        return NextResponse.json(
-            { error: `Revisa las partidas: ${errores.map((e) => e.mensaje).join(" · ")}` },
-            { status: 422 }
-        );
+    // Flujo con IA (27/09/2026): las partidas vienen de la propuesta revisada
+    // por el comercial. Se valida aquí, en servidor, que todas son calculables.
+    let propuesta: Propuesta | null = null;
+    if (entrada.propuesta) {
+        const validacion = validarPropuesta(entrada.propuesta, entrada.modulosElegidos);
+        if (!validacion.ok) {
+            return NextResponse.json(
+                { error: `Revisa las partidas: ${validacion.errores.join(" · ")}` },
+                { status: 422 }
+            );
+        }
+        propuesta = validacion.propuesta;
+    } else {
+        // La misma validación que el formulario, repetida en servidor (24/09/2026).
+        // Sin ella, una petición con una partida sin medir (un formulario viejo en
+        // caché, un fallo del cliente) se registraba y esa partida desaparecía del
+        // presupuesto sin aviso.
+        const errores = validarSeleccion(subcuenta, entrada.modulosElegidos, entrada.seleccion ?? {});
+        if (errores.length > 0) {
+            return NextResponse.json(
+                { error: `Revisa las partidas: ${errores.map((e) => e.mensaje).join(" · ")}` },
+                { status: 422 }
+            );
+        }
     }
 
     // Datos tomados sobre una oportunidad en "Visita concertada".
@@ -125,6 +141,8 @@ export async function POST(request: NextRequest) {
             modulosElegidos: entrada.modulosElegidos,
             seleccion: entrada.seleccion ?? {},
             fotosPorModulo: entrada.fotosPorModulo ?? {},
+            propuesta,
+            dictadoPorModulo: entrada.dictadoPorModulo ?? {},
         }, sesion.usuarioGhl ?? null, oportunidadExistente);
 
         // El borrador de la app ya está en GHL: se elimina (27/09/2026). Si falla,

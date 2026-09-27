@@ -1,5 +1,6 @@
 import type { SeleccionVisita } from "./seleccion";
 import type { DocumentoAdjunto } from "@/lib/documentos/tipos";
+import type { Propuesta } from "@/lib/propuesta/tipos";
 
 /**
  * Borrador del presupuesto guardado en el propio dispositivo.
@@ -30,6 +31,10 @@ export type BorradorPresupuesto = {
      * localStorage, pero un PDF de proyecto reventaría la cuota al instante.
      */
     documentosPorModulo: Record<string, DocumentoAdjunto[]>;
+    /** Dictado de trabajos y medidas por tipo de trabajo (flujo con IA, 27/09/2026). */
+    dictadoPorModulo: Record<string, string>;
+    /** Propuesta de partidas de la IA, con lo que el comercial haya corregido. */
+    propuesta: Propuesta | null;
 };
 
 export type DatosBorrador = Omit<BorradorPresupuesto, "version" | "guardadoEn">;
@@ -51,7 +56,8 @@ export function tieneContenido(datos: DatosBorrador): boolean {
         // En el módulo Proyectos no hay partidas ni módulos con árbol: el único
         // contenido puede ser el BC3 que acaba de subir. Sin esta comprobación
         // ese borrador se consideraría vacío y no se autoguardaría.
-        Object.values(datos.documentosPorModulo).some((docs) => docs.length > 0)
+        Object.values(datos.documentosPorModulo).some((docs) => docs.length > 0) ||
+        Object.values(datos.dictadoPorModulo ?? {}).some((d) => d.trim() !== "")
     );
 }
 
@@ -140,6 +146,13 @@ export function normalizarDatos(bruto: unknown): DatosBorrador {
             string,
             DocumentoAdjunto[]
         >,
+        dictadoPorModulo: esObjeto(d.dictadoPorModulo)
+            ? Object.fromEntries(
+                  Object.entries(d.dictadoPorModulo).filter((e): e is [string, string] => typeof e[1] === "string")
+              )
+            : {},
+        propuesta:
+            esObjeto(d.propuesta) && Array.isArray(d.propuesta.lineas) ? (d.propuesta as unknown as Propuesta) : null,
     };
 }
 
