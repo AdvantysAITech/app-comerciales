@@ -6,6 +6,7 @@ import { BuscadorPartidas } from "@/components/forms/BuscadorPartidas";
 import { SubidorFotos } from "@/components/forms/SubidorFotos";
 import { SubidorDocumentos } from "@/components/forms/SubidorDocumentos";
 import { AltaAdministrador, AltaComunidad } from "@/components/forms/AltaRapida";
+import { PasoFinca } from "@/components/forms/PasoFinca";
 import type { Rol } from "@/lib/roles";
 import { getModulos, type ModuloTrabajo } from "@/lib/catalogo";
 import { filtrarSinPrecio } from "@/lib/catalogo/disponibilidad";
@@ -125,6 +126,14 @@ export function FormularioPresupuesto({
     const [listaComunidades, setListaComunidades] = useState<ComunidadListado[]>(comunidades);
     const [listaAdministradores, setListaAdministradores] = useState<AdministradorListado[]>(administradores);
     const [alta, setAlta] = useState<"administrador" | "comunidad" | null>(null);
+    /** Lo tecleado en el buscador del paso de la finca, para no reescribirlo en el alta. */
+    const [nombreAlta, setNombreAlta] = useState("");
+    /**
+     * Paso previo "¿Qué finca vas a visitar?". Visita nueva: se empieza por ahí.
+     * Desde una oportunidad en "Visita concertada" la finca ya viene del CRM y
+     * se salta (con "Cambiar" para volver).
+     */
+    const [eligiendoFinca, setEligiendoFinca] = useState(!oportunidadOrigen);
 
     const [nombreComunidad, setNombreComunidad] = useState(inicial.nombreComunidad);
     const [comunidadElegidaId, setComunidadElegidaId] = useState<string | null>(null);
@@ -201,6 +210,8 @@ export function FormularioPresupuesto({
             setFotosPorModulo(borrador.fotosPorModulo);
             setDocumentosPorModulo(borrador.documentosPorModulo ?? {});
             setBorradorRecuperado(borrador.guardadoEn);
+            // Un borrador con finca ya elegida vuelve directo al formulario.
+            if (borrador.nombreComunidad.trim() !== "") setEligiendoFinca(false);
         }
 
         rehidratado.current = true;
@@ -213,12 +224,6 @@ export function FormularioPresupuesto({
         const id = setTimeout(() => guardarBorrador(claveLocal, datosActuales), RETARDO_AUTOGUARDADO);
         return () => clearTimeout(id);
     }, [claveLocal, datosActuales]);
-
-    const sugerencias = useMemo(() => {
-        const texto = normalizarNombre(nombreComunidad);
-        if (texto.length < 2) return [];
-        return listaComunidades.filter((c) => normalizarNombre(c.nombreDireccion).includes(texto)).slice(0, 5);
-    }, [listaComunidades, nombreComunidad]);
 
     const comunidadElegida = listaComunidades.find((c) => c.id === comunidadElegidaId);
 
@@ -281,10 +286,11 @@ export function FormularioPresupuesto({
         });
     }
 
-    function elegirSugerencia(comunidad: ComunidadListado) {
+    function elegirComunidad(comunidad: ComunidadListado) {
         setComunidadElegidaId(comunidad.id);
         setNombreComunidad(comunidad.nombreDireccion);
         if (comunidad.administradorId) setAdministradorId(comunidad.administradorId);
+        setEligiendoFinca(false);
     }
 
     /**
@@ -305,9 +311,7 @@ export function FormularioPresupuesto({
         setListaComunidades((anterior) =>
             anterior.some((c) => c.id === comunidad.id) ? anterior : [...anterior, comunidad]
         );
-        setComunidadElegidaId(comunidad.id);
-        setNombreComunidad(comunidad.nombreDireccion);
-        if (comunidad.administradorId) setAdministradorId(comunidad.administradorId);
+        elegirComunidad(comunidad);
         setAlta(null);
     }
 
@@ -325,6 +329,7 @@ export function FormularioPresupuesto({
         setFotosPorModulo({});
         setDocumentosPorModulo({});
         setBorradorRecuperado(null);
+        setEligiendoFinca(!oportunidadOrigen);
     }
 
     // La transcripcion se ANADE a lo ya escrito, nunca lo sustituye: borrar
@@ -460,317 +465,306 @@ export function FormularioPresupuesto({
                 <h1 className="mb-5 text-xl font-semibold text-ink sm:text-2xl">Nuevo presupuesto</h1>
             )}
 
-            {borradorRecuperado && (
-                <div className="mb-3 flex items-center justify-between gap-3 rounded-2xl border border-hairline bg-ink/[0.04] px-4 py-3">
-                    <p className="text-xs text-muted">
-                        Borrador recuperado ({describirAntiguedad(borradorRecuperado)})
-                    </p>
-                    <button
-                        type="button"
-                        onClick={descartarBorrador}
-                        className="shrink-0 cursor-pointer rounded-lg border border-hairline px-2.5 py-1.5 text-xs font-medium text-ink transition hover:bg-canvas"
-                    >
-                        Empezar de cero
-                    </button>
-                </div>
-            )}
-
-            <div className="flex flex-col gap-3">
-                <section className={ESTILO_SECCION}>
-                    <p className={ESTILO_TITULO}>Datos generales</p>
-
-                    <div className="flex flex-col gap-3">
-                        <div>
-                            <div className="mb-1.5 flex items-center justify-between gap-2">
-                                <span className="text-xs text-muted">Comunidad</span>
-                                <button
-                                    type="button"
-                                    onClick={() => setAlta("comunidad")}
-                                    className="cursor-pointer rounded-lg border border-hairline px-2 py-1 text-[11px] text-ink transition hover:border-ink/30"
-                                >
-                                    + Nueva
-                                </button>
-                            </div>
-                            <input
-                                type="text"
-                                aria-label="Comunidad"
-                                value={nombreComunidad}
-                                onChange={(e) => {
-                                    setNombreComunidad(e.target.value);
-                                    setComunidadElegidaId(null);
-                                }}
-                                placeholder="C/ Islas Canarias, 180"
-                                className={ESTILO_CAMPO}
-                            />
-
-                            {!comunidadElegida && sugerencias.length > 0 && (
-                                <div className="mt-1.5 flex flex-col gap-1">
-                                    {sugerencias.map((c) => (
-                                        <button
-                                            key={c.id}
-                                            type="button"
-                                            onClick={() => elegirSugerencia(c)}
-                                            className="cursor-pointer rounded-lg border border-hairline px-3 py-2 text-left text-sm text-ink transition hover:border-ink/30"
-                                        >
-                                            {c.nombreDireccion}
-                                        </button>
-                                    ))}
-                                </div>
-                            )}
-
-                            {comunidadElegida && (
-                                <p className="mt-1.5 text-xs text-muted">Comunidad existente seleccionada</p>
-                            )}
-
-                            {seCrearaComunidad && (
-                                <p className="mt-1.5 text-xs text-muted">
-                                    No consta en la base de datos: se creará al guardar
-                                </p>
-                            )}
-                        </div>
-
-                        <div>
-                            <div className="mb-1.5 flex items-center justify-between gap-2">
-                                <span className="text-xs text-muted">Administrador</span>
-                                <button
-                                    type="button"
-                                    onClick={() => setAlta("administrador")}
-                                    className="cursor-pointer rounded-lg border border-hairline px-2 py-1 text-[11px] text-ink transition hover:border-ink/30"
-                                >
-                                    + Nuevo
-                                </button>
-                            </div>
-                            <select
-                                aria-label="Administrador"
-                                value={administradorId}
-                                onChange={(e) => setAdministradorId(e.target.value)}
-                                className={`${ESTILO_CAMPO} cursor-pointer`}
-                            >
-                                <option value="">-- Sin administrador --</option>
-                                {listaAdministradores.map((a) => (
-                                    <option key={a.id} value={a.id}>
-                                        {a.nombreDespacho ?? "(sin nombre)"}
-                                    </option>
-                                ))}
-                            </select>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-3">
-                            <label>
-                                <span className={ESTILO_LABEL}>Contacto</span>
-                                <input
-                                    type="text"
-                                    value={contacto}
-                                    onChange={(e) => setContacto(e.target.value)}
-                                    placeholder="Nombre"
-                                    className={ESTILO_CAMPO}
-                                />
-                            </label>
-
-                            <label>
-                                <span className={ESTILO_LABEL}>Teléfono</span>
-                                <input
-                                    type="tel"
-                                    inputMode="tel"
-                                    value={telefono}
-                                    onChange={(e) => setTelefono(e.target.value)}
-                                    placeholder="600 000 000"
-                                    className={ESTILO_CAMPO}
-                                />
-                            </label>
-                        </div>
-
-                        <label>
-                            <span className={ESTILO_LABEL}>Fecha de la visita</span>
-                            <input
-                                type="date"
-                                value={fecha}
-                                onChange={(e) => setFecha(e.target.value)}
-                                className={`${ESTILO_CAMPO} cursor-pointer`}
-                            />
-                        </label>
-
-                        {/* Observaciones a teclado.
-                            La grabadora de voz (GrabadorVoz + Gemini) está
-                            RETIRADA de la interfaz desde el 21/09/2026 por los
-                            problemas de lentitud y de errores sin mensaje. El
-                            componente y la ruta /api/transcribir-audio siguen en
-                            el repo para poder volver a enchufarlos, pero hoy no
-                            los usa nadie.
-
-                            El dictado sigue estando disponible: es el del
-                            teclado del móvil, que transcribe sobre el propio
-                            campo mientras el comercial habla, sin subida de
-                            audio ni espera. `rows` sube a 5 porque ahora todo se
-                            escribe aquí. */}
-                        <div>
-                            <label>
-                                <span className={ESTILO_LABEL}>Observaciones</span>
-                                <textarea
-                                    value={observaciones}
-                                    onChange={(e) => setObservaciones(e.target.value)}
-                                    rows={5}
-                                    placeholder="Accesos, incidencias, lo que convenga recordar..."
-                                    className={`${ESTILO_CAMPO} resize-none`}
-                                    disabled={enviando}
-                                />
-                            </label>
-                            <p className="mt-1.5 text-xs text-muted">
-                                Puedes dictarlo con el micrófono del teclado del móvil.
-                            </p>
-                        </div>
+            {eligiendoFinca ? (
+                <PasoFinca
+                    comunidades={listaComunidades}
+                    administradores={listaAdministradores}
+                    actual={nombreComunidad.trim() || null}
+                    onElegir={elegirComunidad}
+                    onCrearComunidad={(nombre) => {
+                        setNombreAlta(nombre);
+                        setAlta("comunidad");
+                    }}
+                    onCrearAdministrador={() => setAlta("administrador")}
+                    onCancelar={() => setEligiendoFinca(false)}
+                />
+            ) : (
+                <>
+                {borradorRecuperado && (
+                    <div className="mb-3 flex items-center justify-between gap-3 rounded-2xl border border-hairline bg-ink/[0.04] px-4 py-3">
+                        <p className="text-xs text-muted">
+                            Borrador recuperado ({describirAntiguedad(borradorRecuperado)})
+                        </p>
+                        <button
+                            type="button"
+                            onClick={descartarBorrador}
+                            className="shrink-0 cursor-pointer rounded-lg border border-hairline px-2.5 py-1.5 text-xs font-medium text-ink transition hover:bg-canvas"
+                        >
+                            Empezar de cero
+                        </button>
                     </div>
-                </section>
-
-                <section className={ESTILO_SECCION}>
-                    <p className={ESTILO_TITULO}>Tipo de trabajo</p>
-
-                    <div className="flex flex-wrap gap-2">
-                        {modulos.map((modulo) => {
-                            const elegido = modulosElegidos.includes(modulo.key);
-                            const n = conteo[modulo.key] ?? 0;
-                            return (
-                                <button
-                                    key={modulo.key}
-                                    type="button"
-                                    onClick={() => alternarModulo(modulo)}
-                                    aria-pressed={elegido}
-                                    className={`flex min-h-11 cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-sm transition ${
-                                        elegido
-                                            ? "border-ink/30 bg-ink/[0.04] font-medium text-ink"
-                                            : "border-hairline text-ink hover:border-ink/20"
-                                    }`}
-                                >
-                                    {modulo.label}
-                                    {elegido && n > 0 && (
-                                        <span className="rounded-full border border-hairline px-1.5 text-[11px] text-muted">
-                                            {n}
-                                        </span>
-                                    )}
-                                </button>
-                            );
-                        })}
-                    </div>
-                </section>
-
-                {modulosElegidos.map((key) => {
-                    const modulo = modulos.find((m) => m.key === key);
-                    if (!modulo) return null;
-
-                    return (
-                        <section key={key} className={ESTILO_SECCION}>
-                            <p className={ESTILO_TITULO}>{modulo.label}</p>
-
-                            {modulo.captura === "arbol" ? (
-                                <SelectorArbol
-                                    subcuenta={subcuenta}
-                                    modulo={modulo}
-                                    seleccion={seleccion}
-                                    onSeleccionChange={setSeleccion}
-                                />
-                            ) : modulo.captura === "buscador" ? (
-                                <BuscadorPartidas
-                                    subcuenta={subcuenta}
-                                    modulo={modulo}
-                                    seleccion={seleccion}
-                                    onSeleccionChange={setSeleccion}
-                                />
-                            ) : modulo.captura === "importacion" ? (
-                                <SubidorDocumentos
-                                    documentos={documentosPorModulo[key] ?? []}
-                                    onDocumentosChange={(docs) =>
-                                        setDocumentosPorModulo((anterior) => ({ ...anterior, [key]: docs }))
-                                    }
-                                    disabled={enviando}
-                                />
-                            ) : (
-                                <p className="rounded-xl border border-dashed border-hairline px-3 py-4 text-center text-xs text-muted">
-                                    Módulo sin estructura definida todavía
-                                </p>
-                            )}
-
-                            <div className="mt-4 border-t border-hairline pt-4">
-                                <SubidorFotos
-                                    fotos={fotosPorModulo[key] ?? []}
-                                    onFotosChange={(fotos) =>
-                                        setFotosPorModulo((anterior) => ({ ...anterior, [key]: fotos }))
-                                    }
-                                    minimo={minimoFotos(key)}
-                                />
-                            </div>
-                        </section>
-                    );
-                })}
-
-                {alertas.length > 0 && (
-                    <section className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4">
-                        <p className={ESTILO_TITULO}>Requiere atención</p>
-                        <ul className="flex flex-col gap-1.5">
-                            {alertas.map((a) => (
-                                <li key={a.ruta} className="text-xs text-amber-700 dark:text-amber-400">
-                                    <span className="font-medium">{a.moduloLabel}:</span> {a.alerta}
-                                </li>
-                            ))}
-                        </ul>
-                    </section>
                 )}
 
-                {(partidas.length > 0 || errores.length > 0) && (
+                <div className="flex flex-col gap-3">
                     <section className={ESTILO_SECCION}>
-                        <p className={ESTILO_TITULO}>Resumen ({partidas.length} partidas)</p>
+                        <p className={ESTILO_TITULO}>Datos generales</p>
 
-                        <div className="flex flex-col gap-1.5">
-                            {partidas.map((p) => (
-                                <div
-                                    key={p.ruta}
-                                    className="flex items-baseline justify-between gap-3 border-b border-hairline pb-1.5 last:border-0"
-                                >
-                                    <span className="text-xs text-ink">
-                                        <span className="text-muted">{p.moduloLabel} · </span>
-                                        {p.caminoLabels.join(" › ")}
-                                    </span>
-                                    <span className="shrink-0 text-xs text-muted">
-                                        {p.cantidad !== undefined ? `${p.cantidad} ${p.unidad ?? ""}` : "sin medir"}
+                        <div className="flex flex-col gap-3">
+                            {/* La comunidad ya no se teclea aquí: se elige o se crea en el
+                                paso previo (PasoFinca). Aquí solo se ve y se puede cambiar. */}
+                            <div className="flex items-start justify-between gap-3 rounded-xl border border-hairline bg-canvas px-3 py-2.5">
+                                <div className="min-w-0">
+                                    <span className="block text-xs text-muted">Comunidad</span>
+                                    <span className="mt-0.5 block text-sm text-ink">{nombreComunidad}</span>
+                                    <span className="mt-0.5 block text-[11px] text-muted">
+                                        {seCrearaComunidad
+                                            ? "No consta en el CRM: se creará al guardar"
+                                            : "Comunidad del CRM"}
                                     </span>
                                 </div>
-                            ))}
-                        </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setEligiendoFinca(true)}
+                                    className="shrink-0 cursor-pointer rounded-lg border border-hairline px-2 py-1 text-[11px] text-ink transition hover:border-ink/30"
+                                >
+                                    Cambiar
+                                </button>
+                            </div>
 
-                        {errores.length > 0 && (
-                            <ul className="mt-3 flex flex-col gap-1 border-t border-hairline pt-3">
-                                {errores.map((e) => (
-                                    <li key={e.ruta} className="text-xs text-red-600 dark:text-red-400">
-                                        {e.mensaje}
+                            <div>
+                                <div className="mb-1.5 flex items-center justify-between gap-2">
+                                    <span className="text-xs text-muted">Administrador</span>
+                                    <button
+                                        type="button"
+                                        onClick={() => setAlta("administrador")}
+                                        className="cursor-pointer rounded-lg border border-hairline px-2 py-1 text-[11px] text-ink transition hover:border-ink/30"
+                                    >
+                                        + Nuevo
+                                    </button>
+                                </div>
+                                <select
+                                    aria-label="Administrador"
+                                    value={administradorId}
+                                    onChange={(e) => setAdministradorId(e.target.value)}
+                                    className={`${ESTILO_CAMPO} cursor-pointer`}
+                                >
+                                    <option value="">-- Sin administrador --</option>
+                                    {listaAdministradores.map((a) => (
+                                        <option key={a.id} value={a.id}>
+                                            {a.nombreDespacho ?? "(sin nombre)"}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-3">
+                                <label>
+                                    <span className={ESTILO_LABEL}>Contacto</span>
+                                    <input
+                                        type="text"
+                                        value={contacto}
+                                        onChange={(e) => setContacto(e.target.value)}
+                                        placeholder="Nombre"
+                                        className={ESTILO_CAMPO}
+                                    />
+                                </label>
+
+                                <label>
+                                    <span className={ESTILO_LABEL}>Teléfono</span>
+                                    <input
+                                        type="tel"
+                                        inputMode="tel"
+                                        value={telefono}
+                                        onChange={(e) => setTelefono(e.target.value)}
+                                        placeholder="600 000 000"
+                                        className={ESTILO_CAMPO}
+                                    />
+                                </label>
+                            </div>
+
+                            <label>
+                                <span className={ESTILO_LABEL}>Fecha de la visita</span>
+                                <input
+                                    type="date"
+                                    value={fecha}
+                                    onChange={(e) => setFecha(e.target.value)}
+                                    className={`${ESTILO_CAMPO} cursor-pointer`}
+                                />
+                            </label>
+
+                            {/* Observaciones a teclado.
+                                La grabadora de voz (GrabadorVoz + Gemini) está
+                                RETIRADA de la interfaz desde el 21/09/2026 por los
+                                problemas de lentitud y de errores sin mensaje. El
+                                componente y la ruta /api/transcribir-audio siguen en
+                                el repo para poder volver a enchufarlos, pero hoy no
+                                los usa nadie.
+
+                                El dictado sigue estando disponible: es el del
+                                teclado del móvil, que transcribe sobre el propio
+                                campo mientras el comercial habla, sin subida de
+                                audio ni espera. `rows` sube a 5 porque ahora todo se
+                                escribe aquí. */}
+                            <div>
+                                <label>
+                                    <span className={ESTILO_LABEL}>Observaciones</span>
+                                    <textarea
+                                        value={observaciones}
+                                        onChange={(e) => setObservaciones(e.target.value)}
+                                        rows={5}
+                                        placeholder="Accesos, incidencias, lo que convenga recordar..."
+                                        className={`${ESTILO_CAMPO} resize-none`}
+                                        disabled={enviando}
+                                    />
+                                </label>
+                                <p className="mt-1.5 text-xs text-muted">
+                                    Puedes dictarlo con el micrófono del teclado del móvil.
+                                </p>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section className={ESTILO_SECCION}>
+                        <p className={ESTILO_TITULO}>Tipo de trabajo</p>
+
+                        <div className="flex flex-wrap gap-2">
+                            {modulos.map((modulo) => {
+                                const elegido = modulosElegidos.includes(modulo.key);
+                                const n = conteo[modulo.key] ?? 0;
+                                return (
+                                    <button
+                                        key={modulo.key}
+                                        type="button"
+                                        onClick={() => alternarModulo(modulo)}
+                                        aria-pressed={elegido}
+                                        className={`flex min-h-11 cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-sm transition ${
+                                            elegido
+                                                ? "border-ink/30 bg-ink/[0.04] font-medium text-ink"
+                                                : "border-hairline text-ink hover:border-ink/20"
+                                        }`}
+                                    >
+                                        {modulo.label}
+                                        {elegido && n > 0 && (
+                                            <span className="rounded-full border border-hairline px-1.5 text-[11px] text-muted">
+                                                {n}
+                                            </span>
+                                        )}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </section>
+
+                    {modulosElegidos.map((key) => {
+                        const modulo = modulos.find((m) => m.key === key);
+                        if (!modulo) return null;
+
+                        return (
+                            <section key={key} className={ESTILO_SECCION}>
+                                <p className={ESTILO_TITULO}>{modulo.label}</p>
+
+                                {modulo.captura === "arbol" ? (
+                                    <SelectorArbol
+                                        subcuenta={subcuenta}
+                                        modulo={modulo}
+                                        seleccion={seleccion}
+                                        onSeleccionChange={setSeleccion}
+                                    />
+                                ) : modulo.captura === "buscador" ? (
+                                    <BuscadorPartidas
+                                        subcuenta={subcuenta}
+                                        modulo={modulo}
+                                        seleccion={seleccion}
+                                        onSeleccionChange={setSeleccion}
+                                    />
+                                ) : modulo.captura === "importacion" ? (
+                                    <SubidorDocumentos
+                                        documentos={documentosPorModulo[key] ?? []}
+                                        onDocumentosChange={(docs) =>
+                                            setDocumentosPorModulo((anterior) => ({ ...anterior, [key]: docs }))
+                                        }
+                                        disabled={enviando}
+                                    />
+                                ) : (
+                                    <p className="rounded-xl border border-dashed border-hairline px-3 py-4 text-center text-xs text-muted">
+                                        Módulo sin estructura definida todavía
+                                    </p>
+                                )}
+
+                                <div className="mt-4 border-t border-hairline pt-4">
+                                    <SubidorFotos
+                                        fotos={fotosPorModulo[key] ?? []}
+                                        onFotosChange={(fotos) =>
+                                            setFotosPorModulo((anterior) => ({ ...anterior, [key]: fotos }))
+                                        }
+                                        minimo={minimoFotos(key)}
+                                    />
+                                </div>
+                            </section>
+                        );
+                    })}
+
+                    {alertas.length > 0 && (
+                        <section className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4">
+                            <p className={ESTILO_TITULO}>Requiere atención</p>
+                            <ul className="flex flex-col gap-1.5">
+                                {alertas.map((a) => (
+                                    <li key={a.ruta} className="text-xs text-amber-700 dark:text-amber-400">
+                                        <span className="font-medium">{a.moduloLabel}:</span> {a.alerta}
                                     </li>
                                 ))}
                             </ul>
-                        )}
-                    </section>
-                )}
+                        </section>
+                    )}
 
-                {errorEnvio && (
-                    <section className="rounded-2xl border border-red-500/30 bg-red-500/10 p-4">
-                        <p className="text-xs text-red-700 dark:text-red-400">{errorEnvio}</p>
-                        <p className="mt-1 text-[11px] text-muted">
-                            La visita sigue guardada en el borrador: puedes reintentar sin recapturar nada.
-                        </p>
-                    </section>
-                )}
-            </div>
+                    {(partidas.length > 0 || errores.length > 0) && (
+                        <section className={ESTILO_SECCION}>
+                            <p className={ESTILO_TITULO}>Resumen ({partidas.length} partidas)</p>
 
-            <div className="sticky bottom-24 z-30 mt-4 rounded-2xl border border-hairline bg-canvas/95 p-3 backdrop-blur-md">
-                {motivoBloqueo && <p className="mb-2 text-center text-xs text-muted">{motivoBloqueo}</p>}
-                <button
-                    type="button"
-                    onClick={enviar}
-                    disabled={!puedeEnviar}
-                    className={`w-full rounded-xl bg-ink py-3 text-sm font-semibold text-canvas transition ${
-                        puedeEnviar ? "cursor-pointer" : "cursor-not-allowed opacity-40"
-                    }`}
-                >
-                    {enviando ? "Enviando..." : "Enviar presupuesto"}
-                </button>
-            </div>
+                            <div className="flex flex-col gap-1.5">
+                                {partidas.map((p) => (
+                                    <div
+                                        key={p.ruta}
+                                        className="flex items-baseline justify-between gap-3 border-b border-hairline pb-1.5 last:border-0"
+                                    >
+                                        <span className="text-xs text-ink">
+                                            <span className="text-muted">{p.moduloLabel} · </span>
+                                            {p.caminoLabels.join(" › ")}
+                                        </span>
+                                        <span className="shrink-0 text-xs text-muted">
+                                            {p.cantidad !== undefined ? `${p.cantidad} ${p.unidad ?? ""}` : "sin medir"}
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
+
+                            {errores.length > 0 && (
+                                <ul className="mt-3 flex flex-col gap-1 border-t border-hairline pt-3">
+                                    {errores.map((e) => (
+                                        <li key={e.ruta} className="text-xs text-red-600 dark:text-red-400">
+                                            {e.mensaje}
+                                        </li>
+                                    ))}
+                                </ul>
+                            )}
+                        </section>
+                    )}
+
+                    {errorEnvio && (
+                        <section className="rounded-2xl border border-red-500/30 bg-red-500/10 p-4">
+                            <p className="text-xs text-red-700 dark:text-red-400">{errorEnvio}</p>
+                            <p className="mt-1 text-[11px] text-muted">
+                                La visita sigue guardada en el borrador: puedes reintentar sin recapturar nada.
+                            </p>
+                        </section>
+                    )}
+                </div>
+
+                <div className="sticky bottom-24 z-30 mt-4 rounded-2xl border border-hairline bg-canvas/95 p-3 backdrop-blur-md">
+                    {motivoBloqueo && <p className="mb-2 text-center text-xs text-muted">{motivoBloqueo}</p>}
+                    <button
+                        type="button"
+                        onClick={enviar}
+                        disabled={!puedeEnviar}
+                        className={`w-full rounded-xl bg-ink py-3 text-sm font-semibold text-canvas transition ${
+                            puedeEnviar ? "cursor-pointer" : "cursor-not-allowed opacity-40"
+                        }`}
+                    >
+                        {enviando ? "Enviando..." : "Enviar presupuesto"}
+                    </button>
+                </div>
+                </>
+            )}
 
             {alta === "administrador" && (
                 <AltaAdministrador
@@ -785,7 +779,7 @@ export function FormularioPresupuesto({
                 <AltaComunidad
                     // Lo que ya haya escrito en el campo se arrastra al modal:
                     // volver a teclear la dirección en obra es tiempo perdido.
-                    nombreInicial={nombreComunidad}
+                    nombreInicial={eligiendoFinca ? nombreAlta : nombreComunidad}
                     existentes={listaComunidades}
                     administradores={listaAdministradores}
                     administradorIdInicial={administradorId}
