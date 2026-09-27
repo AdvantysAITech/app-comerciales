@@ -1,6 +1,7 @@
 import { sesionApp } from "@/lib/sesion";
 import { filtroPropietario, listarOportunidades } from "@/lib/ghl/oportunidades";
-import { ETAPAS_PRESUPUESTO, type ClaveEtapa } from "@/lib/ghl/ids";
+import { ETAPAS_PRESUPUESTO } from "@/lib/ghl/ids";
+import { clasificar } from "@/lib/panel";
 import { PanelPresupuestos } from "@/components/PanelPresupuesto";
 import { SelectorSubcuenta } from "@/components/SelectorSubcuenta";
 
@@ -16,8 +17,9 @@ export default async function DashboardPage() {
     const oportunidades = await listarOportunidades(subcuenta, ETAPAS_PRESUPUESTO, filtroPropietario(sesion));
 
     const total = oportunidades.length;
-    const etapasPorRevisar: readonly ClaveEtapa[] = ["PRESUPUESTO_EN_REVISION", "PRESUPUESTO_ENVIADO", "EN_NEGOCIACION"];
-    const porRevisar = oportunidades.filter((op) => op.etapa !== null && etapasPorRevisar.includes(op.etapa)).length;
+    // Mismo criterio que la etiqueta de las tarjetas (lib/panel.ts): generado y
+    // sin validar por dirección.
+    const porRevisar = oportunidades.filter((op) => clasificar(op).porRevisar).length;
     const ganados = oportunidades.filter((op) => op.etapa === "GANADA").length;
     const perdidos = oportunidades.filter((op) => op.etapa === "PERDIDA").length;
 

@@ -2,12 +2,24 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { estadoVisible, type OportunidadListado } from "@/lib/ghl/oportunidades";
+import type { OportunidadListado } from "@/lib/ghl/oportunidades";
 import { ETAPAS_PRESUPUESTO, NOMBRE_ETAPA } from "@/lib/ghl/ids";
+import { clasificar, type Clasificacion, type Columna, type TonoEtiqueta } from "@/lib/panel";
+
+/**
+ * Panel de presupuestos en dos columnas (27/09/2026): borradores a la izquierda,
+ * documentos generados a la derecha con su etiqueta "Por revisar" / "Revisado".
+ * El reparto vive en lib/panel.ts.
+ *
+ * En el teléfono dos columnas no caben: se ve una y se cambia con el selector
+ * de arriba. Desde `lg` se ven las dos a la vez y el selector desaparece.
+ */
 
 type Props = {
     oportunidades: OportunidadListado[];
 };
+
+type Clasificada = OportunidadListado & { clasificacion: Clasificacion };
 
 const OPCIONES_ETAPA = [
     { value: "todas", label: "Todas las etapas" },
@@ -19,6 +31,17 @@ const OPCIONES_PERIODO = [
     { value: "este-mes", label: "Este mes" },
     { value: "mes-pasado", label: "Mes pasado" },
 ];
+
+const COLUMNAS: { clave: Columna; titulo: string; vacio: string }[] = [
+    { clave: "borrador", titulo: "Borradores", vacio: "Sin borradores" },
+    { clave: "generado", titulo: "Generados", vacio: "Sin presupuestos generados" },
+];
+
+const ESTILO_TONO: Record<TonoEtiqueta, string> = {
+    lleno: "border border-ink bg-ink text-canvas",
+    borde: "border border-ink/40 text-ink",
+    tenue: "border border-hairline text-muted",
+};
 
 function coincidePeriodo(fechaISO: string, periodo: string): boolean {
     if (periodo === "todos") return true;
@@ -36,18 +59,32 @@ export function PanelPresupuestos({ oportunidades }: Props) {
     const [busqueda, setBusqueda] = useState("");
     const [etapa, setEtapa] = useState("todas");
     const [periodo, setPeriodo] = useState("todos");
+    // Solo manda en móvil: en pantalla grande se ven las dos columnas.
+    const [columnaMovil, setColumnaMovil] = useState<Columna>("borrador");
 
-    const filtradas = useMemo(() => {
+    const porColumna = useMemo(() => {
         const texto = busqueda.trim().toLowerCase();
-        return oportunidades.filter((op) => {
+        const grupos: Record<Columna, Clasificada[]> = { borrador: [], generado: [] };
+
+        for (const op of oportunidades) {
             const coincideTexto =
                 texto === "" ||
                 (op.comunidadNombre ?? op.name).toLowerCase().includes(texto) ||
                 (op.administrador.nombre ?? "").toLowerCase().includes(texto);
             const coincideEtapa = etapa === "todas" || op.etapa === etapa;
-            const coincideFecha = coincidePeriodo(op.createdAt, periodo);
-            return coincideTexto && coincideEtapa && coincideFecha;
-        });
+            if (!coincideTexto || !coincideEtapa || !coincidePeriodo(op.createdAt, periodo)) continue;
+
+            const clasificacion = clasificar(op);
+            grupos[clasificacion.columna].push({ ...op, clasificacion });
+        }
+
+        // Dentro de generados, lo que hay que revisar va primero: es lo que el
+        // comercial viene a buscar.
+        grupos.generado.sort(
+            (a, b) => Number(b.clasificacion.porRevisar) - Number(a.clasificacion.porRevisar)
+        );
+
+        return grupos;
     }, [oportunidades, busqueda, etapa, periodo]);
 
     return (
@@ -97,36 +134,87 @@ export function PanelPresupuestos({ oportunidades }: Props) {
                 </div>
             </div>
 
-            {filtradas.length === 0 ? (
-                <p className="mt-6 rounded-2xl border border-dashed border-hairline px-4 py-10 text-center text-sm text-muted">
-                    Sin presupuestos que coincidan con la búsqueda
-                </p>
-            ) : (
-                // 1 columna en móvil (las tarjetas ya no son cuadradas, necesitan más ancho para leerse bien)
-                <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                    {filtradas.map((op) => (
-                        <Link
-                            key={op.id}
-                            href={`/oportunidades/${op.id}`}
-                            className="group rounded-2xl border border-hairline bg-surface p-4 transition hover:border-ink/20"
+            {/* Selector de columna: solo móvil */}
+            <div
+                role="tablist"
+                aria-label="Tipo de presupuesto"
+                className="mt-4 grid grid-cols-2 gap-1 rounded-xl border border-hairline bg-ink/[0.04] p-1 lg:hidden"
+            >
+                {COLUMNAS.map((c) => {
+                    const activa = columnaMovil === c.clave;
+                    return (
+                        <button
+                            key={c.clave}
+                            type="button"
+                            role="tab"
+                            aria-selected={activa}
+                            onClick={() => setColumnaMovil(c.clave)}
+                            className={`cursor-pointer rounded-lg py-2 text-sm transition ${
+                                activa ? "bg-surface font-medium text-ink shadow-sm" : "text-muted"
+                            }`}
                         >
-                            <p className="line-clamp-2 font-medium text-ink">{op.comunidadNombre ?? op.name}</p>
-                            <p className="mt-1 text-xs text-muted">
-                                {op.modeloNegocio ?? "Sin modelo asignado"} · {op.administrador.nombre ?? "Sin administrador"}
+                            {c.titulo} ({porColumna[c.clave].length})
+                        </button>
+                    );
+                })}
+            </div>
+
+            <div className="mt-4 grid grid-cols-1 gap-6 lg:mt-5 lg:grid-cols-2">
+                {COLUMNAS.map((c) => (
+                    <section
+                        key={c.clave}
+                        aria-label={c.titulo}
+                        className={columnaMovil === c.clave ? "block" : "hidden lg:block"}
+                    >
+                        <h2 className="mb-3 hidden items-baseline gap-2 text-sm font-semibold text-ink lg:flex">
+                            {c.titulo}
+                            <span className="text-xs font-normal text-muted">{porColumna[c.clave].length}</span>
+                        </h2>
+
+                        {porColumna[c.clave].length === 0 ? (
+                            <p className="rounded-2xl border border-dashed border-hairline px-4 py-10 text-center text-sm text-muted">
+                                {c.vacio}
                             </p>
-                            <span
-                                className={`mt-3 inline-block rounded-full px-2.5 py-1 text-[11px] font-medium ${
-                                    op.presupuestoValidado
-                                        ? "border border-ink bg-ink text-canvas"
-                                        : "border border-hairline text-ink"
-                                }`}
-                            >
-                                {estadoVisible(op)}
-                            </span>
-                        </Link>
-                    ))}
-                </div>
-            )}
+                        ) : (
+                            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
+                                {porColumna[c.clave].map((op) => (
+                                    <Tarjeta key={op.id} op={op} />
+                                ))}
+                            </div>
+                        )}
+                    </section>
+                ))}
+            </div>
         </div>
+    );
+}
+
+function Tarjeta({ op }: { op: Clasificada }) {
+    const { etiqueta, tono } = op.clasificacion;
+    // La etapa solo se añade cuando dice algo que la etiqueta no dice:
+    // "Revisado" puede estar enviado, en negociación o ganado. Validado pero aún
+    // en "Presupuesto en revisión" (el workflow no lo ha movido) no se detalla:
+    // leer "Revisado · Presupuesto en revisión" confunde.
+    const detalleEtapa =
+        etiqueta === "Revisado" && op.etapa && op.etapa !== "PRESUPUESTO_EN_REVISION"
+            ? NOMBRE_ETAPA[op.etapa]
+            : null;
+
+    return (
+        <Link
+            href={`/oportunidades/${op.id}`}
+            className="group rounded-2xl border border-hairline bg-surface p-4 transition hover:border-ink/20"
+        >
+            <p className="line-clamp-2 font-medium text-ink">{op.comunidadNombre ?? op.name}</p>
+            <p className="mt-1 text-xs text-muted">
+                {op.modeloNegocio ?? "Sin modelo asignado"} · {op.administrador.nombre ?? "Sin administrador"}
+            </p>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+                <span className={`inline-block rounded-full px-2.5 py-1 text-[11px] font-medium ${ESTILO_TONO[tono]}`}>
+                    {etiqueta}
+                </span>
+                {detalleEtapa && <span className="text-[11px] text-muted">{detalleEtapa}</span>}
+            </div>
+        </Link>
     );
 }
