@@ -225,12 +225,35 @@ export function consultaDe(t: Trabajo): ConsultaCype {
     };
 }
 
-/** Pasos 1 y 2. Devuelve la propuesta con las líneas sin casar `pendienteCype`. */
+/**
+ * Presupuesto de tiempo de la ruta /api/propuesta/extraer. Vercel corta a los
+ * 60 s: se deja margen para serializar y responder.
+ */
+const PRESUPUESTO_MS = 54_000;
+
+type ParteModulo = {
+    lineas: LineaPropuesta[];
+    observaciones: string[];
+    sugerencias: string[];
+    fotosAnalizadas: number;
+    avisos: string[];
+};
+
+/**
+ * Pasos 1 y 2. Devuelve la propuesta con las líneas sin casar `pendienteCype`.
+ *
+ * UN TIPO DE TRABAJO POR LLAMADA, TODOS EN PARALELO (27/09/2026). Con los seis
+ * tipos de trabajo de la prueba en una sola llamada (unos 15 trabajos), la
+ * extracción más la elección de tarifa se iban a 46 s y la ruta caía por
+ * tiempo. Por tipo de trabajo cada llamada es pequeña, el total es el del más
+ * lento y no la suma, y si uno falla los demás salen igual.
+ */
 export async function generarPropuesta(modulos: DictadoModulo[]): Promise<Propuesta> {
+    const limite = Date.now() + PRESUPUESTO_MS;
     const fotos = fotosParaIa(modulos);
     const nFotos = [...fotos.values()].reduce((s, f) => s + f.length, 0);
-    const avisos: string[] = [];
     const totalFotos = modulos.reduce((s, m) => s + (m.fotos?.length ?? 0), 0);
+    const avisos: string[] = [];
     if (totalFotos > nFotos) {
         avisos.push(
             `La IA ha revisado ${nFotos} de ${totalFotos} fotos (máximo ${FOTOS_IA_POR_MODULO} por tipo de trabajo). ` +
@@ -238,41 +261,93 @@ export async function generarPropuesta(modulos: DictadoModulo[]): Promise<Propue
         );
     }
 
+    const resultados = await Promise.allSettled(
+        modulos.map((m) => propuestaDeModulo(m, fotos.get(m.key) ?? [], limite))
+    );
+
+    const partes: ParteModulo[] = [];
+    const fallos: unknown[] = [];
+    resultados.forEach((r, i) => {
+        if (r.status === "fulfilled") {
+            partes.push(r.value);
+            return;
+        }
+        fallos.push(r.reason);
+        const motivo = r.reason instanceof Error ? r.reason.message : "error desconocido";
+        console.error(`[propuesta] ${modulos[i].key}: ${motivo}`);
+        avisos.push(
+            `No se ha podido analizar «${modulos[i].label}» (${motivo}). Pulsa «Rehacer con IA» o añade sus partidas a mano.`
+        );
+    });
+
+    // Si no ha salido NINGÚN tipo de trabajo, es un error de verdad (clave, red,
+    // cuota): se propaga para que el formulario lo enseñe.
+    if (partes.length === 0) throw fallos[0] instanceof Error ? fallos[0] : new Error("No se ha podido generar la propuesta.");
+
+    return {
+        generadaEn: new Date().toISOString(),
+        lineas: partes.flatMap((p) => p.lineas),
+        observaciones: partes.flatMap((p) => p.observaciones),
+        sugerencias: partes.flatMap((p) => p.sugerencias),
+        fotosAnalizadas: partes.reduce((s, p) => s + p.fotosAnalizadas, 0),
+        avisos: [...avisos, ...partes.flatMap((p) => p.avisos)],
+    };
+}
+
+const restante = (limite: number) => limite - Date.now();
+
+async function propuestaDeModulo(m: DictadoModulo, urls: string[], limite: number): Promise<ParteModulo> {
+    const avisos: string[] = [];
+    const inicio = Date.now();
+    const soloDictado = { ...m, fotos: [] };
+
+    // 1. Extracción. Deja como mínimo 12 s para la tarifa.
     let extraccion;
-    let fotosAnalizadas = nFotos;
+    let fotosAnalizadas = urls.length;
     try {
         extraccion = await llamarClaude({
             sistema: PROMPT_EXTRAER,
-            mensaje: nFotos > 0 ? contenidoExtraccion(modulos, fotos) : mensajeExtraccion(modulos),
-            maxTokens: 8000,
-            timeoutMs: nFotos > 0 ? 38_000 : 30_000,
+            mensaje: urls.length > 0 ? contenidoExtraccion([m], new Map([[m.key, urls]])) : mensajeExtraccion([m]),
+            maxTokens: 4000,
+            timeoutMs: Math.max(5_000, restante(limite) - 12_000),
         });
     } catch (error) {
         // Una foto que Anthropic no puede descargar tumba la petición entera. Sin
-        // fotos la propuesta sigue siendo útil: se repite solo con el dictado y
-        // se avisa, en vez de dejar al comercial sin propuesta.
-        if (nFotos === 0) throw error;
-        console.error("[propuesta] extracción con fotos fallida, se repite sin fotos:", error);
-        avisos.push("No se han podido enviar las fotos a la IA: la propuesta sale solo del dictado.");
+        // fotos la propuesta sigue siendo útil: se repite solo con el dictado.
+        if (urls.length === 0 || restante(limite) < 15_000) throw error;
+        console.error(`[propuesta] ${m.key}: extracción con fotos fallida, se repite sin fotos:`, error);
+        avisos.push(`«${m.label}»: no se han podido enviar las fotos a la IA; sale solo del dictado.`);
         fotosAnalizadas = 0;
         extraccion = await llamarClaude({
             sistema: PROMPT_EXTRAER,
-            mensaje: mensajeExtraccion(modulos),
-            maxTokens: 8000,
-            timeoutMs: 20_000,
+            mensaje: mensajeExtraccion([soloDictado]),
+            maxTokens: 4000,
+            timeoutMs: Math.max(5_000, restante(limite) - 8_000),
         });
     }
+    const tExtraccion = Date.now() - inicio;
+
     const { trabajos, observaciones, sugerencias } = sanearExtraccion(
         extraerJson<RespuestaExtraccion>(extraccion.texto),
-        modulos
+        [m]
     );
+    if (trabajos.length === 0) return { lineas: [], observaciones, sugerencias, fotosAnalizadas, avisos };
 
-    if (trabajos.length === 0) {
-        return { generadaEn: new Date().toISOString(), lineas: [], observaciones, sugerencias, fotosAnalizadas, avisos };
-    }
-
+    // 2. Tarifa. Si no da tiempo o falla, no se pierde la propuesta: esas
+    //    líneas se buscan en CYPE y el comercial puede cambiarlas por una de la
+    //    tarifa en la revisión.
     const candidatas = new Map(trabajos.map((t) => [t.id, candidatasTarifa(t)]));
-    const elegidos = await casarConTarifa(trabajos, candidatas);
+    let elegidos = new Map<string, Eleccion>();
+    try {
+        elegidos = await casarConTarifa(trabajos, candidatas, Math.max(3_000, restante(limite)));
+    } catch (error) {
+        console.error(`[propuesta] ${m.key}: elección de tarifa fallida:`, error);
+        avisos.push(`«${m.label}»: no se ha podido comparar con la tarifa; sus partidas se buscan en CYPE.`);
+    }
+    console.info(
+        `[propuesta] ${m.key}: ${trabajos.length} trabajos, ${fotosAnalizadas} fotos, ` +
+            `extracción ${tExtraccion} ms, total ${Date.now() - inicio} ms`
+    );
 
     const lineas: LineaPropuesta[] = trabajos.map((t) => {
         const { cantidad, nota } = medicionDe(t);
@@ -326,14 +401,15 @@ export async function generarPropuesta(modulos: DictadoModulo[]): Promise<Propue
         };
     });
 
-    return { generadaEn: new Date().toISOString(), lineas, observaciones, sugerencias, fotosAnalizadas, avisos };
+    return { lineas, observaciones, sugerencias, fotosAnalizadas, avisos };
 }
 
 type Eleccion = { codigo: string | null; confianza: string; motivo: string };
 
 async function casarConTarifa(
     trabajos: Trabajo[],
-    candidatas: Map<string, PartidaTarifa[]>
+    candidatas: Map<string, PartidaTarifa[]>,
+    timeoutMs: number
 ): Promise<Map<string, Eleccion>> {
     const conCandidatas = trabajos.filter((t) => (candidatas.get(t.id)?.length ?? 0) > 0);
     const elegidos = new Map<string, Eleccion>();
@@ -354,9 +430,8 @@ async function casarConTarifa(
     const respuesta = await llamarClaude({
         sistema: PROMPT_CASAR_TARIFA,
         mensaje,
-        maxTokens: 4000,
-        // Con fotos la extracción se lleva hasta 38 s: esto tiene que caber detrás.
-        timeoutMs: 18_000,
+        maxTokens: 2000,
+        timeoutMs,
     });
     const bruto = extraerJson<{ resultados?: { id?: string; codigo?: string | null; confianza?: string; motivo?: string }[] }>(
         respuesta.texto
