@@ -27,7 +27,7 @@ import {
  *    guardado en la app. Si el borrador sale de una oportunidad, se trata como
  *    la primera entrada. Abrir una oportunidad que ya tiene borrador lo recupera.
  *
- * El formulario antiguo (/visitas/nueva) sigue operativo en produccion.
+ * /visitas/nueva (el formulario antiguo) redirige aquí desde el 27/09/2026.
  */
 export default async function NuevoPresupuestoPage({
     searchParams,
