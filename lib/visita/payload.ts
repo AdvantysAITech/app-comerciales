@@ -291,8 +291,10 @@ export function agruparEnOportunidades(
     payload: PayloadVisita,
     modo: ModoAgrupacion = MODO_AGRUPACION
 ): GrupoOportunidad[] {
-    const conPartidas = payload.modulos.filter((m) => m.partidas.length > 0);
-    if (conPartidas.length === 0) return [];
+    // Un tipo de trabajo sin partidas pero con fotos también viaja (27/09/2026):
+    // sus fotos tienen que salir en el anexo del documento bajo su título.
+    const conPartidas = payload.modulos.filter((m) => m.partidas.length > 0 || m.fotos.length > 0);
+    if (!conPartidas.some((m) => m.partidas.length > 0)) return [];
 
     if (modo === "por_modulo") {
         return conPartidas.map((m) => ({ etiqueta: m.label, modulos: [m] }));

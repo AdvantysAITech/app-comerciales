@@ -670,7 +670,11 @@ export function FormularioPresupuesto({
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    modulos: modulosElegidos.map((key) => ({ key, dictado: dictadoPorModulo[key] ?? "" })),
+                    modulos: modulosElegidos.map((key) => ({
+                        key,
+                        dictado: dictadoPorModulo[key] ?? "",
+                        fotos: fotosPorModulo[key] ?? [],
+                    })),
                 }),
             });
             const cuerpo = await respuesta.json();
@@ -1155,7 +1159,8 @@ export function FormularioPresupuesto({
                                 </label>
                                 <p className="mt-1.5 text-xs text-muted">
                                     Díctalo con el micrófono del teclado: qué hay que hacer, en qué elemento y cuánto
-                                    mide (o la medida total y el % a reparar).
+                                    mide (o la medida total y el % a reparar). La IA también mira las fotos de este
+                                    apartado, que salen en el documento bajo «{modulo.label}».
                                 </p>
 
                                 {modulo.captura === "importacion" && (
@@ -1238,7 +1243,9 @@ export function FormularioPresupuesto({
                             {(motivoNoPropuesta || generacion) && (
                                 <p className="mb-2 text-center text-xs text-muted">
                                     {generacion?.fase === "extrayendo"
-                                        ? "Analizando el dictado. Tarda unos segundos…"
+                                        ? modulosElegidos.some((k) => (fotosPorModulo[k]?.length ?? 0) > 0)
+                                            ? "Analizando el dictado y las fotos. Puede tardar hasta un minuto…"
+                                            : "Analizando el dictado. Tarda unos segundos…"
                                         : motivoNoPropuesta}
                                 </p>
                             )}

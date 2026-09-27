@@ -197,6 +197,22 @@ export function RevisionPropuesta({
 
     return (
         <div className="flex flex-col gap-3">
+            {(propuesta.fotosAnalizadas !== undefined || (propuesta.avisos?.length ?? 0) > 0) && (
+                <div className="px-1 text-xs">
+                    {propuesta.fotosAnalizadas !== undefined && propuesta.fotosAnalizadas > 0 && (
+                        <p className="text-muted">
+                            La IA ha revisado {propuesta.fotosAnalizadas} foto{propuesta.fotosAnalizadas === 1 ? "" : "s"}{" "}
+                            además del dictado.
+                        </p>
+                    )}
+                    {propuesta.avisos?.map((a) => (
+                        <p key={a} className="text-amber-700 dark:text-amber-400">
+                            {a}
+                        </p>
+                    ))}
+                </div>
+            )}
+
             {(propuesta.observaciones.length > 0 || propuesta.sugerencias.length > 0) && (
                 <section className="rounded-2xl border border-hairline bg-surface p-4 text-xs">
                     {propuesta.sugerencias.length > 0 && (

@@ -39,7 +39,8 @@ export type RespuestaClaude = {
 
 export async function llamarClaude(opciones: {
     sistema: string;
-    mensaje: string;
+    /** Texto, o bloques de contenido (texto + imágenes) de la API de Messages. */
+    mensaje: string | unknown[];
     herramientas?: readonly unknown[];
     maxTokens?: number;
     /** Corte total, en ms. Por debajo del límite de la función de Vercel. */

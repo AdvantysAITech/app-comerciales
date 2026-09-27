@@ -67,6 +67,47 @@ export function mensajeExtraccion(modulos: DictadoModulo[]): string {
         .join("\n\n");
 }
 
+/**
+ * Fotos que se mandan a la IA. Topes por latencia y coste: cada foto son ~1.600
+ * tokens y segundos de descarga en Anthropic, y la extracción tiene que caber
+ * en el minuto de Vercel junto con el paso de la tarifa. Al anexo del documento
+ * van TODAS; a la IA, las primeras de cada tipo de trabajo.
+ */
+export const FOTOS_IA_POR_MODULO = 4;
+export const FOTOS_IA_TOTAL = 16;
+
+/** Solo https: son URLs públicas de la biblioteca de medios de GHL. */
+function fotosParaIa(modulos: DictadoModulo[]): Map<string, string[]> {
+    const porModulo = new Map<string, string[]>();
+    let total = 0;
+    for (const m of modulos) {
+        const urls = [...new Set(m.fotos ?? [])]
+            .filter((u) => /^https:\/\/[^\s]+$/i.test(u))
+            .slice(0, FOTOS_IA_POR_MODULO)
+            .slice(0, Math.max(0, FOTOS_IA_TOTAL - total));
+        total += urls.length;
+        if (urls.length) porModulo.set(m.key, urls);
+    }
+    return porModulo;
+}
+
+/**
+ * Mensaje con texto e imágenes intercalados: cada tipo de trabajo, su dictado
+ * y justo después sus fotos, rotuladas "Foto N de <tipo>" para que la IA pueda
+ * citarlas en dudas y sugerencias.
+ */
+export function contenidoExtraccion(modulos: DictadoModulo[], fotos: Map<string, string[]>): unknown[] {
+    const bloques: unknown[] = [];
+    for (const m of modulos) {
+        bloques.push({ type: "text", text: `## ${m.label} [clave: ${m.key}]\n${m.dictado.trim()}` });
+        (fotos.get(m.key) ?? []).forEach((url, i) => {
+            bloques.push({ type: "text", text: `Foto ${i + 1} de ${m.label}:` });
+            bloques.push({ type: "image", source: { type: "url", url } });
+        });
+    }
+    return bloques;
+}
+
 /** Valida la salida del modelo. Un trabajo sin módulo conocido se asigna al primero. */
 export function sanearExtraccion(bruto: RespuestaExtraccion, modulos: DictadoModulo[]) {
     const claves = new Set(modulos.map((m) => m.key));
@@ -186,19 +227,48 @@ export function consultaDe(t: Trabajo): ConsultaCype {
 
 /** Pasos 1 y 2. Devuelve la propuesta con las líneas sin casar `pendienteCype`. */
 export async function generarPropuesta(modulos: DictadoModulo[]): Promise<Propuesta> {
-    const extraccion = await llamarClaude({
-        sistema: PROMPT_EXTRAER,
-        mensaje: mensajeExtraccion(modulos),
-        maxTokens: 8000,
-        timeoutMs: 30_000,
-    });
+    const fotos = fotosParaIa(modulos);
+    const nFotos = [...fotos.values()].reduce((s, f) => s + f.length, 0);
+    const avisos: string[] = [];
+    const totalFotos = modulos.reduce((s, m) => s + (m.fotos?.length ?? 0), 0);
+    if (totalFotos > nFotos) {
+        avisos.push(
+            `La IA ha revisado ${nFotos} de ${totalFotos} fotos (máximo ${FOTOS_IA_POR_MODULO} por tipo de trabajo). ` +
+                `En el documento salen todas.`
+        );
+    }
+
+    let extraccion;
+    let fotosAnalizadas = nFotos;
+    try {
+        extraccion = await llamarClaude({
+            sistema: PROMPT_EXTRAER,
+            mensaje: nFotos > 0 ? contenidoExtraccion(modulos, fotos) : mensajeExtraccion(modulos),
+            maxTokens: 8000,
+            timeoutMs: nFotos > 0 ? 38_000 : 30_000,
+        });
+    } catch (error) {
+        // Una foto que Anthropic no puede descargar tumba la petición entera. Sin
+        // fotos la propuesta sigue siendo útil: se repite solo con el dictado y
+        // se avisa, en vez de dejar al comercial sin propuesta.
+        if (nFotos === 0) throw error;
+        console.error("[propuesta] extracción con fotos fallida, se repite sin fotos:", error);
+        avisos.push("No se han podido enviar las fotos a la IA: la propuesta sale solo del dictado.");
+        fotosAnalizadas = 0;
+        extraccion = await llamarClaude({
+            sistema: PROMPT_EXTRAER,
+            mensaje: mensajeExtraccion(modulos),
+            maxTokens: 8000,
+            timeoutMs: 20_000,
+        });
+    }
     const { trabajos, observaciones, sugerencias } = sanearExtraccion(
         extraerJson<RespuestaExtraccion>(extraccion.texto),
         modulos
     );
 
     if (trabajos.length === 0) {
-        return { generadaEn: new Date().toISOString(), lineas: [], observaciones, sugerencias };
+        return { generadaEn: new Date().toISOString(), lineas: [], observaciones, sugerencias, fotosAnalizadas, avisos };
     }
 
     const candidatas = new Map(trabajos.map((t) => [t.id, candidatasTarifa(t)]));
@@ -256,7 +326,7 @@ export async function generarPropuesta(modulos: DictadoModulo[]): Promise<Propue
         };
     });
 
-    return { generadaEn: new Date().toISOString(), lineas, observaciones, sugerencias };
+    return { generadaEn: new Date().toISOString(), lineas, observaciones, sugerencias, fotosAnalizadas, avisos };
 }
 
 type Eleccion = { codigo: string | null; confianza: string; motivo: string };
@@ -285,7 +355,8 @@ async function casarConTarifa(
         sistema: PROMPT_CASAR_TARIFA,
         mensaje,
         maxTokens: 4000,
-        timeoutMs: 25_000,
+        // Con fotos la extracción se lleva hasta 38 s: esto tiene que caber detrás.
+        timeoutMs: 18_000,
     });
     const bruto = extraerJson<{ resultados?: { id?: string; codigo?: string | null; confianza?: string; motivo?: string }[] }>(
         respuesta.texto

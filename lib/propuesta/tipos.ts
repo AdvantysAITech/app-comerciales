@@ -63,8 +63,8 @@ export type ConsultaCype = {
     textoOriginal: string;
 };
 
-/** Dictado de un tipo de trabajo, tal como lo envía el formulario. */
-export type DictadoModulo = { key: string; label: string; dictado: string };
+/** Dictado de un tipo de trabajo, tal como lo envía el formulario, con sus fotos. */
+export type DictadoModulo = { key: string; label: string; dictado: string; fotos?: string[] };
 
 export type Propuesta = {
     generadaEn: string;
@@ -73,6 +73,10 @@ export type Propuesta = {
     observaciones: string[];
     /** Trabajos que la IA cree que faltan. NO se añaden solos. */
     sugerencias: string[];
+    /** Fotos que la IA ha mirado para hacer la propuesta. */
+    fotosAnalizadas?: number;
+    /** Avisos del proceso (p. ej. fotos que no se han podido enviar). */
+    avisos?: string[];
 };
 
 /**
