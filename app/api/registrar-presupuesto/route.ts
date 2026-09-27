@@ -8,6 +8,7 @@ import {
 } from "@/lib/ghl/presupuestos";
 import { oportunidadAutorizada } from "@/lib/permisos";
 import { validarSeleccion } from "@/lib/visita/seleccion";
+import { almacenDisponible, eliminarBorrador } from "@/lib/borradores/almacen";
 
 /**
  * Hasta 60 s en Vercel (24/09/2026). Sin esto vale el límite por defecto de
@@ -36,9 +37,10 @@ export async function POST(request: NextRequest) {
     const empresa = SUBCUENTAS[subcuenta].nombre;
     const comercial = sesion.nombre ?? "";
 
-    let entrada: EntradaPresupuesto & { oportunidadId?: string | null };
+    type Cuerpo = EntradaPresupuesto & { oportunidadId?: string | null; borradorId?: string | null };
+    let entrada: Cuerpo;
     try {
-        entrada = (await request.json()) as EntradaPresupuesto & { oportunidadId?: string | null };
+        entrada = (await request.json()) as Cuerpo;
     } catch {
         return NextResponse.json({ error: "Cuerpo de la peticion invalido" }, { status: 400 });
     }
@@ -124,6 +126,17 @@ export async function POST(request: NextRequest) {
             seleccion: entrada.seleccion ?? {},
             fotosPorModulo: entrada.fotosPorModulo ?? {},
         }, sesion.usuarioGhl ?? null, oportunidadExistente);
+
+        // El borrador de la app ya está en GHL: se elimina (27/09/2026). Si falla,
+        // el presupuesto está creado igual; el comercial verá un borrador de más
+        // y podrá borrarlo, que es mucho mejor que devolverle un error.
+        if (entrada.borradorId && almacenDisponible()) {
+            try {
+                await eliminarBorrador(sesion, entrada.borradorId);
+            } catch (error) {
+                console.error(`[registrar] No se ha podido eliminar el borrador ${entrada.borradorId}:`, error);
+            }
+        }
 
         return NextResponse.json({
             comunidad: resultado.comunidad,

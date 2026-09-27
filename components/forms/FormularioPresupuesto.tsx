@@ -56,6 +56,13 @@ export type OportunidadOrigen = {
     fecha: string;
 };
 
+/** Borrador guardado en la app (lib/borradores/almacen.ts), tal como llega de la página. */
+export type BorradorServidor = {
+    id: string;
+    datos: DatosBorrador;
+    actualizadoEn: string;
+};
+
 type ComunidadListado = { id: string; nombreDireccion: string; administradorId?: string };
 type AdministradorListado = { id: string; nombreDespacho?: string };
 
@@ -72,7 +79,20 @@ type Props = {
     rol?: Rol;
     /** Oportunidad de la que se toman los datos. `null` = visita nueva. */
     oportunidadOrigen?: OportunidadOrigen | null;
+    /** Borrador de la app que se retoma. `null` = todavía no hay. */
+    borrador?: BorradorServidor | null;
+    /**
+     * Hay almacén de borradores. Sin él (Upstash sin configurar) el formulario
+     * funciona como antes: solo con la copia del móvil.
+     */
+    almacenDisponible?: boolean;
 };
+
+type EstadoNube =
+    | { estado: "sin-guardar" }
+    | { estado: "guardando" }
+    | { estado: "guardado"; en: string }
+    | { estado: "error"; mensaje: string };
 
 type OportunidadCreada = { id: string; nombre: string; modeloNegocio: string | null };
 
@@ -94,19 +114,43 @@ const MINIMO_FOTOS_CON_ALERTA = 3;
 /** Espera del autoguardado. Escribir en cada pulsacion castiga al movil. */
 const RETARDO_AUTOGUARDADO = 800;
 
+/**
+ * Espera del guardado en la app. Más larga que la del móvil: cada guardado es
+ * una petición, y en obra la cobertura va y viene.
+ */
+const RETARDO_NUBE = 2500;
+
+/** Tras un fallo de red, cada cuánto se reintenta aunque no haya cambios. */
+const REINTENTO_NUBE = 15000;
+
 export function FormularioPresupuesto({
     subcuenta,
     comunidades,
     administradores,
     rol = "comercial",
     oportunidadOrigen = null,
+    borrador = null,
+    almacenDisponible = false,
 }: Props) {
     /**
-     * Clave del borrador local. Con oportunidad de origen, una por oportunidad:
-     * el borrador de la visita de ayer no puede aparecer al abrir la de hoy,
-     * y dos visitas a medias no se pisan. Sin origen, la de siempre.
+     * Clave de la copia local. Con borrador de la app, una por borrador. Con
+     * oportunidad de origen, una por oportunidad: el borrador de la visita de
+     * ayer no puede aparecer al abrir la de hoy. Sin nada, la de siempre (visita
+     * nueva que todavía no ha llegado al servidor, p. ej. sin cobertura).
+     *
+     * Es estado porque cambia cuando la visita nueva recibe su id de borrador:
+     * la copia local se muda a la clave del borrador (ver `sincronizar`).
      */
-    const claveLocal = oportunidadOrigen ? `${subcuenta}:oportunidad:${oportunidadOrigen.id}` : subcuenta;
+    const [claveLocal, setClaveLocal] = useState(() =>
+        borrador
+            ? `${subcuenta}:borrador:${borrador.id}`
+            : oportunidadOrigen
+              ? `${subcuenta}:oportunidad:${oportunidadOrigen.id}`
+              : subcuenta
+    );
+
+    /** Datos del borrador de la app con los que arranca, si se retoma uno. */
+    const base = borrador?.datos ?? null;
 
     /** Valores con los que arranca (y a los que vuelve "Empezar de cero"). */
     const inicial = {
@@ -133,19 +177,39 @@ export function FormularioPresupuesto({
      * Desde una oportunidad en "Visita concertada" la finca ya viene del CRM y
      * se salta (con "Cambiar" para volver).
      */
-    const [eligiendoFinca, setEligiendoFinca] = useState(!oportunidadOrigen);
+    const [eligiendoFinca, setEligiendoFinca] = useState(
+        !oportunidadOrigen && !(base?.nombreComunidad.trim())
+    );
 
-    const [nombreComunidad, setNombreComunidad] = useState(inicial.nombreComunidad);
-    const [comunidadElegidaId, setComunidadElegidaId] = useState<string | null>(null);
-    const [administradorId, setAdministradorId] = useState("");
-    const [contacto, setContacto] = useState(inicial.contacto);
-    const [telefono, setTelefono] = useState(inicial.telefono);
-    const [fecha, setFecha] = useState(inicial.fecha);
-    const [observaciones, setObservaciones] = useState("");
-    const [modulosElegidos, setModulosElegidos] = useState<string[]>([]);
-    const [seleccion, setSeleccion] = useState<SeleccionVisita>(seleccionVacia);
-    const [fotosPorModulo, setFotosPorModulo] = useState<Record<string, string[]>>({});
-    const [documentosPorModulo, setDocumentosPorModulo] = useState<Record<string, DocumentoAdjunto[]>>({});
+    const [nombreComunidad, setNombreComunidad] = useState(base?.nombreComunidad ?? inicial.nombreComunidad);
+    const [comunidadElegidaId, setComunidadElegidaId] = useState<string | null>(base?.comunidadElegidaId ?? null);
+    const [administradorId, setAdministradorId] = useState(base?.administradorId ?? "");
+    const [contacto, setContacto] = useState(base?.contacto ?? inicial.contacto);
+    const [telefono, setTelefono] = useState(base?.telefono ?? inicial.telefono);
+    const [fecha, setFecha] = useState(base?.fecha ?? inicial.fecha);
+    const [observaciones, setObservaciones] = useState(base?.observaciones ?? "");
+    const [modulosElegidos, setModulosElegidos] = useState<string[]>(base?.modulosElegidos ?? []);
+    const [seleccion, setSeleccion] = useState<SeleccionVisita>(base?.seleccion ?? seleccionVacia);
+    const [fotosPorModulo, setFotosPorModulo] = useState<Record<string, string[]>>(base?.fotosPorModulo ?? {});
+    const [documentosPorModulo, setDocumentosPorModulo] = useState<Record<string, DocumentoAdjunto[]>>(
+        base?.documentosPorModulo ?? {}
+    );
+
+    // --- Borrador en la app ------------------------------------------------
+    const [borradorId, setBorradorId] = useState<string | null>(borrador?.id ?? null);
+    const [nube, setNube] = useState<EstadoNube>(
+        borrador ? { estado: "guardado", en: borrador.actualizadoEn } : { estado: "sin-guardar" }
+    );
+    /** Sube tras un fallo de red para reintentar aunque el comercial no toque nada. */
+    const [reintento, setReintento] = useState(0);
+    const [confirmandoEliminar, setConfirmandoEliminar] = useState(false);
+    /** Lo último que el servidor tiene guardado, serializado. Evita guardados vacíos. */
+    const ultimoEnviado = useRef<string | null>(borrador ? JSON.stringify(borrador.datos) : null);
+    const creando = useRef(false);
+    /** Una vez enviado el presupuesto, el borrador no se vuelve a escribir. */
+    const enviado = useRef(false);
+    /** El borrador ha desaparecido del servidor (enviado o eliminado desde otro sitio). */
+    const perdido = useRef(false);
 
     const [borradorRecuperado, setBorradorRecuperado] = useState<string | null>(null);
     const [enviando, setEnviando] = useState(false);
@@ -194,28 +258,44 @@ export function FormularioPresupuesto({
         ]
     );
 
+    // Recuperación de la copia local. Solo al montar: `claveLocal` cambia cuando
+    // la visita recibe su id de borrador y eso no es "abrir otra visita".
     useEffect(() => {
-        const borrador = cargarBorrador(claveLocal);
+        if (rehidratado.current) return;
+        const local = cargarBorrador(claveLocal);
 
-        if (borrador && tieneContenido(borrador)) {
-            setNombreComunidad(borrador.nombreComunidad);
-            setComunidadElegidaId(borrador.comunidadElegidaId);
-            setAdministradorId(borrador.administradorId);
-            setContacto(borrador.contacto);
-            setTelefono(borrador.telefono);
-            setFecha(borrador.fecha);
-            setObservaciones(borrador.observaciones);
-            setModulosElegidos(borrador.modulosElegidos);
-            setSeleccion(borrador.seleccion);
-            setFotosPorModulo(borrador.fotosPorModulo);
-            setDocumentosPorModulo(borrador.documentosPorModulo ?? {});
-            setBorradorRecuperado(borrador.guardadoEn);
+        // Con borrador de la app, la copia local solo gana si es MÁS NUEVA: es la
+        // que se quedó sin subir por falta de cobertura.
+        const localGana =
+            local &&
+            tieneContenido(local) &&
+            (!borrador || new Date(local.guardadoEn).getTime() > new Date(borrador.actualizadoEn).getTime());
+
+        if (local && localGana) {
+            setNombreComunidad(local.nombreComunidad);
+            setComunidadElegidaId(local.comunidadElegidaId);
+            setAdministradorId(local.administradorId);
+            setContacto(local.contacto);
+            setTelefono(local.telefono);
+            setFecha(local.fecha);
+            setObservaciones(local.observaciones);
+            setModulosElegidos(local.modulosElegidos);
+            setSeleccion(local.seleccion);
+            setFotosPorModulo(local.fotosPorModulo);
+            setDocumentosPorModulo(local.documentosPorModulo ?? {});
+            setBorradorRecuperado(local.guardadoEn);
             // Un borrador con finca ya elegida vuelve directo al formulario.
-            if (borrador.nombreComunidad.trim() !== "") setEligiendoFinca(false);
+            if (local.nombreComunidad.trim() !== "") setEligiendoFinca(false);
+        } else if (oportunidadOrigen && !borrador) {
+            // Abrir una visita concertada no crea borrador: lo precargado del CRM
+            // no es trabajo del comercial. Se crea con el primer cambio real.
+            ultimoEnviado.current = JSON.stringify(datosActuales);
         }
 
         rehidratado.current = true;
-    }, [claveLocal]);
+        // Solo al montar, a propósito (ver comentario de arriba).
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     useEffect(() => {
         if (!rehidratado.current) return;
@@ -224,6 +304,109 @@ export function FormularioPresupuesto({
         const id = setTimeout(() => guardarBorrador(claveLocal, datosActuales), RETARDO_AUTOGUARDADO);
         return () => clearTimeout(id);
     }, [claveLocal, datosActuales]);
+
+    // Guardado en la app (27/09/2026). En cuanto hay comunidad, el borrador
+    // existe en el servidor y aparece en la columna Borradores del panel.
+    useEffect(() => {
+        if (!almacenDisponible || !rehidratado.current || enviado.current || perdido.current) return;
+        if (datosActuales.nombreComunidad.trim() === "") return;
+
+        const serial = JSON.stringify(datosActuales);
+        if (serial === ultimoEnviado.current) return;
+
+        const datos = datosActuales;
+        const temporizador = setTimeout(async () => {
+            if (creando.current) return; // la creación en curso relanza este efecto al acabar
+            const administrador = listaAdministradores.find((a) => a.id === datos.administradorId)?.nombreDespacho ?? null;
+
+            setNube({ estado: "guardando" });
+            try {
+                if (!borradorId) {
+                    creando.current = true;
+                    const respuesta = await fetch("/api/borradores", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ datos, oportunidadId: oportunidadOrigen?.id ?? null, administrador }),
+                    });
+                    const cuerpo = await respuesta.json();
+                    if (!respuesta.ok) throw new Error(cuerpo.error ?? `Error ${respuesta.status}`);
+
+                    // Se envió el presupuesto mientras se creaba: el borrador sobra.
+                    if (enviado.current) {
+                        void fetch(`/api/borradores/${cuerpo.id}`, { method: "DELETE" });
+                        return;
+                    }
+
+                    // La copia local se muda a la clave del borrador. Si no, la
+                    // próxima visita nueva la "recuperaría" como si fuera suya.
+                    const nuevaClave = `${subcuenta}:borrador:${cuerpo.id}`;
+                    guardarBorrador(nuevaClave, datos);
+                    if (nuevaClave !== claveLocal) limpiarBorrador(claveLocal);
+                    setClaveLocal(nuevaClave);
+                    setBorradorId(cuerpo.id);
+                    // Recargar ahora abre ESTE borrador, no un formulario vacío.
+                    window.history.replaceState(null, "", `/presupuestos/nuevo?borrador=${cuerpo.id}`);
+                    ultimoEnviado.current = serial;
+                    setNube({ estado: "guardado", en: cuerpo.actualizadoEn });
+                } else {
+                    const respuesta = await fetch(`/api/borradores/${borradorId}`, {
+                        method: "PUT",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ datos, administrador }),
+                    });
+                    const cuerpo = await respuesta.json();
+                    if (respuesta.status === 404) {
+                        perdido.current = true;
+                        setNube({
+                            estado: "error",
+                            mensaje: "Este borrador ya no existe (se creó el presupuesto o se eliminó en otro dispositivo).",
+                        });
+                        return;
+                    }
+                    if (!respuesta.ok) throw new Error(cuerpo.error ?? `Error ${respuesta.status}`);
+                    ultimoEnviado.current = serial;
+                    setNube({ estado: "guardado", en: cuerpo.actualizadoEn });
+                }
+            } catch {
+                setNube({ estado: "error", mensaje: "Sin conexión: guardado solo en este dispositivo. Se reintentará." });
+                setTimeout(() => setReintento((n) => n + 1), REINTENTO_NUBE);
+            } finally {
+                creando.current = false;
+            }
+        }, RETARDO_NUBE);
+
+        return () => clearTimeout(temporizador);
+    }, [
+        almacenDisponible,
+        datosActuales,
+        borradorId,
+        reintento,
+        claveLocal,
+        subcuenta,
+        oportunidadOrigen,
+        listaAdministradores,
+    ]);
+
+    async function eliminarBorradorApp() {
+        if (!borradorId) return;
+        try {
+            const respuesta = await fetch(`/api/borradores/${borradorId}`, { method: "DELETE" });
+            if (!respuesta.ok && respuesta.status !== 404) {
+                const cuerpo = await respuesta.json().catch(() => ({}));
+                throw new Error(cuerpo.error ?? `Error ${respuesta.status}`);
+            }
+            perdido.current = true;
+            limpiarBorrador(claveLocal);
+            // Navegación completa: el panel tiene que volver a leer los borradores.
+            window.location.href = "/";
+        } catch (error) {
+            setConfirmandoEliminar(false);
+            setNube({
+                estado: "error",
+                mensaje: `No se ha podido eliminar: ${error instanceof Error ? error.message : "error desconocido"}`,
+            });
+        }
+    }
 
     const comunidadElegida = listaComunidades.find((c) => c.id === comunidadElegidaId);
 
@@ -356,6 +539,7 @@ export function FormularioPresupuesto({
 
         setEnviando(true);
         setErrorEnvio(null);
+        enviado.current = true;
 
         try {
             // La subcuenta, la empresa y el comercial NO se mandan: los resuelve
@@ -366,6 +550,7 @@ export function FormularioPresupuesto({
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     oportunidadId: oportunidadOrigen?.id ?? null,
+                    borradorId,
                     comunidadNombre: nombreComunidad.trim(),
                     administradorId: administradorId || null,
                     contacto: contacto.trim(),
@@ -386,6 +571,8 @@ export function FormularioPresupuesto({
             limpiarBorrador(claveLocal);
             setResultado(datos as ResultadoAlta);
         } catch (error) {
+            // No se ha creado: el borrador sigue vivo y se sigue guardando.
+            enviado.current = false;
             setErrorEnvio(error instanceof Error ? error.message : "Error desconocido");
         } finally {
             setEnviando(false);
@@ -439,9 +626,10 @@ export function FormularioPresupuesto({
                 ) : (
                     <button
                         type="button"
+                        // Recarga completa: la visita nueva no hereda el id del
+                        // borrador que se acaba de enviar.
                         onClick={() => {
-                            setResultado(null);
-                            descartarBorrador();
+                            window.location.href = "/presupuestos/nuevo";
                         }}
                         className="mt-4 w-full cursor-pointer rounded-xl bg-ink py-3 text-sm font-semibold text-canvas"
                     >
@@ -480,7 +668,52 @@ export function FormularioPresupuesto({
                 />
             ) : (
                 <>
-                {borradorRecuperado && (
+                {!eligiendoFinca && (borradorId || nube.estado === "error") && (
+                <div className="mb-3 flex items-center justify-between gap-3 px-1">
+                    <p
+                        className={`text-xs ${
+                            nube.estado === "error" ? "text-amber-700 dark:text-amber-400" : "text-muted"
+                        }`}
+                    >
+                        {nube.estado === "guardando"
+                            ? "Guardando borrador..."
+                            : nube.estado === "guardado"
+                              ? `Borrador guardado · ${describirAntiguedad(nube.en)}`
+                              : nube.estado === "error"
+                                ? nube.mensaje
+                                : "Borrador sin guardar"}
+                    </p>
+                    {borradorId &&
+                        (confirmandoEliminar ? (
+                            <span className="flex shrink-0 gap-1.5">
+                                <button
+                                    type="button"
+                                    onClick={() => setConfirmandoEliminar(false)}
+                                    className="cursor-pointer rounded-lg border border-hairline px-2.5 py-1.5 text-xs text-ink"
+                                >
+                                    No
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={eliminarBorradorApp}
+                                    className="cursor-pointer rounded-lg bg-red-600 px-2.5 py-1.5 text-xs font-medium text-white"
+                                >
+                                    Sí, eliminar
+                                </button>
+                            </span>
+                        ) : (
+                            <button
+                                type="button"
+                                onClick={() => setConfirmandoEliminar(true)}
+                                className="shrink-0 cursor-pointer rounded-lg border border-hairline px-2.5 py-1.5 text-xs text-ink transition hover:bg-surface"
+                            >
+                                Eliminar borrador
+                            </button>
+                        ))}
+                </div>
+            )}
+
+            {borradorRecuperado && !borradorId && (
                     <div className="mb-3 flex items-center justify-between gap-3 rounded-2xl border border-hairline bg-ink/[0.04] px-4 py-3">
                         <p className="text-xs text-muted">
                             Borrador recuperado ({describirAntiguedad(borradorRecuperado)})

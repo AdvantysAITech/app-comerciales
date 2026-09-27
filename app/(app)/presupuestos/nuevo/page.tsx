@@ -3,7 +3,17 @@ import { sesionApp } from "@/lib/sesion";
 import { administradorParaRol, listarAdministradores } from "@/lib/ghl/administradores";
 import { listarComunidades } from "@/lib/ghl/comunidades";
 import { oportunidadAutorizada } from "@/lib/permisos";
-import { FormularioPresupuesto, type OportunidadOrigen } from "@/components/forms/FormularioPresupuesto";
+import {
+    FormularioPresupuesto,
+    type BorradorServidor,
+    type OportunidadOrigen,
+} from "@/components/forms/FormularioPresupuesto";
+import {
+    almacenDisponible,
+    borradorDeOportunidad,
+    leerBorrador,
+    type BorradorGuardado,
+} from "@/lib/borradores/almacen";
 
 /**
  * Formulario de toma de datos del flujo v2.
@@ -13,13 +23,16 @@ import { FormularioPresupuesto, type OportunidadOrigen } from "@/components/form
  *    en "Visita concertada". El formulario sale precargado con lo que ya hay en
  *    el CRM y, al guardar, esa MISMA oportunidad pasa a "Datos recogidos".
  *  - `/presupuestos/nuevo`: visita sin oportunidad previa. Crea una nueva.
+ *  - `/presupuestos/nuevo?borrador=<id>` (27/09/2026): reabre un borrador
+ *    guardado en la app. Si el borrador sale de una oportunidad, se trata como
+ *    la primera entrada. Abrir una oportunidad que ya tiene borrador lo recupera.
  *
  * El formulario antiguo (/visitas/nueva) sigue operativo en produccion.
  */
 export default async function NuevoPresupuestoPage({
     searchParams,
 }: {
-    searchParams: Promise<{ oportunidad?: string }>;
+    searchParams: Promise<{ oportunidad?: string; borrador?: string }>;
 }) {
     const sesion = await sesionApp();
 
@@ -28,7 +41,25 @@ export default async function NuevoPresupuestoPage({
     }
 
     const subcuenta = sesion.subcuenta;
-    const { oportunidad: oportunidadId } = await searchParams;
+    const parametros = await searchParams;
+    const almacen = almacenDisponible();
+
+    // Borrador pedido por id. Un fallo del almacén no bloquea: el comercial
+    // puede seguir con la copia de su móvil.
+    let borrador: BorradorGuardado | null = null;
+    if (parametros.borrador) {
+        try {
+            borrador = almacen ? await leerBorrador(sesion, parametros.borrador) : null;
+        } catch (error) {
+            console.error("[nuevo] No se ha podido leer el borrador:", error);
+            return <Aviso texto="No se ha podido abrir el borrador. Comprueba la conexión y vuelve a intentarlo." />;
+        }
+        if (!borrador) {
+            return <Aviso texto="Este borrador ya no existe. Puede que ya se creara el presupuesto." />;
+        }
+    }
+
+    const oportunidadId = borrador ? borrador.oportunidadId ?? undefined : parametros.oportunidad;
 
     const [comunidades, administradores, oportunidad] = await Promise.all([
         listarComunidades(subcuenta),
@@ -60,13 +91,22 @@ export default async function NuevoPresupuestoPage({
             telefono: oportunidad.contacto.telefono ?? "",
             fecha: fechaParaInput(oportunidad.fechaVisita),
         };
+
+        // Oportunidad que ya tiene borrador: se retoma, no se empieza otro.
+        if (!borrador && almacen) {
+            borrador = await borradorDeOportunidad(sesion, oportunidad.id).catch(() => null);
+        }
     }
+
+    const borradorServidor: BorradorServidor | null = borrador
+        ? { id: borrador.id, datos: borrador.datos, actualizadoEn: borrador.actualizadoEn }
+        : null;
 
     return (
         <FormularioPresupuesto
             // `key`: cambiar de oportunidad debe montar un formulario limpio,
             // no heredar el estado del anterior.
-            key={origen?.id ?? "nueva"}
+            key={borrador?.id ?? origen?.id ?? "nueva"}
             subcuenta={subcuenta}
             comunidades={comunidades}
             // Sin la comisión pactada si no es dirección: estas props viajan al
@@ -74,6 +114,8 @@ export default async function NuevoPresupuestoPage({
             administradores={administradores.map((a) => administradorParaRol(a, sesion.rol))}
             rol={sesion.rol}
             oportunidadOrigen={origen}
+            borrador={borradorServidor}
+            almacenDisponible={almacen}
         />
     );
 }

@@ -5,6 +5,8 @@ import Link from "next/link";
 import type { OportunidadListado } from "@/lib/ghl/oportunidades";
 import { ETAPAS_PRESUPUESTO, NOMBRE_ETAPA } from "@/lib/ghl/ids";
 import { clasificar, type Clasificacion, type Columna, type TonoEtiqueta } from "@/lib/panel";
+import type { ResumenBorrador } from "@/lib/borradores/almacen";
+import { describirAntiguedad } from "@/lib/visita/borrador";
 
 /**
  * Panel de presupuestos en dos columnas (27/09/2026): borradores a la izquierda,
@@ -13,13 +15,25 @@ import { clasificar, type Clasificacion, type Columna, type TonoEtiqueta } from 
  *
  * En el teléfono dos columnas no caben: se ve una y se cambia con el selector
  * de arriba. Desde `lg` se ven las dos a la vez y el selector desaparece.
+ *
+ * Borradores de la app (27/09/2026): viven en Upstash, no en GHL, y se pintan
+ * en la columna Borradores junto a las oportunidades en "Visita concertada".
+ * Si un borrador sale de una de esas oportunidades, se ve el borrador y no la
+ * oportunidad: son la misma visita.
  */
 
 type Props = {
     oportunidades: OportunidadListado[];
+    borradores?: ResumenBorrador[];
+    /** Dirección ve los borradores de todos: se indica de quién es cada uno. */
+    mostrarAutor?: boolean;
 };
 
 type Clasificada = OportunidadListado & { clasificacion: Clasificacion };
+
+type Elemento =
+    | { tipo: "oportunidad"; op: Clasificada; fecha: string }
+    | { tipo: "borrador"; borrador: ResumenBorrador; fecha: string };
 
 const OPCIONES_ETAPA = [
     { value: "todas", label: "Todas las etapas" },
@@ -55,7 +69,7 @@ function coincidePeriodo(fechaISO: string, periodo: string): boolean {
     return true;
 }
 
-export function PanelPresupuestos({ oportunidades }: Props) {
+export function PanelPresupuestos({ oportunidades, borradores = [], mostrarAutor = false }: Props) {
     const [busqueda, setBusqueda] = useState("");
     const [etapa, setEtapa] = useState("todas");
     const [periodo, setPeriodo] = useState("todos");
@@ -64,9 +78,25 @@ export function PanelPresupuestos({ oportunidades }: Props) {
 
     const porColumna = useMemo(() => {
         const texto = busqueda.trim().toLowerCase();
-        const grupos: Record<Columna, Clasificada[]> = { borrador: [], generado: [] };
+        const grupos: Record<Columna, Elemento[]> = { borrador: [], generado: [] };
+        const conBorrador = new Set(borradores.map((b) => b.oportunidadId).filter(Boolean));
+
+        // Los borradores de la app no tienen etapa: solo salen sin filtro de etapa.
+        if (etapa === "todas") {
+            for (const b of borradores) {
+                const coincideTexto =
+                    texto === "" ||
+                    b.resumen.comunidad.toLowerCase().includes(texto) ||
+                    (b.resumen.administrador ?? "").toLowerCase().includes(texto);
+                if (!coincideTexto || !coincidePeriodo(b.creadoEn, periodo)) continue;
+                grupos.borrador.push({ tipo: "borrador", borrador: b, fecha: b.actualizadoEn });
+            }
+        }
 
         for (const op of oportunidades) {
+            // Ya tiene borrador empezado: se ve el borrador (arriba), no la visita.
+            if (conBorrador.has(op.id) && op.etapa === "VISITA_CONCERTADA") continue;
+
             const coincideTexto =
                 texto === "" ||
                 (op.comunidadNombre ?? op.name).toLowerCase().includes(texto) ||
@@ -75,17 +105,21 @@ export function PanelPresupuestos({ oportunidades }: Props) {
             if (!coincideTexto || !coincideEtapa || !coincidePeriodo(op.createdAt, periodo)) continue;
 
             const clasificacion = clasificar(op);
-            grupos[clasificacion.columna].push({ ...op, clasificacion });
+            grupos[clasificacion.columna].push({ tipo: "oportunidad", op: { ...op, clasificacion }, fecha: op.createdAt });
         }
+
+        // Borradores: lo último que se ha tocado, primero. Las visitas pendientes
+        // (sin empezar) van detrás.
+        const peso = (e: Elemento) => (e.tipo === "borrador" ? 1 : 0);
+        grupos.borrador.sort((a, b) => peso(b) - peso(a) || b.fecha.localeCompare(a.fecha));
 
         // Dentro de generados, lo que hay que revisar va primero: es lo que el
         // comercial viene a buscar.
-        grupos.generado.sort(
-            (a, b) => Number(b.clasificacion.porRevisar) - Number(a.clasificacion.porRevisar)
-        );
+        const porRevisar = (e: Elemento) => (e.tipo === "oportunidad" && e.op.clasificacion.porRevisar ? 1 : 0);
+        grupos.generado.sort((a, b) => porRevisar(b) - porRevisar(a));
 
         return grupos;
-    }, [oportunidades, busqueda, etapa, periodo]);
+    }, [oportunidades, borradores, busqueda, etapa, periodo]);
 
     return (
         <div className="mt-6">
@@ -177,9 +211,13 @@ export function PanelPresupuestos({ oportunidades }: Props) {
                             </p>
                         ) : (
                             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
-                                {porColumna[c.clave].map((op) => (
-                                    <Tarjeta key={op.id} op={op} />
-                                ))}
+                                {porColumna[c.clave].map((e) =>
+                                    e.tipo === "borrador" ? (
+                                        <TarjetaBorrador key={`b-${e.borrador.id}`} borrador={e.borrador} mostrarAutor={mostrarAutor} />
+                                    ) : (
+                                        <Tarjeta key={e.op.id} op={e.op} />
+                                    )
+                                )}
                             </div>
                         )}
                     </section>
@@ -216,5 +254,31 @@ function Tarjeta({ op }: { op: Clasificada }) {
                 {detalleEtapa && <span className="text-[11px] text-muted">{detalleEtapa}</span>}
             </div>
         </Link>
+    );
+}
+
+/**
+ * Borrador de la app. `<a>` y no `<Link>`: el formulario lee el borrador en
+ * servidor al cargar, y una navegación de cliente podía servir una versión en
+ * caché de la página con los datos de la visita anterior.
+ */
+function TarjetaBorrador({ borrador, mostrarAutor }: { borrador: ResumenBorrador; mostrarAutor: boolean }) {
+    return (
+        <a
+            href={`/presupuestos/nuevo?borrador=${borrador.id}`}
+            className="group rounded-2xl border border-hairline bg-surface p-4 transition hover:border-ink/20"
+        >
+            <p className="line-clamp-2 font-medium text-ink">{borrador.resumen.comunidad}</p>
+            <p className="mt-1 text-xs text-muted">
+                {borrador.resumen.administrador ?? "Sin administrador"}
+                {mostrarAutor && borrador.autor ? ` · ${borrador.autor}` : ""}
+            </p>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+                <span className={`inline-block rounded-full px-2.5 py-1 text-[11px] font-medium ${ESTILO_TONO.borde}`}>
+                    Borrador
+                </span>
+                <span suppressHydrationWarning className="text-[11px] text-muted">Editado {describirAntiguedad(borrador.actualizadoEn)}</span>
+            </div>
+        </a>
     );
 }

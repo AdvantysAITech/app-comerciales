@@ -106,21 +106,41 @@ export function cargarBorrador(subcuenta: string): BorradorPresupuesto | null {
         return {
             version: VERSION_BORRADOR,
             guardadoEn: datos.guardadoEn ?? new Date().toISOString(),
-            nombreComunidad: datos.nombreComunidad ?? "",
-            comunidadElegidaId: datos.comunidadElegidaId ?? null,
-            administradorId: datos.administradorId ?? "",
-            contacto: datos.contacto ?? "",
-            telefono: datos.telefono ?? "",
-            fecha: datos.fecha ?? "",
-            observaciones: datos.observaciones ?? "",
-            modulosElegidos: datos.modulosElegidos ?? [],
-            seleccion: datos.seleccion ?? {},
-            fotosPorModulo: datos.fotosPorModulo ?? {},
-            documentosPorModulo: datos.documentosPorModulo ?? {},
+            ...normalizarDatos(datos),
         };
     } catch {
         return null;
     }
+}
+
+const esObjeto = (v: unknown): v is Record<string, unknown> =>
+    typeof v === "object" && v !== null && !Array.isArray(v);
+const texto = (v: unknown): string => (typeof v === "string" ? v : "");
+
+/**
+ * Datos de borrador con la forma esperada, venga de donde venga (localStorage
+ * de una versión anterior o el cuerpo de una petición). Lo que no encaja se
+ * sustituye por vacío en vez de propagarse. Lo usa también el servidor antes de
+ * guardar en el almacén de borradores.
+ */
+export function normalizarDatos(bruto: unknown): DatosBorrador {
+    const d = esObjeto(bruto) ? bruto : {};
+    return {
+        nombreComunidad: texto(d.nombreComunidad),
+        comunidadElegidaId: typeof d.comunidadElegidaId === "string" ? d.comunidadElegidaId : null,
+        administradorId: texto(d.administradorId),
+        contacto: texto(d.contacto),
+        telefono: texto(d.telefono),
+        fecha: texto(d.fecha),
+        observaciones: texto(d.observaciones),
+        modulosElegidos: Array.isArray(d.modulosElegidos) ? d.modulosElegidos.filter((k) => typeof k === "string") : [],
+        seleccion: (esObjeto(d.seleccion) ? d.seleccion : {}) as SeleccionVisita,
+        fotosPorModulo: (esObjeto(d.fotosPorModulo) ? d.fotosPorModulo : {}) as Record<string, string[]>,
+        documentosPorModulo: (esObjeto(d.documentosPorModulo) ? d.documentosPorModulo : {}) as Record<
+            string,
+            DocumentoAdjunto[]
+        >,
+    };
 }
 
 export function limpiarBorrador(subcuenta: string): void {

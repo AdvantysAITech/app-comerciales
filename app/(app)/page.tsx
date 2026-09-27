@@ -2,6 +2,7 @@ import { sesionApp } from "@/lib/sesion";
 import { filtroPropietario, listarOportunidades } from "@/lib/ghl/oportunidades";
 import { ETAPAS_PRESUPUESTO } from "@/lib/ghl/ids";
 import { clasificar } from "@/lib/panel";
+import { almacenDisponible, listarBorradores, type ResumenBorrador } from "@/lib/borradores/almacen";
 import { PanelPresupuestos } from "@/components/PanelPresupuesto";
 import { SelectorSubcuenta } from "@/components/SelectorSubcuenta";
 
@@ -14,7 +15,17 @@ export default async function DashboardPage() {
 
     const subcuenta = sesion.subcuenta;
     // Comercial: solo las suyas en la subcuenta activa. Dirección: todas.
-    const oportunidades = await listarOportunidades(subcuenta, ETAPAS_PRESUPUESTO, filtroPropietario(sesion));
+    const [oportunidades, borradores] = await Promise.all([
+        listarOportunidades(subcuenta, ETAPAS_PRESUPUESTO, filtroPropietario(sesion)),
+        // Un fallo del almacén de borradores no tumba el panel: se ven las
+        // oportunidades y los borradores vuelven en la siguiente carga.
+        almacenDisponible()
+            ? listarBorradores(sesion).catch((error): ResumenBorrador[] => {
+                  console.error("[panel] No se han podido leer los borradores:", error);
+                  return [];
+              })
+            : Promise.resolve<ResumenBorrador[]>([]),
+    ]);
 
     const total = oportunidades.length;
     // Mismo criterio que la etiqueta de las tarjetas (lib/panel.ts): generado y
@@ -62,7 +73,11 @@ export default async function DashboardPage() {
                 <EstadisticaItem etiqueta="Perdidos" valor={perdidos} icono="x" />
             </div>
 
-            <PanelPresupuestos oportunidades={oportunidades} />
+            <PanelPresupuestos
+                oportunidades={oportunidades}
+                borradores={borradores}
+                mostrarAutor={sesion.rol === "direccion"}
+            />
 
             <footer className="relative mt-10 flex items-center justify-center gap-1 text-xs text-muted">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3.5 w-3.5">
