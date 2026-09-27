@@ -668,7 +668,17 @@ export function FormularioPresupuesto({
                 />
             ) : (
                 <>
-                {!eligiendoFinca && (borradorId || nube.estado === "error") && (
+                {!eligiendoFinca && !almacenDisponible && (
+                // Sin base de datos de borradores (variables de Upstash sin
+                // cargar): antes no se avisaba y el borrador "no aparecía" en el
+                // panel sin explicación.
+                <p className="mb-3 px-1 text-xs text-amber-700 dark:text-amber-400">
+                    Borradores no conectados: esta visita solo se guarda en este dispositivo y no
+                    aparecerá en el panel.
+                </p>
+            )}
+
+            {!eligiendoFinca && (borradorId || nube.estado === "error") && (
                 <div className="mb-3 flex items-center justify-between gap-3 px-1">
                     <p
                         className={`text-xs ${

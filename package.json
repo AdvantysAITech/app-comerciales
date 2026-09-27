@@ -28,7 +28,8 @@
     "modulos:probar": "tsx scripts/tarifa/probar-modulos-nuevos.ts",
     "licencias:probar": "tsx scripts/tarifa/probar-licencias.ts",
     "ghl:comparar": "tsx scripts/ghl/comparar-subcuentas.ts",
-    "ids:probar": "tsx scripts/ghl/probar-ids.ts"
+    "ids:probar": "tsx scripts/ghl/probar-ids.ts",
+    "borradores:probar": "tsx scripts/borradores/probar-conexion.ts"
   },
   "dependencies": {
     "@resvg/resvg-js": "^2.6.2",
