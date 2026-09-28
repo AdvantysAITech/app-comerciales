@@ -138,7 +138,7 @@ const TEXTO_AMIANTO = /amianto|fibrocemento|uralita|\brera\b/i;
  * (opción A: en Vertical el fibrocemento es amianto lleve o no documentación).
  */
 const NEGACION_AMIANTO =
-    /\b(?:sin|libre de|libres de|exent[oa]s? de|no (?:es |son |hay |tiene |contiene |lleva )?(?:de )?)(?:amianto|fibrocemento|uralita)/gi;
+    /\b(?:sin\s+|libres?\s+de\s+|exent[oa]s?\s+de\s+|no\s+(?:(?:es|son|hay|tiene|contiene|lleva)\s+)?(?:de\s+)?)(?:amianto|fibrocemento|uralita)/gi;
 
 /** El texto habla de amianto de verdad (no para negarlo). */
 export function textoMencionaAmianto(texto: string): boolean {
