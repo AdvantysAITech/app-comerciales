@@ -3,7 +3,7 @@ import { catalogo, listarCapitulos, listarPartidas, obtenerPartida, type Partida
 import { extraerJson, llamarClaude, textoDescargado, type BloqueRespuesta } from "@/lib/ia/claude";
 import { HERRAMIENTAS_CYPE, mensajeCype, PROMPT_CASAR_TARIFA, PROMPT_CYPE, PROMPT_EXTRAER } from "@/lib/ia/prompts";
 import { leerDecimal } from "@/lib/numero";
-import { capituloPermitido, MOTIVO_SIN_LICENCIA, partidaPermitida } from "@/lib/catalogo/licencias";
+import { capituloPermitido, MOTIVO_SIN_LICENCIA, partidaPermitida, textoMencionaAmianto } from "@/lib/catalogo/licencias";
 import {
     normalizarUnidad,
     type ConsultaCype,
@@ -352,7 +352,7 @@ async function propuestaDeModulo(
     // licencia no se propone. No se quita en silencio: se dice cuál y por qué.
     const trabajos = extraidos.trabajos.filter((t) => {
         const frase = [t.accion, t.elemento, t.detalle, t.textoOriginal].join(" ");
-        if (partidaPermitida(subcuenta, { descripcionCorta: frase })) return true;
+        if (subcuenta !== "vertical-projects" || !textoMencionaAmianto(frase)) return true;
         avisos.push(`«${t.textoOriginal || frase.trim()}»: no se incluye. ${MOTIVO_SIN_LICENCIA}`);
         return false;
     });
@@ -577,9 +577,11 @@ export function validarCype(
     const capitulo = capitulos.has(texto(bruto.capitulo)) ? texto(bruto.capitulo) : capituloPorDefecto;
 
     // Licencias (28/09/2026): CYPE sí tiene unidades de obra de amianto.
+    // Con el capítulo YA resuelto: si el modelo se inventa el "07" para un
+    // trabajo que no es de amianto, ya se ha rebajado al de por defecto.
     const candidata = {
         codigo,
-        capitulo: texto(bruto.capitulo),
+        capitulo,
         descripcionCorta: texto(bruto.descripcionCorta),
         descripcionLarga: texto(bruto.descripcionLarga),
     };

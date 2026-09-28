@@ -130,6 +130,21 @@ export const CAPITULO_AMIANTO = "07";
 
 const TEXTO_AMIANTO = /amianto|fibrocemento|uralita|\brera\b/i;
 
+/**
+ * Menciones que NIEGAN el amianto ("sin amianto", "no es de uralita",
+ * "libre de amianto"). Se quitan antes de buscar: si no, un dictado que dice
+ * "la cubierta es de chapa, no de uralita" se descartaba entero en Vertical.
+ * Ojo: "placa de fibrocemento sin amianto" sigue contando por "fibrocemento"
+ * (opción A: en Vertical el fibrocemento es amianto lleve o no documentación).
+ */
+const NEGACION_AMIANTO =
+    /\b(?:sin|libre de|libres de|exent[oa]s? de|no (?:es |son |hay |tiene |contiene |lleva )?(?:de )?)(?:amianto|fibrocemento|uralita)/gi;
+
+/** El texto habla de amianto de verdad (no para negarlo). */
+export function textoMencionaAmianto(texto: string): boolean {
+    return TEXTO_AMIANTO.test(texto.replace(NEGACION_AMIANTO, " "));
+}
+
 /** Aviso de la propuesta cuando hay trabajo de amianto (Scala Valencia). */
 export const ALERTA_AMIANTO_PROPUESTA =
     "Trabajo con amianto: solo lo ejecuta Scala Valencia con empresa RERA. Añade el plan de trabajo y el " +
@@ -148,11 +163,16 @@ type PartidaComprobable = {
     descripcionLarga?: string | null;
 };
 
-/** La partida es un trabajo de amianto (capítulo 07, código AMI o el texto lo dice). */
+/**
+ * La partida es un trabajo de amianto (capítulo 07, código AMI o su título lo
+ * dice). Solo el título (`descripcionCorta`), no la descripción larga: las de
+ * CYPE incluyen frases como "no incluye la retirada de elementos con amianto"
+ * en trabajos que no tienen nada que ver.
+ */
 export function esPartidaAmianto(p: PartidaComprobable): boolean {
     if (p.capitulo === CAPITULO_AMIANTO) return true;
     if ((p.codigo ?? "").toUpperCase().startsWith("AMI")) return true;
-    return TEXTO_AMIANTO.test(`${p.descripcionCorta ?? ""} ${p.descripcionLarga ?? ""}`);
+    return textoMencionaAmianto(p.descripcionCorta ?? "");
 }
 
 /** El capítulo existe para esta subcuenta. */

@@ -69,7 +69,17 @@ function coincidePeriodo(fechaISO: string, periodo: string): boolean {
     return true;
 }
 
-export function PanelPresupuestos({ oportunidades, borradores = [], mostrarAutor = false }: Props) {
+export function PanelPresupuestos({ oportunidades, borradores: borradoresServidor = [], mostrarAutor = false }: Props) {
+    /**
+     * Borradores eliminados desde el panel (28/09/2026). Se filtran AQUÍ y no en
+     * la tarjeta: así el contador, "Sin borradores" y la visita concertada que
+     * tapaba el borrador se recalculan, y un cambio de filtro no lo resucita.
+     */
+    const [eliminados, setEliminados] = useState<ReadonlySet<string>>(new Set());
+    const borradores = useMemo(
+        () => borradoresServidor.filter((b) => !eliminados.has(b.id)),
+        [borradoresServidor, eliminados]
+    );
     const [busqueda, setBusqueda] = useState("");
     const [etapa, setEtapa] = useState("todas");
     const [periodo, setPeriodo] = useState("todos");
@@ -213,7 +223,12 @@ export function PanelPresupuestos({ oportunidades, borradores = [], mostrarAutor
                             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
                                 {porColumna[c.clave].map((e) =>
                                     e.tipo === "borrador" ? (
-                                        <TarjetaBorrador key={`b-${e.borrador.id}`} borrador={e.borrador} mostrarAutor={mostrarAutor} />
+                                        <TarjetaBorrador
+                                            key={`b-${e.borrador.id}`}
+                                            borrador={e.borrador}
+                                            mostrarAutor={mostrarAutor}
+                                            onEliminado={(id) => setEliminados((s) => new Set(s).add(id))}
+                                        />
                                     ) : (
                                         <Tarjeta key={e.op.id} op={e.op} />
                                     )
@@ -267,8 +282,16 @@ function Tarjeta({ op }: { op: Clasificada }) {
  * existía dentro del formulario. Se quedaba en el panel para siempre. El botón
  * va fuera del `<a>` (un botón dentro de un enlace no es HTML válido).
  */
-function TarjetaBorrador({ borrador, mostrarAutor }: { borrador: ResumenBorrador; mostrarAutor: boolean }) {
-    const [estado, setEstado] = useState<"normal" | "confirmando" | "eliminando" | "eliminado">("normal");
+function TarjetaBorrador({
+    borrador,
+    mostrarAutor,
+    onEliminado,
+}: {
+    borrador: ResumenBorrador;
+    mostrarAutor: boolean;
+    onEliminado: (id: string) => void;
+}) {
+    const [estado, setEstado] = useState<"normal" | "confirmando" | "eliminando">("normal");
     const [error, setError] = useState<string | null>(null);
 
     async function eliminar() {
@@ -281,18 +304,19 @@ function TarjetaBorrador({ borrador, mostrarAutor }: { borrador: ResumenBorrador
                 const cuerpo = await respuesta.json().catch(() => ({}));
                 throw new Error(cuerpo.error ?? `Error ${respuesta.status}`);
             }
-            setEstado("eliminado");
+            onEliminado(borrador.id);
         } catch (e) {
             setEstado("confirmando");
             setError(e instanceof Error ? e.message : "No se ha podido eliminar.");
         }
     }
 
-    if (estado === "eliminado") return null;
-
     return (
         <div className="relative rounded-2xl border border-hairline bg-surface transition hover:border-ink/20">
-            <a href={`/presupuestos/nuevo?borrador=${borrador.id}`} className="group block p-4 pr-24">
+            <a
+                href={`/presupuestos/nuevo?borrador=${borrador.id}`}
+                className={`group block p-4 ${estado === "normal" ? "pr-24" : "pr-32"}`}
+            >
                 <p className="line-clamp-2 font-medium text-ink">{borrador.resumen.comunidad}</p>
                 <p className="mt-1 text-xs text-muted">
                     {borrador.resumen.administrador ?? "Sin administrador"}
@@ -313,6 +337,7 @@ function TarjetaBorrador({ borrador, mostrarAutor }: { borrador: ResumenBorrador
                     <button
                         type="button"
                         onClick={() => setEstado("confirmando")}
+                        aria-label={`Eliminar borrador de ${borrador.resumen.comunidad}`}
                         className="cursor-pointer rounded-lg border border-hairline px-2 py-1 text-[11px] text-muted transition hover:text-ink"
                     >
                         Eliminar

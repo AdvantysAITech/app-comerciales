@@ -26,6 +26,7 @@ import { listarPartidas } from "../../lib/documentos/tarifa";
 import { construirPayload } from "../../lib/visita/payload";
 import { getModulos } from "../../lib/catalogo";
 import type { LineaPropuesta, Propuesta } from "../../lib/propuesta/tipos";
+import { textoMencionaAmianto } from "../../lib/catalogo/licencias";
 import type { AjustesPresupuesto } from "../../lib/documentos/ajustes";
 
 let fallos = 0;
@@ -123,6 +124,14 @@ const propuesta = (lineas: LineaPropuesta[]): Propuesta => ({ generadaEn: "", li
         VERTICAL
     );
     comprobar(!cype.encontrado, "Vertical: un resultado de CYPE con amianto se descarta");
+}
+
+// 2b. Menciones que niegan el amianto ------------------------------------------
+{
+    comprobar(textoMencionaAmianto("retirar bajante de fibrocemento"), "'bajante de fibrocemento' es amianto");
+    comprobar(!textoMencionaAmianto("sustituir bajante de PVC, no de uralita"), "'no de uralita' no es amianto");
+    comprobar(!textoMencionaAmianto("mortero sin amianto"), "'sin amianto' no es amianto");
+    comprobar(!textoMencionaAmianto("pintar la primera planta"), "'primera' no dispara RERA");
 }
 
 // 3. Misma partida con dos precios ---------------------------------------------

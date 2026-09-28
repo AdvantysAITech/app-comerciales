@@ -14,7 +14,12 @@ import { AltaAdministrador, AltaComunidad } from "@/components/forms/AltaRapida"
 import { PasoFinca } from "@/components/forms/PasoFinca";
 import type { Rol } from "@/lib/roles";
 import { getModulos, type ModuloTrabajo } from "@/lib/catalogo";
-import { ALERTA_AMIANTO_PROPUESTA, esPartidaAmianto } from "@/lib/catalogo/licencias";
+import {
+    ALERTA_AMIANTO_PROPUESTA,
+    esPartidaAmianto,
+    MOTIVO_SIN_LICENCIA,
+    partidaPermitida,
+} from "@/lib/catalogo/licencias";
 import { conflictosDeCodigo } from "@/lib/propuesta/conflictos";
 import { filtrarSinPrecio } from "@/lib/catalogo/disponibilidad";
 import type { DocumentoAdjunto } from "@/lib/documentos/tipos";
@@ -433,7 +438,12 @@ export function FormularioPresupuesto({
                 // antes se decía "Sin conexión" y se reintentaba cada 15 s para
                 // siempre (28/09/2026). Se reintenta solo sin red o con 5xx; si
                 // no, se dice el motivo y se vuelve a probar con el siguiente cambio.
-                const rechazo = error instanceof ErrorServidor && error.status < 500;
+                // 408 y 429 son transitorios: se reintentan como un fallo de red.
+                const rechazo =
+                    error instanceof ErrorServidor &&
+                    error.status < 500 &&
+                    error.status !== 408 &&
+                    error.status !== 429;
                 setNube({
                     estado: "error",
                     mensaje: rechazo
@@ -630,6 +640,7 @@ export function FormularioPresupuesto({
         setDictadoPorModulo({});
         setPropuesta(null);
         setRevisando(false);
+        setQuitandoModulo(null);
         setBorradorRecuperado(null);
         setEligiendoFinca(!oportunidadOrigen);
     }
@@ -658,6 +669,8 @@ export function FormularioPresupuesto({
     const lineasConProblemas = (propuesta?.lineas ?? []).filter((l) => problemasDeLinea(l).length > 0);
     const buscandoCype = (propuesta?.lineas ?? []).some((l) => l.pendienteCype);
     const conflictos = useMemo(() => conflictosDeCodigo(propuesta?.lineas ?? []), [propuesta]);
+    /** Misma regla que el servidor: sin esto el comercial solo se enteraba al pulsar "Crear". */
+    const sinLicencia = (propuesta?.lineas ?? []).filter((l) => !partidaPermitida(subcuenta, l));
 
     /** Qué falta para crear el presupuesto desde la revisión. */
     const motivoBloqueo = faltanDatosGenerales
@@ -668,7 +681,9 @@ export function FormularioPresupuesto({
             ? "Espera a que termine la búsqueda en CYPE"
             : lineasConProblemas.length > 0
               ? `Completa ${lineasConProblemas.length === 1 ? "1 partida" : `${lineasConProblemas.length} partidas`} (medición, precio o descripción)`
-              : conflictos.length > 0
+              : sinLicencia.length > 0
+                ? `Quita «${sinLicencia[0].descripcionCorta || sinLicencia[0].codigo}»: ${MOTIVO_SIN_LICENCIA}`
+                : conflictos.length > 0
                 ? conflictos[0].mensaje
                 : modulosSinFotosSuficientes.length > 0
                 ? `Faltan fotos en: ${modulosSinFotosSuficientes.map(etiqueta).join(", ")}`
@@ -903,6 +918,18 @@ export function FormularioPresupuesto({
                         Ir a la oportunidad para generar el presupuesto
                     </a>
                 ) : (
+                    <>
+                    {/* Flujo con IA sin documento (falló la generación): el aviso
+                        dice "ábrelo desde la oportunidad", así que se da el enlace
+                        (28/09/2026). */}
+                    {propuesta && resultado.oportunidades[0] && (
+                        <a
+                            href={`/oportunidades/${resultado.oportunidades[0].id}`}
+                            className="mt-4 block w-full rounded-xl bg-ink py-3 text-center text-sm font-semibold text-canvas"
+                        >
+                            Ir a la oportunidad
+                        </a>
+                    )}
                     <button
                         type="button"
                         // Recarga completa: la visita nueva no hereda el id del
@@ -914,6 +941,7 @@ export function FormularioPresupuesto({
                     >
                         Registrar otro presupuesto
                     </button>
+                    </>
                 )}
             </div>
         );
@@ -1243,7 +1271,11 @@ export function FormularioPresupuesto({
                                     <button
                                         type="button"
                                         onClick={() => {
-                                            alternarModulo(quitandoModulo);
+                                            // Solo quita: si entretanto ya no está elegido
+                                            // (p. ej. "Empezar de cero"), no se vuelve a añadir.
+                                            if (modulosElegidos.includes(quitandoModulo.key)) {
+                                                alternarModulo(quitandoModulo);
+                                            }
                                             setQuitandoModulo(null);
                                         }}
                                         className="cursor-pointer rounded-lg bg-red-600 px-2.5 py-1.5 text-xs font-medium text-white"
