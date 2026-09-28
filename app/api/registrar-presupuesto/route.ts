@@ -66,7 +66,7 @@ export async function POST(request: NextRequest) {
     // por el comercial. Se valida aquí, en servidor, que todas son calculables.
     let propuesta: Propuesta | null = null;
     if (entrada.propuesta) {
-        const validacion = validarPropuesta(entrada.propuesta, entrada.modulosElegidos);
+        const validacion = validarPropuesta(entrada.propuesta, entrada.modulosElegidos, subcuenta);
         if (!validacion.ok) {
             return NextResponse.json(
                 { error: `Revisa las partidas: ${validacion.errores.join(" · ")}` },

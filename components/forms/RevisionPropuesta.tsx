@@ -9,6 +9,14 @@ import {
     type PartidaCatalogo,
     type Propuesta,
 } from "@/lib/propuesta/tipos";
+import type { ConflictoCodigo } from "@/lib/propuesta/conflictos";
+
+/** Minúsculas y sin tildes, para buscar "demolicion" y encontrar "demolición". */
+const sinTildes = (t: string) =>
+    t
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "");
 
 /**
  * Revisión de la propuesta por IA, por el comercial (27/09/2026).
@@ -31,6 +39,8 @@ type Props = {
     capitulos: CapituloCatalogo[];
     onCambiar: (propuesta: Propuesta) => void;
     onReintentarCype: (lineaId: string) => void;
+    /** Misma partida con precios o unidades distintos (lib/propuesta/conflictos.ts). */
+    conflictos?: ConflictoCodigo[];
     deshabilitado?: boolean;
 };
 
@@ -67,8 +77,11 @@ export function RevisionPropuesta({
     capitulos,
     onCambiar,
     onReintentarCype,
+    conflictos = [],
     deshabilitado = false,
 }: Props) {
+    /** Mensaje de conflicto de cada línea afectada. */
+    const conflictoDe = new Map(conflictos.flatMap((c) => c.ids.map((id) => [id, c.mensaje] as const)));
     /** Texto de los campos numéricos mientras se escribe ("12," no es un número todavía). */
     const [textos, setTextos] = useState<Record<string, string>>({});
     /** Buscador abierto: para añadir a un módulo o para sustituir una línea. */
@@ -109,6 +122,8 @@ export function RevisionPropuesta({
             editar(buscador.sustituir, {
                 codigo: p.codigo,
                 origen: "tarifa",
+                // La unidad de la partida nueva, que es la de su precio (28/09/2026).
+                unidad: p.unidad,
                 descripcionCorta: p.descripcion,
                 descripcionLarga: null,
                 precioUnitario: p.precio,
@@ -176,16 +191,12 @@ export function RevisionPropuesta({
     }
 
     const resultados = useMemo(() => {
-        const q = consulta
-            .trim()
-            .toLowerCase()
-            .normalize("NFD")
-            .replace(/[̀-ͯ]/g, "");
+        const q = sinTildes(consulta.trim());
         if (q.length < 2) return [];
         const terminos = q.split(/\s+/);
         return catalogo
             .filter((p) => {
-                const heno = `${p.codigo} ${p.descripcion}`.toLowerCase();
+                const heno = sinTildes(`${p.codigo} ${p.descripcion}`);
                 return terminos.every((t) => heno.includes(t));
             })
             .slice(0, 25);
@@ -268,6 +279,7 @@ export function RevisionPropuesta({
                                     onQuitar={() => cambiarLineas(lineas.filter((x) => x.id !== l.id))}
                                     onSustituir={() => setBuscador({ modulo: m.key, sustituir: l.id })}
                                     onReintentar={() => onReintentarCype(l.id)}
+                                    conflicto={conflictoDe.get(l.id) ?? null}
                                     deshabilitado={deshabilitado}
                                 />
                             ))}
@@ -376,9 +388,11 @@ function Linea({
     onQuitar,
     onSustituir,
     onReintentar,
+    conflicto,
     deshabilitado,
 }: {
     linea: LineaPropuesta;
+    conflicto: string | null;
     capitulos: CapituloCatalogo[];
     valorCampo: (campo: "cantidad" | "precioUnitario") => string;
     onNumero: (campo: "cantidad" | "precioUnitario", valor: string) => void;
@@ -507,6 +521,7 @@ function Linea({
                 </p>
             )}
             {l.aviso && <p className="mt-1.5 text-[11px] text-amber-700 dark:text-amber-400">{l.aviso}</p>}
+            {conflicto && <p className="mt-1.5 text-[11px] text-red-600 dark:text-red-400">{conflicto}</p>}
             {problemas.length > 0 && !l.pendienteCype && (
                 <p className="mt-1 text-[11px] text-red-600 dark:text-red-400">Falta: {problemas.join(", ")}</p>
             )}

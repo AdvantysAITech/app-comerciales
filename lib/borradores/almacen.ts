@@ -262,7 +262,10 @@ export async function crearBorrador(
 
     if (entrada.oportunidadId) {
         const existente = await borradorDeOportunidad(s, entrada.oportunidadId);
-        if (existente) return existente;
+        // Se guardan los datos que llegan (28/09/2026). Antes se devolvía el
+        // existente tal cual: el formulario daba por guardado lo que acababa de
+        // enviar y el servidor seguía con los datos viejos.
+        if (existente) return (await guardarBorrador(s, existente.id, entrada)) ?? existente;
     }
 
     const ahora = new Date().toISOString();

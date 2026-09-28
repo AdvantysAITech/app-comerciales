@@ -14,6 +14,8 @@ import { AltaAdministrador, AltaComunidad } from "@/components/forms/AltaRapida"
 import { PasoFinca } from "@/components/forms/PasoFinca";
 import type { Rol } from "@/lib/roles";
 import { getModulos, type ModuloTrabajo } from "@/lib/catalogo";
+import { ALERTA_AMIANTO_PROPUESTA, esPartidaAmianto } from "@/lib/catalogo/licencias";
+import { conflictosDeCodigo } from "@/lib/propuesta/conflictos";
 import { filtrarSinPrecio } from "@/lib/catalogo/disponibilidad";
 import type { DocumentoAdjunto } from "@/lib/documentos/tipos";
 import { normalizarNombre } from "@/lib/texto";
@@ -103,6 +105,17 @@ type Props = {
 };
 
 type Generacion = { fase: "extrayendo" } | { fase: "cype"; hechas: number; total: number } | { fase: "creando" };
+
+/** Respuesta de error del servidor, para distinguirla de un fallo de red. */
+class ErrorServidor extends Error {
+    constructor(
+        readonly status: number,
+        mensaje?: string
+    ) {
+        super(mensaje ?? `Error ${status}`);
+        this.name = "ErrorServidor";
+    }
+}
 
 /** Búsquedas en CYPE a la vez. Más satura la API y no acaba antes. */
 const CYPE_EN_PARALELO = 4;
@@ -225,6 +238,8 @@ export function FormularioPresupuesto({
     const [generacion, setGeneracion] = useState<Generacion | null>(null);
     const [errorPropuesta, setErrorPropuesta] = useState<string | null>(null);
     const [confirmandoRehacer, setConfirmandoRehacer] = useState(false);
+    /** Tipo de trabajo con contenido que el comercial quiere quitar: se confirma. */
+    const [quitandoModulo, setQuitandoModulo] = useState<ModuloTrabajo | null>(null);
 
     // --- Borrador en la app ------------------------------------------------
     const [borradorId, setBorradorId] = useState<string | null>(borrador?.id ?? null);
@@ -331,6 +346,14 @@ export function FormularioPresupuesto({
         }
 
         rehidratado.current = true;
+
+        // Búsquedas en CYPE que se quedaron a medias (28/09/2026): el
+        // autoguardado recoge las líneas "buscando" y, si el comercial bloqueó
+        // el móvil o recargó, nadie las relanzaba. Se quedaban en "Buscando en
+        // CYPE…" para siempre y el presupuesto no se podía crear.
+        const propuestaInicial = local && localGana ? local.propuesta : base?.propuesta;
+        const aMedias = (propuestaInicial?.lineas ?? []).filter((l) => l.pendienteCype);
+        if (aMedias.length > 0) void completarCype(aMedias);
         // Solo al montar, a propósito (ver comentario de arriba).
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
@@ -366,8 +389,8 @@ export function FormularioPresupuesto({
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({ datos, oportunidadId: oportunidadOrigen?.id ?? null, administrador }),
                     });
-                    const cuerpo = await respuesta.json();
-                    if (!respuesta.ok) throw new Error(cuerpo.error ?? `Error ${respuesta.status}`);
+                    const cuerpo = await respuesta.json().catch(() => ({}));
+                    if (!respuesta.ok) throw new ErrorServidor(respuesta.status, cuerpo.error);
 
                     // Se envió el presupuesto mientras se creaba: el borrador sobra.
                     if (enviado.current) {
@@ -392,7 +415,7 @@ export function FormularioPresupuesto({
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({ datos, administrador }),
                     });
-                    const cuerpo = await respuesta.json();
+                    const cuerpo = await respuesta.json().catch(() => ({}));
                     if (respuesta.status === 404) {
                         perdido.current = true;
                         setNube({
@@ -401,13 +424,23 @@ export function FormularioPresupuesto({
                         });
                         return;
                     }
-                    if (!respuesta.ok) throw new Error(cuerpo.error ?? `Error ${respuesta.status}`);
+                    if (!respuesta.ok) throw new ErrorServidor(respuesta.status, cuerpo.error);
                     ultimoEnviado.current = serial;
                     setNube({ estado: "guardado", en: cuerpo.actualizadoEn });
                 }
-            } catch {
-                setNube({ estado: "error", mensaje: "Sin conexión: guardado solo en este dispositivo. Se reintentará." });
-                setTimeout(() => setReintento((n) => n + 1), REINTENTO_NUBE);
+            } catch (error) {
+                // Un rechazo del servidor (413, 400...) no se arregla reintentando:
+                // antes se decía "Sin conexión" y se reintentaba cada 15 s para
+                // siempre (28/09/2026). Se reintenta solo sin red o con 5xx; si
+                // no, se dice el motivo y se vuelve a probar con el siguiente cambio.
+                const rechazo = error instanceof ErrorServidor && error.status < 500;
+                setNube({
+                    estado: "error",
+                    mensaje: rechazo
+                        ? `No se ha podido guardar el borrador en la app: ${error.message}. Sigue guardado en este dispositivo.`
+                        : "Sin conexión: guardado solo en este dispositivo. Se reintentará.",
+                });
+                if (!rechazo) setTimeout(() => setReintento((n) => n + 1), REINTENTO_NUBE);
             } finally {
                 creando.current = false;
             }
@@ -467,7 +500,26 @@ export function FormularioPresupuesto({
         [subcuenta, modulosElegidos, seleccion]
     );
 
-    const modulosConAlerta = useMemo(() => new Set(alertas.map((a) => a.moduloKey)), [alertas]);
+    /**
+     * Aviso de amianto de la propuesta por IA (28/09/2026). El de `alertas` sale
+     * del árbol de partidas, que el flujo con IA ya no rellena: sin esto no
+     * saltaba nunca, ni tampoco el mínimo de 3 fotos.
+     */
+    const alertasPropuesta = useMemo(() => {
+        const keys = new Set((propuesta?.lineas ?? []).filter(esPartidaAmianto).map((l) => l.moduloKey));
+        return modulosElegidos
+            .filter((k) => keys.has(k))
+            .map((k) => ({
+                ruta: `ia:${k}`,
+                moduloKey: k,
+                moduloLabel: modulos.find((m) => m.key === k)?.label ?? k,
+                alerta: ALERTA_AMIANTO_PROPUESTA,
+            }));
+    }, [propuesta, modulosElegidos, modulos]);
+
+    const todasLasAlertas = useMemo(() => [...alertas, ...alertasPropuesta], [alertas, alertasPropuesta]);
+
+    const modulosConAlerta = useMemo(() => new Set(todasLasAlertas.map((a) => a.moduloKey)), [todasLasAlertas]);
 
     /** Minimo de fotos de un modulo: el del catalogo, o el de alerta si es mayor. */
     const minimoFotos = useCallback(
@@ -482,6 +534,25 @@ export function FormularioPresupuesto({
         () => modulosElegidos.filter((key) => (fotosPorModulo[key]?.length ?? 0) < minimoFotos(key)),
         [modulosElegidos, fotosPorModulo, minimoFotos]
     );
+
+    /**
+     * Quitar un tipo de trabajo borra su dictado, sus fotos y sus partidas
+     * revisadas. Con algo dentro se pide confirmación (28/09/2026): un toque
+     * accidental en obra se llevaba todo eso sin aviso.
+     */
+    function pedirAlternarModulo(modulo: ModuloTrabajo) {
+        const elegido = modulosElegidos.includes(modulo.key);
+        const tieneAlgo =
+            (dictadoPorModulo[modulo.key] ?? "").trim() !== "" ||
+            (fotosPorModulo[modulo.key]?.length ?? 0) > 0 ||
+            (documentosPorModulo[modulo.key]?.length ?? 0) > 0 ||
+            (propuesta?.lineas ?? []).some((l) => l.moduloKey === modulo.key);
+        if (elegido && tieneAlgo) {
+            setQuitandoModulo(modulo);
+            return;
+        }
+        alternarModulo(modulo);
+    }
 
     function alternarModulo(modulo: ModuloTrabajo) {
         setModulosElegidos((anterior) => {
@@ -501,6 +572,11 @@ export function FormularioPresupuesto({
                     delete siguiente[modulo.key];
                     return siguiente;
                 });
+                setDocumentosPorModulo((d) => {
+                    const siguiente = { ...d };
+                    delete siguiente[modulo.key];
+                    return siguiente;
+                });
                 return anterior.filter((k) => k !== modulo.key);
             }
             return [...anterior, modulo.key];
@@ -510,7 +586,9 @@ export function FormularioPresupuesto({
     function elegirComunidad(comunidad: ComunidadListado) {
         setComunidadElegidaId(comunidad.id);
         setNombreComunidad(comunidad.nombreDireccion);
-        if (comunidad.administradorId) setAdministradorId(comunidad.administradorId);
+        // Siempre el de la comunidad elegida, también vacío (28/09/2026): al
+        // cambiar de finca se quedaba el administrador de la anterior.
+        setAdministradorId(comunidad.administradorId ?? "");
         setEligiendoFinca(false);
     }
 
@@ -579,6 +657,7 @@ export function FormularioPresupuesto({
 
     const lineasConProblemas = (propuesta?.lineas ?? []).filter((l) => problemasDeLinea(l).length > 0);
     const buscandoCype = (propuesta?.lineas ?? []).some((l) => l.pendienteCype);
+    const conflictos = useMemo(() => conflictosDeCodigo(propuesta?.lineas ?? []), [propuesta]);
 
     /** Qué falta para crear el presupuesto desde la revisión. */
     const motivoBloqueo = faltanDatosGenerales
@@ -589,7 +668,9 @@ export function FormularioPresupuesto({
             ? "Espera a que termine la búsqueda en CYPE"
             : lineasConProblemas.length > 0
               ? `Completa ${lineasConProblemas.length === 1 ? "1 partida" : `${lineasConProblemas.length} partidas`} (medición, precio o descripción)`
-              : modulosSinFotosSuficientes.length > 0
+              : conflictos.length > 0
+                ? conflictos[0].mensaje
+                : modulosSinFotosSuficientes.length > 0
                 ? `Faltan fotos en: ${modulosSinFotosSuficientes.map(etiqueta).join(", ")}`
                 : null;
 
@@ -962,6 +1043,19 @@ export function FormularioPresupuesto({
                             </p>
                         )}
 
+                        {alertasPropuesta.length > 0 && (
+                            <section className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4">
+                                <p className={ESTILO_TITULO}>Requiere atención</p>
+                                <ul className="flex flex-col gap-1.5">
+                                    {alertasPropuesta.map((a) => (
+                                        <li key={a.ruta} className="text-xs text-amber-700 dark:text-amber-400">
+                                            <span className="font-medium">{a.moduloLabel}:</span> {a.alerta}
+                                        </li>
+                                    ))}
+                                </ul>
+                            </section>
+                        )}
+
                         <RevisionPropuesta
                             propuesta={propuesta}
                             modulos={modulosElegidos.map((k) => ({ key: k, label: etiqueta(k) }))}
@@ -969,6 +1063,7 @@ export function FormularioPresupuesto({
                             capitulos={capitulos}
                             onCambiar={setPropuesta}
                             onReintentarCype={reintentarCype}
+                            conflictos={conflictos}
                             deshabilitado={enviando || generacion?.fase === "creando"}
                         />
 
@@ -1112,7 +1207,7 @@ export function FormularioPresupuesto({
                                     <button
                                         key={modulo.key}
                                         type="button"
-                                        onClick={() => alternarModulo(modulo)}
+                                        onClick={() => pedirAlternarModulo(modulo)}
                                         aria-pressed={elegido}
                                         className={`flex min-h-11 cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-sm transition ${
                                             elegido
@@ -1130,6 +1225,34 @@ export function FormularioPresupuesto({
                                 );
                             })}
                         </div>
+
+                        {quitandoModulo && (
+                            <div className="mt-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3">
+                                <p className="text-xs text-amber-700 dark:text-amber-400">
+                                    Si quitas «{quitandoModulo.label}» se borran su dictado, sus fotos y sus partidas de
+                                    la propuesta.
+                                </p>
+                                <div className="mt-2 flex gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => setQuitandoModulo(null)}
+                                        className="cursor-pointer rounded-lg border border-hairline px-2.5 py-1.5 text-xs text-ink"
+                                    >
+                                        Cancelar
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            alternarModulo(quitandoModulo);
+                                            setQuitandoModulo(null);
+                                        }}
+                                        className="cursor-pointer rounded-lg bg-red-600 px-2.5 py-1.5 text-xs font-medium text-white"
+                                    >
+                                        Sí, quitar
+                                    </button>
+                                </div>
+                            </div>
+                        )}
                     </section>
 
                     {modulosElegidos.map((key) => {
@@ -1188,11 +1311,11 @@ export function FormularioPresupuesto({
                         );
                     })}
 
-                    {alertas.length > 0 && (
+                    {todasLasAlertas.length > 0 && (
                         <section className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4">
                             <p className={ESTILO_TITULO}>Requiere atención</p>
                             <ul className="flex flex-col gap-1.5">
-                                {alertas.map((a) => (
+                                {todasLasAlertas.map((a) => (
                                     <li key={a.ruta} className="text-xs text-amber-700 dark:text-amber-400">
                                         <span className="font-medium">{a.moduloLabel}:</span> {a.alerta}
                                     </li>

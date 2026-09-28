@@ -3,6 +3,7 @@ import { sesionApp } from "@/lib/sesion";
 import { iaDisponible, IaNoConfiguradaError } from "@/lib/ia/claude";
 import { buscarEnCype } from "@/lib/propuesta/generar";
 import type { ConsultaCype } from "@/lib/propuesta/tipos";
+import { capituloPermitido } from "@/lib/catalogo/licencias";
 
 /**
  * Busca UN trabajo en el Generador de Precios de CYPE (paso 3).
@@ -42,7 +43,9 @@ export async function POST(request: NextRequest) {
     }
 
     try {
-        const resultado = await buscarEnCype(consulta, typeof cuerpo.capitulo === "string" ? cuerpo.capitulo : "03");
+        const pedido = typeof cuerpo.capitulo === "string" ? cuerpo.capitulo : "03";
+        const capitulo = capituloPermitido(sesion.subcuenta, pedido) ? pedido : "03";
+        const resultado = await buscarEnCype(consulta, capitulo, sesion.subcuenta);
         return NextResponse.json({ resultado });
     } catch (error) {
         const mensaje = error instanceof Error ? error.message : "Error desconocido";

@@ -10,6 +10,7 @@ import {
 } from "@/components/forms/FormularioPresupuesto";
 import { listarCapitulos, listarPartidas } from "@/lib/documentos/tarifa";
 import { iaDisponible } from "@/lib/ia/claude";
+import { capituloPermitido, partidaPermitida } from "@/lib/catalogo/licencias";
 import type { CapituloCatalogo, PartidaCatalogo } from "@/lib/propuesta/tipos";
 import {
     almacenDisponible,
@@ -82,7 +83,13 @@ export default async function NuevoPresupuestoPage({
         }
         if (oportunidad.etapa !== "VISITA_CONCERTADA") {
             return (
-                <Aviso texto="Los datos de esta oportunidad ya se tomaron. Ábrela desde el panel para ver en qué punto está." />
+                <Aviso
+                    texto={
+                        borrador
+                            ? "Los datos de esta oportunidad ya se tomaron, así que este borrador ya no se puede usar. Elimínalo desde el panel."
+                            : "Los datos de esta oportunidad ya se tomaron. Ábrela desde el panel para ver en qué punto está."
+                    }
+                />
             );
         }
 
@@ -119,8 +126,10 @@ export default async function NuevoPresupuestoPage({
             oportunidadOrigen={origen}
             borrador={borradorServidor}
             almacenDisponible={almacen}
-            catalogo={catalogoParaNavegador()}
-            capitulos={listarCapitulos().map((c): CapituloCatalogo => ({ codigo: c.codigo, nombre: c.nombre }))}
+            catalogo={catalogoParaNavegador(subcuenta)}
+            capitulos={listarCapitulos()
+                .filter((c) => capituloPermitido(subcuenta, c.codigo))
+                .map((c): CapituloCatalogo => ({ codigo: c.codigo, nombre: c.nombre }))}
             iaDisponible={iaDisponible()}
         />
     );
@@ -130,8 +139,12 @@ export default async function NuevoPresupuestoPage({
  * Tarifa para buscar y añadir partidas en la revisión. SIN `precioCype`: es el
  * coste interno y estas props viajan al navegador.
  */
-function catalogoParaNavegador(): PartidaCatalogo[] {
-    return listarPartidas().map((p) => ({
+function catalogoParaNavegador(subcuenta: string): PartidaCatalogo[] {
+    // Sin las partidas que la subcuenta no puede presupuestar (amianto en
+    // Vertical, 28/09/2026).
+    return listarPartidas()
+        .filter((p) => partidaPermitida(subcuenta, p))
+        .map((p) => ({
         codigo: p.codigo,
         descripcion: p.descripcionCorta,
         unidad: p.unidad,

@@ -299,7 +299,9 @@ export async function registrarPresupuesto(
     for (const [indice, grupo] of grupos.entries()) {
         const keys = grupo.modulos.map((m) => m.key);
         const payloadGrupo = payloadDelGrupo(payload, keys);
-        const modeloNegocio = modeloNegocioComun(grupo.modulos);
+        // Solo los módulos con partidas: uno que viaja solo por sus fotos (anexo)
+        // no cambia el modelo de negocio del presupuesto (28/09/2026).
+        const modeloNegocio = modeloNegocioComun(grupo.modulos.filter((m) => m.partidas.length > 0));
 
         const json = JSON.stringify(payloadGrupo);
         const nombre = nombreOportunidad(comunidad.nombreDireccion, grupo.etiqueta);

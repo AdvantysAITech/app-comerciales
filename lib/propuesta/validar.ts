@@ -1,5 +1,7 @@
 import { obtenerCapitulo, obtenerPartida } from "@/lib/documentos/tarifa";
 import { normalizarUnidad, type LineaPropuesta, type OrigenLinea, type Propuesta } from "./tipos";
+import { MOTIVO_SIN_LICENCIA, partidaPermitida } from "@/lib/catalogo/licencias";
+import { conflictosDeCodigo } from "./conflictos";
 
 /**
  * lib/propuesta/validar.ts
@@ -14,7 +16,12 @@ import { normalizarUnidad, type LineaPropuesta, type OrigenLinea, type Propuesta
  *  - una línea "tarifa" existe en la tarifa, y su descripción es la del
  *    catálogo (no la que diga el navegador);
  *  - ninguna línea sigue pendiente de CYPE;
- *  - el capítulo existe y el módulo es uno de los elegidos.
+ *  - el capítulo existe y el módulo es uno de los elegidos;
+ *  - la subcuenta tiene licencia para la partida (amianto en Vertical,
+ *    28/09/2026: la propuesta no pasa por la poda del catálogo);
+ *  - una misma partida no llega con dos precios o dos unidades (28/09/2026):
+ *    el motor las junta en una línea con el PRIMER precio y el documento no
+ *    cuadraría con lo que el comercial vio en la revisión.
  */
 
 const ORIGENES: readonly OrigenLinea[] = ["tarifa", "cype", "manual"];
@@ -25,10 +32,19 @@ const numeroONull = (v: unknown) => (typeof v === "number" && Number.isFinite(v)
 
 export type ResultadoValidacion = { ok: true; propuesta: Propuesta } | { ok: false; errores: string[] };
 
-export function validarPropuesta(bruta: unknown, modulosElegidos: readonly string[]): ResultadoValidacion {
+export function validarPropuesta(
+    bruta: unknown,
+    modulosElegidos: readonly string[],
+    subcuenta: string
+): ResultadoValidacion {
     const errores: string[] = [];
     const p = (bruta && typeof bruta === "object" ? bruta : {}) as Partial<Propuesta>;
-    const brutas = Array.isArray(p.lineas) ? p.lineas.slice(0, MAX_LINEAS) : [];
+    const todas = Array.isArray(p.lineas) ? p.lineas : [];
+    // Antes se recortaba en silencio a 200: las de más desaparecían del documento.
+    if (todas.length > MAX_LINEAS) {
+        errores.push(`La propuesta tiene ${todas.length} partidas; el máximo es ${MAX_LINEAS}.`);
+    }
+    const brutas = todas.slice(0, MAX_LINEAS);
     const modulos = new Set(modulosElegidos);
     const lineas: LineaPropuesta[] = [];
 
@@ -71,6 +87,9 @@ export function validarPropuesta(bruta: unknown, modulosElegidos: readonly strin
             errores.push(`"${nombre}": falta la descripción.`);
         }
         if (!obtenerCapitulo(capitulo)) errores.push(`"${nombre}": capítulo "${capitulo}" inexistente.`);
+        if (!partidaPermitida(subcuenta, { codigo, capitulo, descripcionCorta, descripcionLarga })) {
+            errores.push(`"${nombre}": ${MOTIVO_SIN_LICENCIA}`);
+        }
 
         lineas.push({
             id: texto(l.id, 40) || `l${i + 1}`,
@@ -90,6 +109,8 @@ export function validarPropuesta(bruta: unknown, modulosElegidos: readonly strin
             aviso: null,
         });
     }
+
+    for (const conflicto of conflictosDeCodigo(lineas)) errores.push(conflicto.mensaje);
 
     if (errores.length > 0) return { ok: false, errores };
 

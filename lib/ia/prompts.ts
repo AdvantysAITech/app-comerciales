@@ -108,7 +108,12 @@ export const HERRAMIENTAS_CYPE = [
         allowed_domains: ["generadordeprecios.info"],
     },
     {
-        type: "web_fetch_20260318",
+        // Versión básica a propósito (28/09/2026). Desde web_fetch_20260209 la
+        // API puede aplicar "filtrado dinámico" con ejecución de código, y
+        // entonces el texto de la página no llega entero en el bloque
+        // `web_fetch_tool_result`, que es contra lo que `validarCype` comprueba
+        // código y precio. Esta versión tiene todo lo que se usa aquí.
+        type: "web_fetch_20250910",
         name: "web_fetch",
         // Cada descarga son segundos: con 3 cabe en el minuto que da Vercel.
         max_uses: 3,

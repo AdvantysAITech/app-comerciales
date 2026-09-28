@@ -261,24 +261,87 @@ function Tarjeta({ op }: { op: Clasificada }) {
  * Borrador de la app. `<a>` y no `<Link>`: el formulario lee el borrador en
  * servidor al cargar, y una navegación de cliente podía servir una versión en
  * caché de la página con los datos de la visita anterior.
+ *
+ * Eliminar desde la tarjeta (28/09/2026): un borrador cuya oportunidad ya no
+ * está en "Visita concertada" no se puede abrir, y el botón de eliminar solo
+ * existía dentro del formulario. Se quedaba en el panel para siempre. El botón
+ * va fuera del `<a>` (un botón dentro de un enlace no es HTML válido).
  */
 function TarjetaBorrador({ borrador, mostrarAutor }: { borrador: ResumenBorrador; mostrarAutor: boolean }) {
+    const [estado, setEstado] = useState<"normal" | "confirmando" | "eliminando" | "eliminado">("normal");
+    const [error, setError] = useState<string | null>(null);
+
+    async function eliminar() {
+        setEstado("eliminando");
+        setError(null);
+        try {
+            const respuesta = await fetch(`/api/borradores/${borrador.id}`, { method: "DELETE" });
+            // 404: ya no existía. Para el comercial es lo mismo que eliminarlo.
+            if (!respuesta.ok && respuesta.status !== 404) {
+                const cuerpo = await respuesta.json().catch(() => ({}));
+                throw new Error(cuerpo.error ?? `Error ${respuesta.status}`);
+            }
+            setEstado("eliminado");
+        } catch (e) {
+            setEstado("confirmando");
+            setError(e instanceof Error ? e.message : "No se ha podido eliminar.");
+        }
+    }
+
+    if (estado === "eliminado") return null;
+
     return (
-        <a
-            href={`/presupuestos/nuevo?borrador=${borrador.id}`}
-            className="group rounded-2xl border border-hairline bg-surface p-4 transition hover:border-ink/20"
-        >
-            <p className="line-clamp-2 font-medium text-ink">{borrador.resumen.comunidad}</p>
-            <p className="mt-1 text-xs text-muted">
-                {borrador.resumen.administrador ?? "Sin administrador"}
-                {mostrarAutor && borrador.autor ? ` · ${borrador.autor}` : ""}
-            </p>
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-                <span className={`inline-block rounded-full px-2.5 py-1 text-[11px] font-medium ${ESTILO_TONO.borde}`}>
-                    Borrador
-                </span>
-                <span suppressHydrationWarning className="text-[11px] text-muted">Editado {describirAntiguedad(borrador.actualizadoEn)}</span>
+        <div className="relative rounded-2xl border border-hairline bg-surface transition hover:border-ink/20">
+            <a href={`/presupuestos/nuevo?borrador=${borrador.id}`} className="group block p-4 pr-24">
+                <p className="line-clamp-2 font-medium text-ink">{borrador.resumen.comunidad}</p>
+                <p className="mt-1 text-xs text-muted">
+                    {borrador.resumen.administrador ?? "Sin administrador"}
+                    {mostrarAutor && borrador.autor ? ` · ${borrador.autor}` : ""}
+                </p>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <span className={`inline-block rounded-full px-2.5 py-1 text-[11px] font-medium ${ESTILO_TONO.borde}`}>
+                        Borrador
+                    </span>
+                    <span suppressHydrationWarning className="text-[11px] text-muted">
+                        Editado {describirAntiguedad(borrador.actualizadoEn)}
+                    </span>
+                </div>
+            </a>
+
+            <div className="absolute right-3 top-3 flex gap-1.5">
+                {estado === "normal" ? (
+                    <button
+                        type="button"
+                        onClick={() => setEstado("confirmando")}
+                        className="cursor-pointer rounded-lg border border-hairline px-2 py-1 text-[11px] text-muted transition hover:text-ink"
+                    >
+                        Eliminar
+                    </button>
+                ) : (
+                    <>
+                        <button
+                            type="button"
+                            disabled={estado === "eliminando"}
+                            onClick={() => {
+                                setEstado("normal");
+                                setError(null);
+                            }}
+                            className="cursor-pointer rounded-lg border border-hairline px-2 py-1 text-[11px] text-ink disabled:opacity-40"
+                        >
+                            No
+                        </button>
+                        <button
+                            type="button"
+                            disabled={estado === "eliminando"}
+                            onClick={eliminar}
+                            className="cursor-pointer rounded-lg bg-red-600 px-2 py-1 text-[11px] font-medium text-white disabled:opacity-40"
+                        >
+                            {estado === "eliminando" ? "…" : "Sí, eliminar"}
+                        </button>
+                    </>
+                )}
             </div>
-        </a>
+            {error && <p className="px-4 pb-3 text-[11px] text-red-600 dark:text-red-400">{error}</p>}
+        </div>
     );
 }

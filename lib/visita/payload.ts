@@ -6,6 +6,7 @@ import {
     type Propuesta,
 } from "@/lib/propuesta/tipos";
 import { VERSION_CATALOGO } from "@/lib/catalogo";
+import { ALERTA_AMIANTO_PROPUESTA, esPartidaAmianto } from "@/lib/catalogo/licencias";
 import {
     alertasActivas,
     partidasDeModulo,
@@ -153,13 +154,16 @@ export function construirPayload(datos: DatosCaptura): PayloadVisita {
 
             if (datos.propuesta) {
                 const dictado = datos.dictadoPorModulo?.[key]?.trim();
+                const lineas = datos.propuesta.lineas.filter((l) => l.moduloKey === key);
                 return {
                     key: modulo.key,
                     label: modulo.label,
                     modeloNegocioDercas: modulo.modeloNegocioDercas,
-                    partidas: datos.propuesta.lineas.filter((l) => l.moduloKey === key).map(lineaAPartidaPayload),
+                    partidas: lineas.map(lineaAPartidaPayload),
                     fotos: datos.fotosPorModulo[key] ?? [],
-                    alertas: [],
+                    // El aviso de amianto salía del árbol, que el flujo con IA ya
+                    // no usa (28/09/2026): se deduce de las partidas.
+                    alertas: lineas.some(esPartidaAmianto) ? [ALERTA_AMIANTO_PROPUESTA] : [],
                     ...(dictado ? { dictado } : {}),
                 };
             }

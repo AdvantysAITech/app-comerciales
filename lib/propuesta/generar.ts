@@ -2,6 +2,8 @@ import { aCentimos, aEuros } from "@/lib/documentos/motor";
 import { catalogo, listarCapitulos, listarPartidas, obtenerPartida, type PartidaTarifa } from "@/lib/documentos/tarifa";
 import { extraerJson, llamarClaude, textoDescargado, type BloqueRespuesta } from "@/lib/ia/claude";
 import { HERRAMIENTAS_CYPE, mensajeCype, PROMPT_CASAR_TARIFA, PROMPT_CYPE, PROMPT_EXTRAER } from "@/lib/ia/prompts";
+import { leerDecimal } from "@/lib/numero";
+import { capituloPermitido, MOTIVO_SIN_LICENCIA, partidaPermitida } from "@/lib/catalogo/licencias";
 import {
     normalizarUnidad,
     type ConsultaCype,
@@ -50,12 +52,15 @@ type RespuestaExtraccion = {
     sugerencias?: unknown[];
 };
 
+/**
+ * Número de la respuesta del modelo. Si llega como texto se lee con
+ * `leerDecimal` (28/09/2026): la versión anterior quitaba TODOS los puntos y
+ * "12.5" se convertía en 125, el mismo fallo que ya se corrigió en la revisión
+ * de dirección el 24/09/2026.
+ */
 const numero = (v: unknown): number | null => {
     if (typeof v === "number" && Number.isFinite(v)) return v;
-    if (typeof v === "string") {
-        const n = Number(v.replace(/\./g, "").replace(",", "."));
-        return Number.isFinite(n) ? n : null;
-    }
+    if (typeof v === "string") return leerDecimal(v);
     return null;
 };
 const texto = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
@@ -163,11 +168,19 @@ const indiceTarifa: { partida: PartidaTarifa; raices: Set<string> }[] = listarPa
     raices: new Set(raices(p.descripcionCorta)),
 }));
 
-/** Partidas de la tarifa que comparten más palabras con el trabajo. */
-export function candidatasTarifa(t: Pick<Trabajo, "accion" | "elemento" | "detalle">, limite = 15): PartidaTarifa[] {
+/**
+ * Partidas de la tarifa que comparten más palabras con el trabajo. Solo las
+ * que la subcuenta puede presupuestar (licencias, 28/09/2026).
+ */
+export function candidatasTarifa(
+    t: Pick<Trabajo, "accion" | "elemento" | "detalle">,
+    subcuenta: string,
+    limite = 15
+): PartidaTarifa[] {
     const fuertes = raices(`${t.accion} ${t.elemento}`);
     const debiles = raices(t.detalle);
     return indiceTarifa
+        .filter(({ partida }) => partidaPermitida(subcuenta, partida))
         .map(({ partida, raices: r }) => ({
             partida,
             puntos: fuertes.filter((x) => r.has(x)).length * 2 + debiles.filter((x) => r.has(x)).length,
@@ -248,7 +261,7 @@ type ParteModulo = {
  * tiempo. Por tipo de trabajo cada llamada es pequeña, el total es el del más
  * lento y no la suma, y si uno falla los demás salen igual.
  */
-export async function generarPropuesta(modulos: DictadoModulo[]): Promise<Propuesta> {
+export async function generarPropuesta(modulos: DictadoModulo[], subcuenta: string): Promise<Propuesta> {
     const limite = Date.now() + PRESUPUESTO_MS;
     const fotos = fotosParaIa(modulos);
     const nFotos = [...fotos.values()].reduce((s, f) => s + f.length, 0);
@@ -262,7 +275,7 @@ export async function generarPropuesta(modulos: DictadoModulo[]): Promise<Propue
     }
 
     const resultados = await Promise.allSettled(
-        modulos.map((m) => propuestaDeModulo(m, fotos.get(m.key) ?? [], limite))
+        modulos.map((m) => propuestaDeModulo(m, fotos.get(m.key) ?? [], limite, subcuenta))
     );
 
     const partes: ParteModulo[] = [];
@@ -296,7 +309,12 @@ export async function generarPropuesta(modulos: DictadoModulo[]): Promise<Propue
 
 const restante = (limite: number) => limite - Date.now();
 
-async function propuestaDeModulo(m: DictadoModulo, urls: string[], limite: number): Promise<ParteModulo> {
+async function propuestaDeModulo(
+    m: DictadoModulo,
+    urls: string[],
+    limite: number,
+    subcuenta: string
+): Promise<ParteModulo> {
     const avisos: string[] = [];
     const inicio = Date.now();
     const soloDictado = { ...m, fotos: [] };
@@ -327,16 +345,23 @@ async function propuestaDeModulo(m: DictadoModulo, urls: string[], limite: numbe
     }
     const tExtraccion = Date.now() - inicio;
 
-    const { trabajos, observaciones, sugerencias } = sanearExtraccion(
-        extraerJson<RespuestaExtraccion>(extraccion.texto),
-        [m]
-    );
+    const extraidos = sanearExtraccion(extraerJson<RespuestaExtraccion>(extraccion.texto), [m]);
+    const { observaciones, sugerencias } = extraidos;
+
+    // Licencias (28/09/2026): un trabajo de amianto en una subcuenta sin
+    // licencia no se propone. No se quita en silencio: se dice cuál y por qué.
+    const trabajos = extraidos.trabajos.filter((t) => {
+        const frase = [t.accion, t.elemento, t.detalle, t.textoOriginal].join(" ");
+        if (partidaPermitida(subcuenta, { descripcionCorta: frase })) return true;
+        avisos.push(`«${t.textoOriginal || frase.trim()}»: no se incluye. ${MOTIVO_SIN_LICENCIA}`);
+        return false;
+    });
     if (trabajos.length === 0) return { lineas: [], observaciones, sugerencias, fotosAnalizadas, avisos };
 
     // 2. Tarifa. Si no da tiempo o falla, no se pierde la propuesta: esas
     //    líneas se buscan en CYPE y el comercial puede cambiarlas por una de la
     //    tarifa en la revisión.
-    const candidatas = new Map(trabajos.map((t) => [t.id, candidatasTarifa(t)]));
+    const candidatas = new Map(trabajos.map((t) => [t.id, candidatasTarifa(t, subcuenta)]));
     let elegidos = new Map<string, Eleccion>();
     try {
         elegidos = await casarConTarifa(trabajos, candidatas, Math.max(3_000, restante(limite)));
@@ -356,6 +381,15 @@ async function propuestaDeModulo(m: DictadoModulo, urls: string[], limite: numbe
         const partida = eleccion?.codigo ? obtenerPartida(eleccion.codigo) : undefined;
 
         if (partida) {
+            // Se imprime la unidad de la TARIFA, que es la del precio (28/09/2026).
+            // Antes se imprimía la dictada: "12 metros" de una partida en m²
+            // salía como 12 m x precio/m² sin ningún aviso. El comercial puede
+            // cambiarla en la revisión (decisión 27/09/2026), pero a sabiendas.
+            const dictada = normalizarUnidad(t.unidad);
+            const otraUnidad =
+                dictada && dictada !== partida.unidad
+                    ? `Dictado en ${dictada}, pero la partida se mide en ${partida.unidad}: revisa la medición`
+                    : null;
             return {
                 id: nuevoId(),
                 moduloKey: t.moduloKey,
@@ -364,7 +398,7 @@ async function propuestaDeModulo(m: DictadoModulo, urls: string[], limite: numbe
                 origen: "tarifa",
                 descripcionCorta: partida.descripcionCorta,
                 descripcionLarga: partida.descripcionLarga,
-                unidad: normalizarUnidad(t.unidad) ?? partida.unidad,
+                unidad: partida.unidad,
                 cantidad,
                 precioUnitario: partida.tarifaEmpresa,
                 precioReferencia: partida.tarifaEmpresa,
@@ -373,6 +407,7 @@ async function propuestaDeModulo(m: DictadoModulo, urls: string[], limite: numbe
                 url: null,
                 aviso: avisoDe(t, [
                     faltaMedicion,
+                    otraUnidad,
                     nota ? `Medición calculada: ${nota}` : null,
                     eleccion?.confianza === "baja" ? `Encaje dudoso: ${eleccion.motivo}` : null,
                 ]),
@@ -503,7 +538,8 @@ export function leerPrecioEs(v: unknown): number | null {
 export function validarCype(
     bruto: RespuestaCype,
     descargado: { texto: string; urls: string[] },
-    capituloPorDefecto: string
+    capituloPorDefecto: string,
+    subcuenta: string
 ): ResultadoCype {
     if (!bruto.encontrado) return { encontrado: false, motivo: texto(bruto.motivo) || "No se ha encontrado en CYPE." };
 
@@ -537,8 +573,17 @@ export function validarCype(
     }
 
     const unidad = normalizarUnidad(bruto.unidad) ?? "ud";
-    const capitulos = new Set(listarCapitulos().map((c) => c.codigo));
+    const capitulos = new Set(listarCapitulos().map((c) => c.codigo).filter((c) => capituloPermitido(subcuenta, c)));
     const capitulo = capitulos.has(texto(bruto.capitulo)) ? texto(bruto.capitulo) : capituloPorDefecto;
+
+    // Licencias (28/09/2026): CYPE sí tiene unidades de obra de amianto.
+    const candidata = {
+        codigo,
+        capitulo: texto(bruto.capitulo),
+        descripcionCorta: texto(bruto.descripcionCorta),
+        descripcionLarga: texto(bruto.descripcionLarga),
+    };
+    if (!partidaPermitida(subcuenta, candidata)) return { encontrado: false, motivo: MOTIVO_SIN_LICENCIA };
 
     // Margen de la empresa en TypeScript, igual que la tarifa (CYPE x 1,25).
     const precioVenta = redondear2(precioCype * (catalogo.meta.margenEmpresa || 1));
@@ -562,14 +607,20 @@ export function validarCype(
     };
 }
 
-export async function buscarEnCype(consulta: ConsultaCype, capituloPorDefecto: string): Promise<ResultadoCype> {
+export async function buscarEnCype(
+    consulta: ConsultaCype,
+    capituloPorDefecto: string,
+    subcuenta: string
+): Promise<ResultadoCype> {
     let respuesta: { texto: string; bloques: BloqueRespuesta[] };
     try {
         respuesta = await llamarClaude({
             sistema: PROMPT_CYPE,
             mensaje: mensajeCype(
                 consulta,
-                listarCapitulos().map((c) => ({ codigo: c.codigo, nombre: c.nombre }))
+                listarCapitulos()
+                    .filter((c) => capituloPermitido(subcuenta, c.codigo))
+                    .map((c) => ({ codigo: c.codigo, nombre: c.nombre }))
             ),
             herramientas: HERRAMIENTAS_CYPE,
             maxTokens: 4000,
@@ -588,5 +639,5 @@ export async function buscarEnCype(consulta: ConsultaCype, capituloPorDefecto: s
     } catch (error) {
         return { encontrado: false, motivo: error instanceof Error ? error.message : "Respuesta ilegible." };
     }
-    return validarCype(bruto, textoDescargado(respuesta.bloques), capituloPorDefecto);
+    return validarCype(bruto, textoDescargado(respuesta.bloques), capituloPorDefecto, subcuenta);
 }

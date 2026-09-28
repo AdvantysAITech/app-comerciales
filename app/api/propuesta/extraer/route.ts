@@ -46,7 +46,7 @@ export async function POST(request: NextRequest) {
     }
 
     try {
-        const propuesta = await generarPropuesta(modulos);
+        const propuesta = await generarPropuesta(modulos, sesion.subcuenta);
         if (propuesta.lineas.length === 0) {
             return NextResponse.json(
                 { error: "No se ha encontrado ningún trabajo en el dictado. Describe qué hay que hacer y con qué medidas." },

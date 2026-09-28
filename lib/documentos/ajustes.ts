@@ -157,7 +157,13 @@ export function aplicarAjustes(
 
         if (typeof ajuste.cantidad === "number") linea.cantidad = ajuste.cantidad;
         if (typeof ajuste.precioUnitario === "number") linea.precioUnitario = ajuste.precioUnitario;
-        if (ajuste.unidad !== undefined) linea.unidadSeleccionada = ajuste.unidad;
+        if (ajuste.unidad !== undefined) {
+            linea.unidadSeleccionada = ajuste.unidad;
+            // Las partidas de la propuesta por IA traen `unidadImpresa`, que el
+            // motor antepone a `unidadSeleccionada` (28/09/2026). Sin esto el
+            // cambio de unidad de dirección se ignoraba en esas partidas.
+            if (linea.unidadImpresa) linea.unidadImpresa = ajuste.unidad;
+        }
         if (ajuste.descripcionLarga !== undefined) linea.descripcionLarga = ajuste.descripcionLarga;
     }
 

@@ -113,3 +113,62 @@ export function aplicarLicencias(subcuenta: Subcuenta, modulos: readonly ModuloT
         return estructura.length === 0 ? [] : [{ ...modulo, estructura }];
     });
 }
+
+// ---------------------------------------------------------------------------
+// Partidas de la propuesta por IA (28/09/2026)
+// ---------------------------------------------------------------------------
+//
+// La propuesta por IA no pasa por el árbol del catálogo: sus partidas salen de
+// la tarifa, de CYPE o las escribe el comercial. La poda de arriba no les
+// alcanza, así que sin esto la IA le proponía a Vertical partidas AMI y el
+// servidor las aceptaba. Mismo criterio que la poda (opción A, 16/09/2026): en
+// Vertical no existe ningún trabajo de amianto, tampoco el fibrocemento "sin
+// documentación". Es pura (sin tarifa) para poder usarla en el navegador.
+
+/** Capítulo de la tarifa "Retirada de amianto RERA" (AMI001-AMI012). */
+export const CAPITULO_AMIANTO = "07";
+
+const TEXTO_AMIANTO = /amianto|fibrocemento|uralita|\brera\b/i;
+
+/** Aviso de la propuesta cuando hay trabajo de amianto (Scala Valencia). */
+export const ALERTA_AMIANTO_PROPUESTA =
+    "Trabajo con amianto: solo lo ejecuta Scala Valencia con empresa RERA. Añade el plan de trabajo y el " +
+    "transporte de residuos, y mínimo 3 fotos.";
+
+/** Capítulos que la subcuenta no puede presupuestar. */
+export const CAPITULOS_SIN_LICENCIA: Record<Subcuenta, ReadonlySet<string>> = {
+    "scala-valencia": new Set(),
+    "vertical-projects": new Set([CAPITULO_AMIANTO]),
+};
+
+type PartidaComprobable = {
+    codigo?: string | null;
+    capitulo?: string | null;
+    descripcionCorta?: string | null;
+    descripcionLarga?: string | null;
+};
+
+/** La partida es un trabajo de amianto (capítulo 07, código AMI o el texto lo dice). */
+export function esPartidaAmianto(p: PartidaComprobable): boolean {
+    if (p.capitulo === CAPITULO_AMIANTO) return true;
+    if ((p.codigo ?? "").toUpperCase().startsWith("AMI")) return true;
+    return TEXTO_AMIANTO.test(`${p.descripcionCorta ?? ""} ${p.descripcionLarga ?? ""}`);
+}
+
+/** El capítulo existe para esta subcuenta. */
+export function capituloPermitido(subcuenta: string, capitulo: string): boolean {
+    return !CAPITULOS_SIN_LICENCIA[subcuenta as Subcuenta]?.has(capitulo);
+}
+
+/**
+ * La subcuenta puede presupuestar esta partida. Hoy solo lo impide el amianto
+ * en Vertical Projects.
+ */
+export function partidaPermitida(subcuenta: string, p: PartidaComprobable): boolean {
+    if (subcuenta !== "vertical-projects") return true;
+    return !esPartidaAmianto(p) && capituloPermitido(subcuenta, p.capitulo ?? "");
+}
+
+/** Motivo legible del rechazo, para el comercial. */
+export const MOTIVO_SIN_LICENCIA =
+    "Vertical Projects no tiene licencia RERA: los trabajos de amianto o fibrocemento los presupuesta Scala Valencia.";
