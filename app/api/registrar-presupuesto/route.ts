@@ -143,6 +143,11 @@ export async function POST(request: NextRequest) {
             fotosPorModulo: entrada.fotosPorModulo ?? {},
             propuesta,
             dictadoPorModulo: entrada.dictadoPorModulo ?? {},
+            // Solo una URL http(s): es lo único que devuelve /api/subir-foto.
+            imagenPortada:
+                typeof entrada.imagenPortada === "string" && /^https?:\/\//i.test(entrada.imagenPortada.trim())
+                    ? entrada.imagenPortada.trim()
+                    : null,
         }, sesion.usuarioGhl ?? null, oportunidadExistente);
 
         // El borrador de la app ya está en GHL: se elimina (27/09/2026). Si falla,

@@ -10,6 +10,8 @@ import type {
 } from "@/lib/propuesta/tipos";
 import { SubidorFotos } from "@/components/forms/SubidorFotos";
 import { SubidorDocumentos } from "@/components/forms/SubidorDocumentos";
+import { SubidorPortada } from "@/components/forms/SubidorPortada";
+import { PestanasTrabajos, type EstadoTrabajo } from "@/components/forms/PestanasTrabajos";
 import { AltaAdministrador, AltaComunidad } from "@/components/forms/AltaRapida";
 import { PasoFinca } from "@/components/forms/PasoFinca";
 import type { Rol } from "@/lib/roles";
@@ -234,6 +236,8 @@ export function FormularioPresupuesto({
     const [documentosPorModulo, setDocumentosPorModulo] = useState<Record<string, DocumentoAdjunto[]>>(
         base?.documentosPorModulo ?? {}
     );
+    /** Foto de la portada del presupuesto (29/09/2026). */
+    const [imagenPortada, setImagenPortada] = useState<string | null>(base?.imagenPortada ?? null);
 
     // --- Dictado y propuesta por IA -----------------------------------------
     const [dictadoPorModulo, setDictadoPorModulo] = useState<Record<string, string>>(base?.dictadoPorModulo ?? {});
@@ -245,6 +249,11 @@ export function FormularioPresupuesto({
     const [confirmandoRehacer, setConfirmandoRehacer] = useState(false);
     /** Tipo de trabajo con contenido que el comercial quiere quitar: se confirma. */
     const [quitandoModulo, setQuitandoModulo] = useState<ModuloTrabajo | null>(null);
+    /**
+     * Tipo de trabajo que se está rellenando (29/09/2026). Solo se ve uno a la
+     * vez, en pestañas: antes se apilaban todos y había que bajar y bajar.
+     */
+    const [moduloActivo, setModuloActivo] = useState<string | null>(null);
 
     // --- Borrador en la app ------------------------------------------------
     const [borradorId, setBorradorId] = useState<string | null>(borrador?.id ?? null);
@@ -295,6 +304,7 @@ export function FormularioPresupuesto({
             documentosPorModulo,
             dictadoPorModulo,
             propuesta,
+            imagenPortada,
         }),
         [
             nombreComunidad,
@@ -310,6 +320,7 @@ export function FormularioPresupuesto({
             documentosPorModulo,
             dictadoPorModulo,
             propuesta,
+            imagenPortada,
         ]
     );
 
@@ -340,6 +351,7 @@ export function FormularioPresupuesto({
             setDocumentosPorModulo(local.documentosPorModulo ?? {});
             setDictadoPorModulo(local.dictadoPorModulo ?? {});
             setPropuesta(local.propuesta ?? null);
+            setImagenPortada(local.imagenPortada ?? null);
             setRevisando(Boolean(local.propuesta));
             setBorradorRecuperado(local.guardadoEn);
             // Un borrador con finca ya elegida vuelve directo al formulario.
@@ -540,10 +552,30 @@ export function FormularioPresupuesto({
         [modulos, modulosConAlerta]
     );
 
+    /** Pestaña visible: la elegida si sigue en la lista; si no, la primera. */
+    const activo =
+        moduloActivo && modulosElegidos.includes(moduloActivo) ? moduloActivo : (modulosElegidos[0] ?? null);
+
     const modulosSinFotosSuficientes = useMemo(
         () => modulosElegidos.filter((key) => (fotosPorModulo[key]?.length ?? 0) < minimoFotos(key)),
         [modulosElegidos, fotosPorModulo, minimoFotos]
     );
+
+    /** Estado de cada pestaña: lo que le falta se ve sin abrirla. */
+    const estadoTrabajos: EstadoTrabajo[] = modulosElegidos.map((key) => {
+        const label = modulos.find((m) => m.key === key)?.label ?? key;
+        const fotos = fotosPorModulo[key]?.length ?? 0;
+        const minimo = minimoFotos(key);
+        const conDictado = (dictadoPorModulo[key] ?? "").trim() !== "";
+        const detalle = !conDictado
+            ? "Falta el dictado"
+            : fotos < minimo
+              ? `Faltan fotos (${fotos} de ${minimo})`
+              : fotos === 0
+                ? "Sin fotos"
+                : `${fotos} ${fotos === 1 ? "foto" : "fotos"}`;
+        return { key, label, completo: conDictado && fotos >= minimo, detalle };
+    });
 
     /**
      * Quitar un tipo de trabajo borra su dictado, sus fotos y sus partidas
@@ -591,6 +623,9 @@ export function FormularioPresupuesto({
             }
             return [...anterior, modulo.key];
         });
+        // Al añadir un trabajo se abre su pestaña: es lo siguiente que va a
+        // rellenar. Al quitarlo, `activo` cae solo en el primero que quede.
+        if (!modulosElegidos.includes(modulo.key)) setModuloActivo(modulo.key);
     }
 
     function elegirComunidad(comunidad: ComunidadListado) {
@@ -639,6 +674,7 @@ export function FormularioPresupuesto({
         setDocumentosPorModulo({});
         setDictadoPorModulo({});
         setPropuesta(null);
+        setImagenPortada(null);
         setRevisando(false);
         setQuitandoModulo(null);
         setBorradorRecuperado(null);
@@ -824,6 +860,7 @@ export function FormularioPresupuesto({
                     fotosPorModulo,
                     propuesta,
                     dictadoPorModulo,
+                    imagenPortada,
                 }),
             });
 
@@ -1224,32 +1261,80 @@ export function FormularioPresupuesto({
                         </div>
                     </section>
 
+                    {/* Imagen de portada (29/09/2026): es la foto que ocupa la parte
+                        de arriba de la infografía de portada del presupuesto. */}
+                    <section className={ESTILO_SECCION}>
+                        <p className={ESTILO_TITULO}>Imagen de portada</p>
+                        <SubidorPortada
+                            imagen={imagenPortada}
+                            onImagenChange={setImagenPortada}
+                            disabled={enviando}
+                        />
+                        <p className="mt-1.5 text-xs text-muted">
+                            Sale a sangre arriba de la portada del presupuesto. Mejor una foto apaisada de la
+                            fachada o de la zona de la obra.
+                        </p>
+                    </section>
+
                     <section className={ESTILO_SECCION}>
                         <p className={ESTILO_TITULO}>Tipo de trabajo</p>
 
+                        {/* Tocar un trabajo sin elegir lo añade y abre su pestaña.
+                            Tocar uno ya elegido lo abre (antes lo quitaba: un toque
+                            de más en obra se llevaba el dictado y las fotos). Para
+                            quitarlo está la ✕, que sigue pidiendo confirmación. */}
                         <div className="flex flex-wrap gap-2">
                             {modulos.map((modulo) => {
                                 const elegido = modulosElegidos.includes(modulo.key);
                                 const n = conteo[modulo.key] ?? 0;
+                                if (!elegido) {
+                                    return (
+                                        <button
+                                            key={modulo.key}
+                                            type="button"
+                                            onClick={() => alternarModulo(modulo)}
+                                            aria-pressed={false}
+                                            className="flex min-h-11 cursor-pointer items-center gap-1.5 rounded-xl border border-hairline px-3 py-2 text-sm text-ink transition hover:border-ink/20"
+                                        >
+                                            <span className="text-muted">+</span>
+                                            {modulo.label}
+                                        </button>
+                                    );
+                                }
                                 return (
-                                    <button
+                                    <span
                                         key={modulo.key}
-                                        type="button"
-                                        onClick={() => pedirAlternarModulo(modulo)}
-                                        aria-pressed={elegido}
-                                        className={`flex min-h-11 cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-sm transition ${
-                                            elegido
-                                                ? "border-ink/30 bg-ink/[0.04] font-medium text-ink"
-                                                : "border-hairline text-ink hover:border-ink/20"
+                                        className={`flex min-h-11 items-center rounded-xl border text-sm transition ${
+                                            modulo.key === activo
+                                                ? "border-ink/40 bg-ink/[0.08]"
+                                                : "border-ink/25 bg-ink/[0.04]"
                                         }`}
                                     >
-                                        {modulo.label}
-                                        {elegido && n > 0 && (
-                                            <span className="rounded-full border border-hairline px-1.5 text-[11px] text-muted">
-                                                {n}
-                                            </span>
-                                        )}
-                                    </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setModuloActivo(modulo.key)}
+                                            aria-pressed={true}
+                                            className="flex cursor-pointer items-center gap-2 py-2 pl-3 pr-1 font-medium text-ink"
+                                        >
+                                            <span aria-hidden="true">✓</span>
+                                            {modulo.label}
+                                            {n > 0 && (
+                                                <span className="rounded-full border border-hairline px-1.5 text-[11px] font-normal text-muted">
+                                                    {n}
+                                                </span>
+                                            )}
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => pedirAlternarModulo(modulo)}
+                                            aria-label={`Quitar ${modulo.label}`}
+                                            className="flex h-11 w-9 cursor-pointer items-center justify-center rounded-r-xl text-muted transition hover:text-ink"
+                                        >
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="h-3.5 w-3.5">
+                                                <path d="M18 6 6 18M6 6l12 12" />
+                                            </svg>
+                                        </button>
+                                    </span>
                                 );
                             })}
                         </div>
@@ -1287,61 +1372,70 @@ export function FormularioPresupuesto({
                         )}
                     </section>
 
-                    {modulosElegidos.map((key) => {
-                        const modulo = modulos.find((m) => m.key === key);
-                        if (!modulo) return null;
+                    {activo && (
+                        <section className={ESTILO_SECCION}>
+                            <p className={ESTILO_TITULO}>Trabajos seleccionados ({modulosElegidos.length})</p>
+                            <PestanasTrabajos trabajos={estadoTrabajos} activo={activo} onCambiar={setModuloActivo}>
+                                {/* Se montan todos y solo se enseña el activo: cambiar de
+                                    pestaña a mitad de una subida de fotos no la corta ni
+                                    pierde el indicador de progreso. */}
+                                {modulosElegidos.map((key) => {
+                                    const modulo = modulos.find((m) => m.key === key);
+                                    if (!modulo) return null;
+                                    return (
+                                        <div key={key} hidden={key !== activo}>
+                                            <p className="mb-3 text-base font-semibold text-ink">{modulo.label}</p>
 
-                        return (
-                            <section key={key} className={ESTILO_SECCION}>
-                                <p className={ESTILO_TITULO}>{modulo.label}</p>
+                                            {/* Dictado de trabajos y medidas (27/09/2026). Sustituye al
+                                                árbol de partidas: la IA saca las partidas del texto y el
+                                                comercial las revisa después. El micrófono es el del
+                                                teclado del móvil. */}
+                                            <label className="block">
+                                                <span className={ESTILO_LABEL}>Trabajos y medidas</span>
+                                                <textarea
+                                                    value={dictadoPorModulo[key] ?? ""}
+                                                    onChange={(e) =>
+                                                        setDictadoPorModulo((anterior) => ({ ...anterior, [key]: e.target.value }))
+                                                    }
+                                                    rows={5}
+                                                    disabled={enviando || generacion !== null}
+                                                    placeholder="Ej.: picar y reparar frentes de forjado, unos 40 metros lineales. La fachada tiene 400 m² y hay que pintar toda con pintura pétrea…"
+                                                    className={`${ESTILO_CAMPO} resize-y`}
+                                                />
+                                            </label>
+                                            <p className="mt-1.5 text-xs text-muted">
+                                                Díctalo con el micrófono del teclado: qué hay que hacer, en qué elemento y cuánto
+                                                mide (o la medida total y el % a reparar). La IA también mira las fotos de este
+                                                apartado, que salen en el documento bajo «{modulo.label}».
+                                            </p>
 
-                                {/* Dictado de trabajos y medidas (27/09/2026). Sustituye al
-                                    árbol de partidas: la IA saca las partidas del texto y el
-                                    comercial las revisa después. El micrófono es el del
-                                    teclado del móvil. */}
-                                <label className="block">
-                                    <span className={ESTILO_LABEL}>Trabajos y medidas</span>
-                                    <textarea
-                                        value={dictadoPorModulo[key] ?? ""}
-                                        onChange={(e) =>
-                                            setDictadoPorModulo((anterior) => ({ ...anterior, [key]: e.target.value }))
-                                        }
-                                        rows={5}
-                                        disabled={enviando || generacion !== null}
-                                        placeholder="Ej.: picar y reparar frentes de forjado, unos 40 metros lineales. La fachada tiene 400 m² y hay que pintar toda con pintura pétrea…"
-                                        className={`${ESTILO_CAMPO} resize-y`}
-                                    />
-                                </label>
-                                <p className="mt-1.5 text-xs text-muted">
-                                    Díctalo con el micrófono del teclado: qué hay que hacer, en qué elemento y cuánto
-                                    mide (o la medida total y el % a reparar). La IA también mira las fotos de este
-                                    apartado, que salen en el documento bajo «{modulo.label}».
-                                </p>
+                                            {modulo.captura === "importacion" && (
+                                                <div className="mt-4 border-t border-hairline pt-4">
+                                                <SubidorDocumentos
+                                                    documentos={documentosPorModulo[key] ?? []}
+                                                    onDocumentosChange={(docs) =>
+                                                        setDocumentosPorModulo((anterior) => ({ ...anterior, [key]: docs }))
+                                                    }
+                                                    disabled={enviando}
+                                                />
+                                                </div>
+                                            )}
 
-                                {modulo.captura === "importacion" && (
-                                    <div className="mt-4 border-t border-hairline pt-4">
-                                    <SubidorDocumentos
-                                        documentos={documentosPorModulo[key] ?? []}
-                                        onDocumentosChange={(docs) =>
-                                            setDocumentosPorModulo((anterior) => ({ ...anterior, [key]: docs }))
-                                        }
-                                        disabled={enviando}
-                                    />
-                                    </div>
-                                )}
-
-                                <div className="mt-4 border-t border-hairline pt-4">
-                                    <SubidorFotos
-                                        fotos={fotosPorModulo[key] ?? []}
-                                        onFotosChange={(fotos) =>
-                                            setFotosPorModulo((anterior) => ({ ...anterior, [key]: fotos }))
-                                        }
-                                        minimo={minimoFotos(key)}
-                                    />
-                                </div>
-                            </section>
-                        );
-                    })}
+                                            <div className="mt-4 border-t border-hairline pt-4">
+                                                <SubidorFotos
+                                                    fotos={fotosPorModulo[key] ?? []}
+                                                    onFotosChange={(fotos) =>
+                                                        setFotosPorModulo((anterior) => ({ ...anterior, [key]: fotos }))
+                                                    }
+                                                    minimo={minimoFotos(key)}
+                                                />
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </PestanasTrabajos>
+                        </section>
+                    )}
 
                     {todasLasAlertas.length > 0 && (
                         <section className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4">

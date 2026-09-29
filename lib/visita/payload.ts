@@ -85,6 +85,12 @@ export type PayloadVisita = {
     };
     fechaVisita: string;
     observaciones: string;
+    /**
+     * Foto de portada del presupuesto (29/09/2026): URL en la biblioteca de la
+     * subcuenta. Opcional para que las visitas guardadas antes sigan valiendo;
+     * sin ella la portada usa la primera foto de los trabajos.
+     */
+    imagenPortada?: string | null;
     modulos: ModuloPayload[];
 };
 
@@ -110,6 +116,8 @@ export type DatosCaptura = {
      */
     propuesta?: Propuesta | null;
     dictadoPorModulo?: Record<string, string>;
+    /** URL de la imagen de portada ya subida. */
+    imagenPortada?: string | null;
 };
 
 function lineaAPartidaPayload(l: LineaPropuesta): PartidaPayload {
@@ -203,6 +211,7 @@ export function construirPayload(datos: DatosCaptura): PayloadVisita {
         },
         fechaVisita: datos.fechaVisita,
         observaciones: datos.observaciones.trim(),
+        imagenPortada: datos.imagenPortada?.trim() || null,
         modulos,
     };
 }

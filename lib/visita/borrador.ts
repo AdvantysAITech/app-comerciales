@@ -35,6 +35,8 @@ export type BorradorPresupuesto = {
     dictadoPorModulo: Record<string, string>;
     /** Propuesta de partidas de la IA, con lo que el comercial haya corregido. */
     propuesta: Propuesta | null;
+    /** URL de la imagen de portada ya subida (29/09/2026). `null` = sin elegir. */
+    imagenPortada: string | null;
 };
 
 export type DatosBorrador = Omit<BorradorPresupuesto, "version" | "guardadoEn">;
@@ -57,7 +59,8 @@ export function tieneContenido(datos: DatosBorrador): boolean {
         // contenido puede ser el BC3 que acaba de subir. Sin esta comprobación
         // ese borrador se consideraría vacío y no se autoguardaría.
         Object.values(datos.documentosPorModulo).some((docs) => docs.length > 0) ||
-        Object.values(datos.dictadoPorModulo ?? {}).some((d) => d.trim() !== "")
+        Object.values(datos.dictadoPorModulo ?? {}).some((d) => d.trim() !== "") ||
+        Boolean(datos.imagenPortada)
     );
 }
 
@@ -122,6 +125,7 @@ export function cargarBorrador(subcuenta: string): BorradorPresupuesto | null {
 const esObjeto = (v: unknown): v is Record<string, unknown> =>
     typeof v === "object" && v !== null && !Array.isArray(v);
 const texto = (v: unknown): string => (typeof v === "string" ? v : "");
+const esUrl = (v: unknown): v is string => typeof v === "string" && /^https?:\/\//i.test(v.trim());
 
 /**
  * Datos de borrador con la forma esperada, venga de donde venga (localStorage
@@ -153,6 +157,7 @@ export function normalizarDatos(bruto: unknown): DatosBorrador {
             : {},
         propuesta:
             esObjeto(d.propuesta) && Array.isArray(d.propuesta.lineas) ? (d.propuesta as unknown as Propuesta) : null,
+        imagenPortada: esUrl(d.imagenPortada) ? d.imagenPortada : null,
     };
 }
 

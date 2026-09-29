@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { normalizarNombre } from "@/lib/texto";
 
 /**
@@ -12,8 +12,16 @@ import { normalizarNombre } from "@/lib/texto";
  * es lo primero que se ve: o eliges una comunidad del CRM o la creas, y solo
  * entonces se abre el formulario.
  *
+ * DESPLEGABLE (29/09/2026): la lista ya no espera a que se escriban dos letras.
+ * En cuanto el comercial toca la casilla se despliegan TODAS las comunidades de
+ * la subcuenta (orden alfabético) y se van filtrando mientras escribe. La
+ * opción de crear vive dentro del propio desplegable, fija abajo para que no se
+ * pierda con el scroll, y solo propone el texto escrito cuando no coincide
+ * exacto con una comunidad existente (si coincide, lo que toca es elegirla).
+ *
  * El alta en sí la sigue haciendo `AltaRapida` (modales), que pinta el padre:
- * este componente solo busca y avisa.
+ * este componente solo busca y avisa. El antiduplicados de parecidos sigue en
+ * el modal de alta.
  */
 
 type ComunidadListado = { id: string; nombreDireccion: string; administradorId?: string };
@@ -30,7 +38,12 @@ type Props = {
     onCancelar?: () => void;
 };
 
-const MAXIMO_RESULTADOS = 8;
+/**
+ * Tope de filas pintadas. No es por GHL (la lista ya viene entera del
+ * servidor), es por el móvil: cientos de botones en un desplegable con scroll
+ * se notan. Si hay más, se pide que afine escribiendo.
+ */
+const MAXIMO_VISIBLES = 150;
 
 export function PasoFinca({
     comunidades,
@@ -42,21 +55,89 @@ export function PasoFinca({
     onCancelar,
 }: Props) {
     const [consulta, setConsulta] = useState("");
+    // Abierta de entrada: este paso existe solo para elegir finca, así que la
+    // lista se ve sin tener que tocar nada (y se reabre al tocar la casilla).
+    const [abierto, setAbierto] = useState(true);
+    /** Índice de la opción resaltada con teclado. `visibles.length` = "Crear". */
+    const [activo, setActivo] = useState(-1);
+
+    const contenedorRef = useRef<HTMLDivElement>(null);
+    const listaRef = useRef<HTMLUListElement>(null);
+    const idLista = useId();
 
     const nombreAdministrador = useMemo(
         () => new Map(administradores.map((a) => [a.id, a.nombreDespacho ?? "(sin nombre)"])),
         [administradores]
     );
 
-    const resultados = useMemo(() => {
-        const texto = normalizarNombre(consulta);
-        if (texto.length < 2) return [];
-        return comunidades
-            .filter((c) => normalizarNombre(c.nombreDireccion).includes(texto))
-            .slice(0, MAXIMO_RESULTADOS);
-    }, [comunidades, consulta]);
+    /** Orden alfabético una sola vez; el filtro trabaja sobre esta copia. */
+    const ordenadas = useMemo(
+        () =>
+            [...comunidades]
+                .map((c) => ({ ...c, clave: normalizarNombre(c.nombreDireccion) }))
+                .sort((a, b) => a.nombreDireccion.localeCompare(b.nombreDireccion, "es", { numeric: true })),
+        [comunidades]
+    );
 
-    const buscando = normalizarNombre(consulta).length >= 2;
+    const texto = normalizarNombre(consulta);
+
+    const filtradas = useMemo(
+        () => (texto === "" ? ordenadas : ordenadas.filter((c) => c.clave.includes(texto))),
+        [ordenadas, texto]
+    );
+
+    const visibles = filtradas.slice(0, MAXIMO_VISIBLES);
+    const hayCoincidenciaExacta = texto !== "" && ordenadas.some((c) => c.clave === texto);
+    const ofrecerConNombre = texto !== "" && !hayCoincidenciaExacta;
+    const indiceCrear = visibles.length;
+
+    // Cerrar al tocar fuera del buscador.
+    useEffect(() => {
+        if (!abierto) return;
+        function alPulsarFuera(e: PointerEvent) {
+            if (contenedorRef.current && !contenedorRef.current.contains(e.target as Node)) {
+                setAbierto(false);
+            }
+        }
+        document.addEventListener("pointerdown", alPulsarFuera);
+        return () => document.removeEventListener("pointerdown", alPulsarFuera);
+    }, [abierto]);
+
+    // Mantener visible la opción resaltada con teclado.
+    useEffect(() => {
+        if (activo < 0 || !listaRef.current) return;
+        const fila = listaRef.current.querySelector<HTMLElement>(`[data-indice="${activo}"]`);
+        fila?.scrollIntoView({ block: "nearest" });
+    }, [activo]);
+
+    function crear() {
+        setAbierto(false);
+        onCrearComunidad(ofrecerConNombre ? consulta.trim() : "");
+    }
+
+    function elegir(c: ComunidadListado) {
+        setAbierto(false);
+        onElegir({ id: c.id, nombreDireccion: c.nombreDireccion, administradorId: c.administradorId });
+    }
+
+    function onKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+        if (e.key === "ArrowDown") {
+            e.preventDefault();
+            setAbierto(true);
+            setActivo((i) => (i >= indiceCrear ? 0 : i + 1));
+        } else if (e.key === "ArrowUp") {
+            e.preventDefault();
+            setAbierto(true);
+            setActivo((i) => (i <= 0 ? indiceCrear : i - 1));
+        } else if (e.key === "Enter") {
+            e.preventDefault();
+            if (activo >= 0 && activo < visibles.length) elegir(visibles[activo]);
+            else if (activo === indiceCrear) crear();
+            else if (visibles.length === 1) elegir(visibles[0]);
+        } else if (e.key === "Escape") {
+            setAbierto(false);
+        }
+    }
 
     return (
         <div className="flex flex-col gap-3">
@@ -65,51 +146,125 @@ export function PasoFinca({
                     ¿Qué finca vas a visitar?
                 </p>
 
-                <input
-                    type="text"
-                    autoFocus
-                    aria-label="Buscar comunidad"
-                    value={consulta}
-                    onChange={(e) => setConsulta(e.target.value)}
-                    placeholder="Calle y número"
-                    className="w-full rounded-xl border border-hairline bg-canvas px-3 py-2.5 text-sm text-ink placeholder:text-muted focus:border-ink/30 focus:outline-none"
-                />
-
-                {buscando && (
-                    <div className="mt-2 flex flex-col gap-1.5">
-                        {resultados.map((c) => (
-                            <button
-                                key={c.id}
-                                type="button"
-                                onClick={() => onElegir(c)}
-                                className="cursor-pointer rounded-xl border border-hairline px-3 py-2.5 text-left transition hover:border-ink/30"
+                <div ref={contenedorRef}>
+                    <div className="relative">
+                        <input
+                            type="text"
+                            autoFocus
+                            role="combobox"
+                            aria-label="Buscar comunidad"
+                            aria-expanded={abierto}
+                            aria-controls={idLista}
+                            aria-autocomplete="list"
+                            autoComplete="off"
+                            value={consulta}
+                            onFocus={() => setAbierto(true)}
+                            onClick={() => setAbierto(true)}
+                            onChange={(e) => {
+                                setConsulta(e.target.value);
+                                setAbierto(true);
+                                setActivo(-1);
+                            }}
+                            onKeyDown={onKeyDown}
+                            placeholder="Buscar comunidad (calle y número)"
+                            className="w-full rounded-xl border border-hairline bg-canvas py-2.5 pl-3 pr-10 text-sm text-ink placeholder:text-muted focus:border-ink/30 focus:outline-none"
+                        />
+                        <button
+                            type="button"
+                            tabIndex={-1}
+                            aria-label={abierto ? "Cerrar lista" : "Ver todas las comunidades"}
+                            onClick={() => setAbierto((v) => !v)}
+                            className="absolute inset-y-0 right-0 flex w-10 cursor-pointer items-center justify-center text-muted"
+                        >
+                            <svg
+                                viewBox="0 0 20 20"
+                                className={`h-4 w-4 transition-transform ${abierto ? "rotate-180" : ""}`}
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="1.8"
+                                aria-hidden="true"
                             >
-                                <span className="block text-sm text-ink">{c.nombreDireccion}</span>
-                                <span className="mt-0.5 block text-[11px] text-muted">
-                                    {c.administradorId
-                                        ? nombreAdministrador.get(c.administradorId) ?? "Administrador del CRM"
-                                        : "Sin administrador"}
-                                </span>
-                            </button>
-                        ))}
-
-                        {resultados.length === 0 && (
-                            <p className="px-1 py-2 text-xs text-muted">No hay ninguna comunidad con ese nombre.</p>
-                        )}
+                                <path d="M5 8l5 5 5-5" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
+                        </button>
                     </div>
-                )}
 
-                <button
-                    type="button"
-                    onClick={() => onCrearComunidad(consulta.trim())}
-                    className={`mt-3 w-full cursor-pointer rounded-xl py-3 text-sm font-semibold transition ${
-                        buscando && resultados.length === 0
-                            ? "bg-ink text-canvas"
-                            : "border border-hairline text-ink hover:border-ink/30"
-                    }`}
-                >
-                    + Crear comunidad nueva
-                </button>
+                    {abierto && (
+                        <div className="mt-2 overflow-hidden rounded-xl border border-hairline bg-canvas">
+                            <p className="border-b border-hairline px-3 py-1.5 text-[11px] text-muted">
+                                {texto === ""
+                                    ? `${ordenadas.length} comunidades`
+                                    : `${filtradas.length} de ${ordenadas.length} comunidades`}
+                            </p>
+
+                            <ul
+                                id={idLista}
+                                ref={listaRef}
+                                role="listbox"
+                                aria-label="Comunidades"
+                                className="max-h-[45vh] overflow-y-auto overscroll-contain"
+                            >
+                                {visibles.map((c, i) => (
+                                    <li
+                                        key={c.id}
+                                        role="option"
+                                        aria-selected={activo === i}
+                                        data-indice={i}
+                                        onMouseEnter={() => setActivo(i)}
+                                        onClick={() => elegir(c)}
+                                        className={`cursor-pointer border-b border-hairline/60 px-3 py-2.5 last:border-b-0 ${
+                                            activo === i ? "bg-surface" : "hover:bg-surface"
+                                        }`}
+                                    >
+                                        <span className="block text-sm text-ink">{c.nombreDireccion}</span>
+                                        <span className="mt-0.5 block text-[11px] text-muted">
+                                            {c.administradorId
+                                                ? nombreAdministrador.get(c.administradorId) ?? "Administrador del CRM"
+                                                : "Sin administrador"}
+                                        </span>
+                                    </li>
+                                ))}
+
+                                {filtradas.length > MAXIMO_VISIBLES && (
+                                    <li className="px-3 py-2 text-[11px] text-muted">
+                                        Hay {filtradas.length - MAXIMO_VISIBLES} más. Escribe para afinar la búsqueda.
+                                    </li>
+                                )}
+
+                                {visibles.length === 0 && (
+                                    <li className="px-3 py-3 text-xs text-muted">
+                                        {ordenadas.length === 0
+                                            ? "Todavía no hay comunidades en esta cuenta."
+                                            : "No hay ninguna comunidad con ese nombre."}
+                                    </li>
+                                )}
+                            </ul>
+
+                            {/* Crear: fuera del scroll para que siempre se vea. */}
+                            <button
+                                type="button"
+                                data-indice={indiceCrear}
+                                onMouseEnter={() => setActivo(indiceCrear)}
+                                onClick={crear}
+                                className={`w-full cursor-pointer border-t border-hairline px-3 py-3 text-left text-sm font-semibold transition ${
+                                    ofrecerConNombre && visibles.length === 0
+                                        ? "bg-ink text-canvas"
+                                        : activo === indiceCrear
+                                          ? "bg-surface text-ink"
+                                          : "text-ink hover:bg-surface"
+                                }`}
+                            >
+                                {ofrecerConNombre ? (
+                                    <>
+                                        + Crear comunidad «<span className="break-words">{consulta.trim()}</span>»
+                                    </>
+                                ) : (
+                                    "+ Crear comunidad nueva"
+                                )}
+                            </button>
+                        </div>
+                    )}
+                </div>
             </section>
 
             <section className="flex items-center justify-between gap-3 rounded-2xl border border-hairline bg-surface p-4">

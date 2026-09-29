@@ -20,8 +20,9 @@ import { leerPayloadVisita } from "@/lib/documentos/visitaGuardada";
 import { presupuestarConAjustes } from "@/lib/documentos/mapeo-capitulos";
 import { leerAjustes } from "@/lib/documentos/ajustes";
 import { cifrasDelCalculo, type PresupuestoCalculado } from "@/lib/documentos/motor";
-import { prepararDocumento } from "@/lib/documentos/payloadDocumento";
+import { calcularFechaValidez, prepararDocumento } from "@/lib/documentos/payloadDocumento";
 import { assertPortada, construirPortada } from "@/lib/documentos/portada";
+import { prepararImagenPortada } from "@/lib/documentos/imagenPortada";
 import { renderizarPortada } from "@/lib/documentos/portada.svg";
 import { rasterizarSvg } from "@/lib/documentos/rasterizar";
 import { convertirAPdf, conversionDisponible, MIMETYPE_PDF, nombrePdf } from "@/lib/documentos/pdf";
@@ -113,21 +114,28 @@ function registrarAvisos(requestId: string, avisos: readonly string[]): void {
 /**
  * Compone la infografía y devuelve el PNG, o `null` si no se ha podido.
  *
+ * Desde el 29/09/2026 la portada lleva arriba la foto que sube el comercial
+ * ("Imagen de portada"), o la primera foto de los trabajos si no hay. La
+ * descarga va aquí dentro: si falla, la portada sale con fondo liso (aviso),
+ * nunca sin portada por culpa de la foto.
+ *
  * NUNCA lanza. Un presupuesto sin portada es un presupuesto válido; bloquear la
  * emisión por un adorno de portada sería el peor intercambio posible con un
  * comercial esperando en obra. El motivo se devuelve como aviso para que quede
  * constancia de por qué salió sin ella.
  */
-function componerPortada(
+async function componerPortada(
     subcuenta: SubcuentaSlug,
     contexto: Contexto,
     numeroReferencia: string,
     /** Título que ha generado la IA. Si falta, la portada usa su respaldo. */
     titulo: string | null,
     avisos: string[]
-): Uint8Array | null {
+): Promise<Uint8Array | null> {
     try {
         const { presupuesto, payload, comunidad, administrador } = contexto;
+
+        const imagen = await prepararImagenPortada(payload, avisos);
 
         const portada = construirPortada(presupuesto, {
             subcuenta,
@@ -136,8 +144,11 @@ function componerPortada(
             localidad: comunidad.localidad!,
             expediente: numeroReferencia,
             fecha: payload.fechaVisita.split("-").reverse().join("/"),
+            fechaValidez: calcularFechaValidez(payload.fechaVisita),
             administrador: administrador.nombreDespacho ?? "",
             administradorLocalidad: administrador.localidad,
+            imagen,
+            tiposTrabajo: payload.modulos.map((m) => m.label),
         });
 
         // Si la portada no cuadra con el motor, no se pinta. Una infografía que
@@ -356,9 +367,7 @@ export async function GET(
             // falla se queda fuera con un aviso.
             const [odtCrudo, portadaPng, anexoFotos] = await Promise.all([
                 descargarOdt(requestId),
-                Promise.resolve(
-                    componerPortada(subcuenta, contexto, registro.numeroReferencia, tituloGenerado, avisos)
-                ),
+                componerPortada(subcuenta, contexto, registro.numeroReferencia, tituloGenerado, avisos),
                 prepararAnexoFotos(contexto.payload, avisos),
             ]);
 
