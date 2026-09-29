@@ -65,13 +65,20 @@ export async function POST(request: NextRequest) {
         );
     }
 
-    const datos: DatosNuevaComunidad = { nombreDireccion };
-
     const localidad = textoDe(body, "localidad");
-    if (localidad) datos.localidad = localidad;
-
     const provincia = textoDe(body, "provincia");
-    if (provincia) datos.provincia = provincia;
+
+    // Obligatorias (29/09/2026): se imprimen en el presupuesto y, sin ellas,
+    // la generación del documento se rechaza DESPUÉS de haber guardado la
+    // visita. Mismo criterio que el diálogo de alta rápida.
+    if (!localidad || !provincia) {
+        return NextResponse.json(
+            { error: "La localidad y la provincia de la comunidad son obligatorias" },
+            { status: 400 }
+        );
+    }
+
+    const datos: DatosNuevaComunidad = { nombreDireccion, localidad, provincia };
 
     const notasAcceso = textoDe(body, "notasAcceso");
     if (notasAcceso) datos.notasAcceso = notasAcceso;

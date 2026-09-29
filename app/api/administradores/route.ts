@@ -71,6 +71,16 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: "El nombre del despacho es obligatorio" }, { status: 400 });
     }
 
+    // Obligatorias (29/09/2026): la localidad del administrador se imprime en
+    // el presupuesto y, sin ella, la generación del documento se rechaza
+    // DESPUÉS de haber guardado la visita. Mismo criterio que el diálogo.
+    if (!textoDe(body, "localidad") || !textoDe(body, "provincia")) {
+        return NextResponse.json(
+            { error: "La localidad y la provincia del administrador son obligatorias" },
+            { status: 400 }
+        );
+    }
+
     const datos: DatosNuevoAdministrador = { nombreDespacho };
 
     for (const campo of CAMPOS_TEXTO) {

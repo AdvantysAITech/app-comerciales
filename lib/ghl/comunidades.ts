@@ -235,6 +235,12 @@ export async function crearComunidad(
         nombreDireccion: datos.nombreDireccion.trim(),
         numeroViviendas: datos.numeroViviendas,
         notasAcceso: datos.notasAcceso,
+        // Se devuelven (29/09/2026): el formulario comprueba con ellas si el
+        // documento se podrá generar. Sin esto, una comunidad recién dada de
+        // alta CON localidad y provincia aparecía en la app como si no las
+        // tuviera.
+        localidad: datos.localidad?.trim() || undefined,
+        provincia: datos.provincia?.trim() || undefined,
         administradorId: datos.administradorId,
     };
 }

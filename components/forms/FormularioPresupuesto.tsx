@@ -82,8 +82,14 @@ export type BorradorServidor = {
     actualizadoEn: string;
 };
 
-type ComunidadListado = { id: string; nombreDireccion: string; administradorId?: string };
-type AdministradorListado = { id: string; nombreDespacho?: string };
+type ComunidadListado = {
+    id: string;
+    nombreDireccion: string;
+    administradorId?: string;
+    localidad?: string;
+    provincia?: string;
+};
+type AdministradorListado = { id: string; nombreDespacho?: string; localidad?: string; provincia?: string };
 
 type Props = {
     subcuenta: Subcuenta;
@@ -516,6 +522,50 @@ export function FormularioPresupuesto({
 
     const seCrearaComunidad = nombreComunidad.trim() !== "" && !comunidadElegida && !coincidenciaExacta;
 
+    /**
+     * Lo que la generación del documento va a exigir de la finca, comprobado
+     * AQUÍ y no después (29/09/2026).
+     *
+     * `app/api/documentos/generar` rechaza el documento si falta el
+     * administrador, si la comunidad no está en el CRM o si a sus fichas les
+     * falta la localidad o la provincia. Pero eso se descubría DESPUÉS de crear
+     * el presupuesto, con la oportunidad ya fuera de "Visita concertada": el
+     * comercial veía la visita guardada, no salía documento y, en el caso del
+     * administrador, no había forma de corregirlo desde la app.
+     *
+     *  - Comunidad fuera del CRM y administrador vacío BLOQUEAN el botón de
+     *    crear: se arreglan en el momento desde este mismo formulario.
+     *  - Localidad o provincia vacías en una ficha que YA existe solo AVISAN: el
+     *    comercial no puede editar esa ficha desde la app, y bloquearle le
+     *    dejaría con la visita sin guardar. Se completa la ficha en el Sistema
+     *    Advantys y se genera el documento desde la oportunidad.
+     */
+    const comunidadResuelta = comunidadElegida ?? coincidenciaExacta;
+    const administradorElegido = listaAdministradores.find((a) => a.id === administradorId);
+
+    const motivoBloqueoFinca = seCrearaComunidad
+        ? "La comunidad no está en el CRM: vuelve al dictado, pulsa «Cambiar» y elígela de la lista o dala de alta"
+        : !administradorElegido
+          ? "Falta el administrador: vuelve al dictado y elígelo o dalo de alta"
+          : null;
+
+    const avisosFinca: string[] = [];
+    if (comunidadResuelta) {
+        const faltan = [!comunidadResuelta.localidad && "localidad", !comunidadResuelta.provincia && "provincia"].filter(
+            Boolean
+        );
+        if (faltan.length > 0) {
+            avisosFinca.push(`A la ficha de la comunidad le falta ${faltan.join(" y ")}.`);
+        }
+    }
+    if (administradorElegido && !administradorElegido.localidad) {
+        avisosFinca.push(`A la ficha de «${administradorElegido.nombreDespacho ?? "el administrador"}» le falta la localidad.`);
+    }
+    const avisoFinca =
+        avisosFinca.length > 0
+            ? `${avisosFinca.join(" ")} El presupuesto se guardará, pero el documento no saldrá hasta que se complete en el Sistema Advantys.`
+            : null;
+
     /** Partidas de la propuesta por tipo de trabajo, para el contador de los botones. */
     const conteo = useMemo(() => {
         const cuenta: Record<string, number> = {};
@@ -716,6 +766,8 @@ export function FormularioPresupuesto({
     /** Qué falta para crear el presupuesto desde la revisión. */
     const motivoBloqueo = faltanDatosGenerales
         ? "Completa comunidad, contacto, teléfono y fecha"
+        : motivoBloqueoFinca
+          ? motivoBloqueoFinca
         : !propuesta || propuesta.lineas.length === 0
           ? "No hay ninguna partida"
           : buscandoCype
@@ -1158,11 +1210,13 @@ export function FormularioPresupuesto({
                                 <div className="min-w-0">
                                     <span className="block text-xs text-muted">Comunidad</span>
                                     <span className="mt-0.5 block text-sm text-ink">{nombreComunidad}</span>
-                                    <span className="mt-0.5 block text-[11px] text-muted">
-                                        {seCrearaComunidad
-                                            ? "No consta en el CRM: se creará al guardar"
-                                            : "Comunidad del CRM"}
-                                    </span>
+                                    {seCrearaComunidad ? (
+                                        <span className="mt-0.5 block text-[11px] text-amber-700 dark:text-amber-400">
+                                            No consta en el CRM: pulsa «Cambiar» para elegirla de la lista o darla de alta
+                                        </span>
+                                    ) : (
+                                        <span className="mt-0.5 block text-[11px] text-muted">Comunidad del CRM</span>
+                                    )}
                                 </div>
                                 <button
                                     type="button"
@@ -1190,14 +1244,25 @@ export function FormularioPresupuesto({
                                     onChange={(e) => setAdministradorId(e.target.value)}
                                     className={`${ESTILO_CAMPO} cursor-pointer`}
                                 >
-                                    <option value="">-- Sin administrador --</option>
+                                    <option value="">-- Elige el administrador --</option>
                                     {listaAdministradores.map((a) => (
                                         <option key={a.id} value={a.id}>
                                             {a.nombreDespacho ?? "(sin nombre)"}
                                         </option>
                                     ))}
                                 </select>
+                                {!administradorElegido && (
+                                    <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-400">
+                                        Obligatorio para crear el presupuesto. Si no está en la lista, dalo de alta con «+ Nuevo».
+                                    </p>
+                                )}
                             </div>
+
+                            {avisoFinca && (
+                                <p className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-700 dark:text-amber-400">
+                                    {avisoFinca}
+                                </p>
+                            )}
 
                             <div className="grid grid-cols-2 gap-3">
                                 <label>
@@ -1476,7 +1541,13 @@ export function FormularioPresupuesto({
                 <div className="sticky bottom-24 z-30 mt-4 rounded-2xl border border-hairline bg-canvas/95 p-3 backdrop-blur-md">
                     {revisando && propuesta ? (
                         <>
-                            {motivoBloqueo && <p className="mb-2 text-center text-xs text-muted">{motivoBloqueo}</p>}
+                            {motivoBloqueo ? (
+                                <p className="mb-2 text-center text-xs text-muted">{motivoBloqueo}</p>
+                            ) : (
+                                avisoFinca && (
+                                    <p className="mb-2 text-center text-xs text-amber-700 dark:text-amber-400">{avisoFinca}</p>
+                                )
+                            )}
                             <button
                                 type="button"
                                 onClick={enviar}

@@ -240,19 +240,29 @@ export async function registrarPresupuesto(
 ): Promise<ResultadoPresupuesto> {
     const avisos: string[] = [];
 
-    // 1. Comunidad: existente o alta al vuelo, con su administrador enlazado.
+    // 1. Administrador: hace falta su nombre para el presupuesto. Ya NO es el
+    //    contacto de la oportunidad (ver paso 3); queda enlazado a la comunidad
+    //    y guardado en el JSON de la visita.
+    //
+    //    Va ANTES que la comunidad (29/09/2026) para cortar sin haber escrito
+    //    nada si el administrador no existe: la generación del documento lo
+    //    exigiría después, con la oportunidad ya fuera de "Visita concertada".
+    const administradores = entrada.administradorId ? await listarAdministradores(subcuenta) : [];
+    const administrador = administradores.find((a) => a.id === entrada.administradorId);
+
+    if (entrada.administradorId && !administrador) {
+        throw new Error(
+            "El administrador elegido ya no existe en el Sistema Advantys. Elige otro o dalo de alta de nuevo."
+        );
+    }
+
+    // 2. Comunidad: existente o alta al vuelo, con su administrador enlazado.
     const { comunidad, creada } = await obtenerOCrearComunidad(subcuenta, {
         nombreDireccion: entrada.comunidadNombre,
         administradorId: entrada.administradorId ?? undefined,
     });
 
     if (creada) avisos.push(`Se ha creado la comunidad "${comunidad.nombreDireccion}" en la base de datos.`);
-
-    // 2. Administrador: hace falta su nombre para el presupuesto. Ya NO es el
-    //    contacto de la oportunidad (ver paso 3); queda enlazado a la comunidad
-    //    y guardado en el JSON de la visita.
-    const administradores = entrada.administradorId ? await listarAdministradores(subcuenta) : [];
-    const administrador = administradores.find((a) => a.id === entrada.administradorId);
 
     // 3. Contacto PRINCIPAL de la oportunidad: la persona de la visita.
     //
