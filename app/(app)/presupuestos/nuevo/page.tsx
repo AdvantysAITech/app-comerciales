@@ -1,16 +1,43 @@
+import Link from "next/link";
 import { sesionApp } from "@/lib/sesion";
-import { listarAdministradores } from "@/lib/ghl/administradores";
+import { administradorParaRol, listarAdministradores } from "@/lib/ghl/administradores";
 import { listarComunidades } from "@/lib/ghl/comunidades";
-import { FormularioPresupuesto } from "@/components/forms/FormularioPresupuesto";
+import { oportunidadAutorizada } from "@/lib/permisos";
+import {
+    FormularioPresupuesto,
+    type BorradorServidor,
+    type OportunidadOrigen,
+} from "@/components/forms/FormularioPresupuesto";
+import { listarCapitulos, listarPartidas } from "@/lib/documentos/tarifa";
+import { iaDisponible } from "@/lib/ia/claude";
+import { capituloPermitido, partidaPermitida } from "@/lib/catalogo/licencias";
+import type { CapituloCatalogo, PartidaCatalogo } from "@/lib/propuesta/tipos";
+import {
+    almacenDisponible,
+    borradorDeOportunidad,
+    leerBorrador,
+    type BorradorGuardado,
+} from "@/lib/borradores/almacen";
 
 /**
- * Ruta paralela del flujo nuevo de presupuestos.
+ * Formulario de toma de datos del flujo v2.
  *
- * El formulario antiguo (/visitas/nueva) sigue operativo en produccion: los
- * comerciales no pueden quedarse sin poder registrar visitas mientras esto se
- * termina. La sustitucion se hara cuando el envio este cerrado (B4).
+ * Dos entradas (23/09/2026):
+ *  - `/presupuestos/nuevo?oportunidad=<id>`: desde la ficha de una oportunidad
+ *    en "Visita concertada". El formulario sale precargado con lo que ya hay en
+ *    el CRM y, al guardar, esa MISMA oportunidad pasa a "Datos recogidos".
+ *  - `/presupuestos/nuevo`: visita sin oportunidad previa. Crea una nueva.
+ *  - `/presupuestos/nuevo?borrador=<id>` (27/09/2026): reabre un borrador
+ *    guardado en la app. Si el borrador sale de una oportunidad, se trata como
+ *    la primera entrada. Abrir una oportunidad que ya tiene borrador lo recupera.
+ *
+ * /visitas/nueva (el formulario antiguo) redirige aquí desde el 27/09/2026.
  */
-export default async function NuevoPresupuestoPage() {
+export default async function NuevoPresupuestoPage({
+    searchParams,
+}: {
+    searchParams: Promise<{ oportunidad?: string; borrador?: string }>;
+}) {
     const sesion = await sesionApp();
 
     if (!sesion) {
@@ -18,18 +45,132 @@ export default async function NuevoPresupuestoPage() {
     }
 
     const subcuenta = sesion.subcuenta;
+    const parametros = await searchParams;
+    const almacen = almacenDisponible();
 
-    const [comunidades, administradores] = await Promise.all([
+    // Borrador pedido por id. Un fallo del almacén no bloquea: el comercial
+    // puede seguir con la copia de su móvil.
+    let borrador: BorradorGuardado | null = null;
+    if (parametros.borrador) {
+        try {
+            borrador = almacen ? await leerBorrador(sesion, parametros.borrador) : null;
+        } catch (error) {
+            console.error("[nuevo] No se ha podido leer el borrador:", error);
+            return <Aviso texto="No se ha podido abrir el borrador. Comprueba la conexión y vuelve a intentarlo." />;
+        }
+        if (!borrador) {
+            return <Aviso texto="Este borrador ya no existe. Puede que ya se creara el presupuesto." />;
+        }
+    }
+
+    const oportunidadId = borrador ? borrador.oportunidadId ?? undefined : parametros.oportunidad;
+
+    const [comunidades, administradores, oportunidad] = await Promise.all([
         listarComunidades(subcuenta),
         listarAdministradores(subcuenta),
+        // Un fallo de GHL aquí cuenta como "no encontrada": no hay nada que
+        // escribir todavía, y reabrir desde la ficha lo resuelve.
+        oportunidadId ? oportunidadAutorizada(sesion, oportunidadId).catch(() => null) : Promise.resolve(null),
     ]);
+
+    let origen: OportunidadOrigen | null = null;
+
+    if (oportunidadId) {
+        // Misma respuesta si no existe o si es de otro comercial: no se le
+        // confirma que esta ahi.
+        if (!oportunidad) {
+            return <Aviso texto="No se ha encontrado esta oportunidad." />;
+        }
+        if (oportunidad.etapa !== "VISITA_CONCERTADA") {
+            return (
+                <Aviso
+                    texto={
+                        borrador
+                            ? "Los datos de esta oportunidad ya se tomaron, así que este borrador ya no se puede usar. Elimínalo desde el panel."
+                            : "Los datos de esta oportunidad ya se tomaron. Ábrela desde el panel para ver en qué punto está."
+                    }
+                />
+            );
+        }
+
+        origen = {
+            id: oportunidad.id,
+            nombre: oportunidad.comunidadNombre ?? oportunidad.name,
+            comunidadNombre: oportunidad.comunidadNombre ?? "",
+            contacto: oportunidad.contacto.nombre ?? "",
+            telefono: oportunidad.contacto.telefono ?? "",
+            fecha: fechaParaInput(oportunidad.fechaVisita),
+        };
+
+        // Oportunidad que ya tiene borrador: se retoma, no se empieza otro.
+        if (!borrador && almacen) {
+            borrador = await borradorDeOportunidad(sesion, oportunidad.id).catch(() => null);
+        }
+    }
+
+    const borradorServidor: BorradorServidor | null = borrador
+        ? { id: borrador.id, datos: borrador.datos, actualizadoEn: borrador.actualizadoEn }
+        : null;
 
     return (
         <FormularioPresupuesto
+            // `key`: cambiar de oportunidad debe montar un formulario limpio,
+            // no heredar el estado del anterior.
+            key={borrador?.id ?? origen?.id ?? "nueva"}
             subcuenta={subcuenta}
             comunidades={comunidades}
-            administradores={administradores}
+            // Sin la comisión pactada si no es dirección: estas props viajan al
+            // navegador (DERCAS §3.3).
+            administradores={administradores.map((a) => administradorParaRol(a, sesion.rol))}
             rol={sesion.rol}
+            oportunidadOrigen={origen}
+            borrador={borradorServidor}
+            almacenDisponible={almacen}
+            catalogo={catalogoParaNavegador(subcuenta)}
+            capitulos={listarCapitulos()
+                .filter((c) => capituloPermitido(subcuenta, c.codigo))
+                .map((c): CapituloCatalogo => ({ codigo: c.codigo, nombre: c.nombre }))}
+            iaDisponible={iaDisponible()}
         />
+    );
+}
+
+/**
+ * Tarifa para buscar y añadir partidas en la revisión. SIN `precioCype`: es el
+ * coste interno y estas props viajan al navegador.
+ */
+function catalogoParaNavegador(subcuenta: string): PartidaCatalogo[] {
+    // Sin las partidas que la subcuenta no puede presupuestar (amianto en
+    // Vertical, 28/09/2026).
+    return listarPartidas()
+        .filter((p) => partidaPermitida(subcuenta, p))
+        .map((p) => ({
+        codigo: p.codigo,
+        descripcion: p.descripcionCorta,
+        unidad: p.unidad,
+        precio: p.tarifaEmpresa,
+        capitulo: p.capitulo,
+    }));
+}
+
+/** "dd/mm/aaaa" (como la lee `valorFecha`) -> "aaaa-mm-dd" (lo que pide `<input type="date">`). */
+function fechaParaInput(fecha: string | null): string {
+    const partes = fecha?.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    return partes ? `${partes[3]}-${partes[2]}-${partes[1]}` : "";
+}
+
+function Aviso({ texto }: { texto: string }) {
+    return (
+        <div className="px-4 pb-24 pt-6 sm:px-10">
+            <p className="rounded-2xl border border-dashed border-hairline px-4 py-10 text-center text-sm text-muted">
+                {texto}
+            </p>
+            <Link
+                href="/"
+                className="mt-4 block w-full rounded-xl bg-ink py-3 text-center text-sm font-semibold text-canvas"
+            >
+                Volver al panel
+            </Link>
+        </div>
     );
 }

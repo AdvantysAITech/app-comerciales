@@ -94,7 +94,9 @@ export async function sesionApp(): Promise<SesionApp | null> {
         nombre: session.user.name ?? null,
         email: session.user.email ?? null,
         rol: session.user.rol,
-        usuarioGhl: session.user.usuarioGhl ?? null,
+        // El id de GHL de la subcuenta que esta mirando AHORA. Con el de la
+        // otra, GHL responde 400 "Invalid assigned to user" al crear.
+        usuarioGhl: session.user.usuariosGhl?.[subcuenta]?.trim() || null,
         subcuentas,
         subcuenta,
         multiSubcuenta: subcuentas.length > 1,

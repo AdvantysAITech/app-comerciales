@@ -1,5 +1,6 @@
 import type { SubcuentaSlug } from "@/lib/subcuenta";
 import { aCentimos, formatearImporte, formatearTipoIva, type PresupuestoCalculado } from "./motor";
+import { DIAS_VALIDEZ } from "./payloadDocumento";
 
 /**
  * lib/documentos/portada.ts
@@ -23,6 +24,18 @@ import { aCentimos, formatearImporte, formatearTipoIva, type PresupuestoCalculad
  * el desglose de capítulos. El documento de referencia renumeraba la portada
  * de 01 a 08 correlativo, así que un administrador veía "04 Revestimientos"
  * arriba y "1.12.08 REVESTIMIENTOS" abajo. Se descarta esa réplica.
+ *
+ * ---------------------------------------------------------------------------
+ * PORTADA CON FOTO (29/09/2026)
+ * ---------------------------------------------------------------------------
+ * Nuevo diseño: foto de la obra a sangre arriba (la que sube el comercial en
+ * "Imagen de portada"), banda oscura con obra / cliente / propuesta, y debajo
+ * dos tarjetas claras: distribución por capítulos (donut) e importe por
+ * partida (barras) con "la obra en cifras". Cierra con base, IVA y total.
+ *
+ * Todo lo nuevo sigue siendo DETERMINISTA: las barras y las cifras salen de las
+ * líneas que calculó el motor (importe, medición y unidad), nunca de la IA. La
+ * única pieza de texto libre sigue siendo el título, que ya titula el cuerpo.
  */
 
 // ---------------------------------------------------------------------------
@@ -30,35 +43,39 @@ import { aCentimos, formatearImporte, formatearTipoIva, type PresupuestoCalculad
 // ---------------------------------------------------------------------------
 
 export interface PaletaPortada {
-    /** Fondo de la página. */
-    fondo: string;
-    /** Paneles y cajas sobre el fondo. */
-    panel: string;
-    /** Borde de paneles y filetes. */
-    borde: string;
-    /** Color de marca. Titulares y filete superior. */
-    marca: string;
-    /** Color de acento. Importes destacados y subrayados. */
+    /** Azul noche de la banda, los titulares y la caja del total. */
+    oscuro: string;
+    /** Color de acento: filetes, subrayados, barras secundarias. */
     acento: string;
+    /** Fondo de la página por debajo de la foto. */
+    fondo: string;
+    /** Relleno de las tarjetas claras. */
+    tarjeta: string;
+    /** Carril de las barras y filetes suaves sobre tarjeta. */
+    pista: string;
+    /** Texto sobre fondo claro. */
     texto: string;
     textoTenue: string;
+    /** Texto sobre la foto y sobre la banda oscura. */
+    textoClaro: string;
+    textoClaroTenue: string;
     /**
-     * Serie del donut. Se recorre cíclicamente: con 12 capítulos y 4 colores,
-     * el capítulo 5 repite el color del 1. Es deliberado - la lectura va por
-     * la leyenda, no por el color, que solo separa sectores contiguos.
+     * Serie del donut y de las barras. Se recorre cíclicamente: con 12
+     * capítulos y 6 colores, el 7 repite el color del 1. Es deliberado - la
+     * lectura va por la leyenda, no por el color, que solo separa sectores
+     * contiguos.
      */
     serie: readonly string[];
 }
 
 /**
  * Branding por subcuenta (DERCAS 5.1). Los datos fiscales completos y el
- * logotipo vectorial los aporta Miguel; hasta entonces el pie lleva los datos
- * de contacto y la marca va como texto, no como imagen.
+ * logotipo vectorial los aporta Miguel; hasta entonces la marca va como texto,
+ * no como imagen.
  */
 export interface IdentidadPortada {
+    /** Marca completa en una línea: "SCALA VALENCIA". */
     nombreMarca: string;
-    /** Segunda mitad del logotipo, en peso normal. Puede ir vacía. */
-    nombreMarcaSecundario: string;
     claim: string;
     pie: string;
     contacto: string;
@@ -67,37 +84,39 @@ export interface IdentidadPortada {
 
 const IDENTIDAD: Record<SubcuentaSlug, IdentidadPortada> = {
     "vertical-projects": {
-        nombreMarca: "VERTICAL",
-        nombreMarcaSecundario: "PROJECTS",
+        nombreMarca: "VERTICAL PROJECTS",
         claim: "TRABAJOS VERTICALES  ·  ACCESO POR CUERDA  ·  FACHADAS",
         pie: "VERTICAL PROJECTS  ·  Trabajos Verticales y Accesos Especiales",
         contacto: "info@verticalprojects.es   ·   +34 963 858 534",
         paleta: {
-            fondo: "#12233d",
-            panel: "#1b3355",
-            borde: "#2d4d7a",
-            marca: "#d9b168",
-            acento: "#d9b168",
-            texto: "#ffffff",
-            textoTenue: "#9fb3cc",
-            serie: ["#d9b168", "#4a7fbf", "#8aa9d0", "#c08f3e"],
+            oscuro: "#12233d",
+            acento: "#c9a45c",
+            fondo: "#ffffff",
+            tarjeta: "#eef1f5",
+            pista: "#dde3ea",
+            texto: "#12233d",
+            textoTenue: "#6b7686",
+            textoClaro: "#ffffff",
+            textoClaroTenue: "#aebbd0",
+            serie: ["#12233d", "#c9a45c", "#4a7fbf", "#8aa9d0", "#7c5f2a", "#2d4d7a"],
         },
     },
     "scala-valencia": {
-        nombreMarca: "SCALA",
-        nombreMarcaSecundario: "VALENCIA",
-        claim: "REHABILITACIÓN  ·  IMPERMEABILIZACIÓN  ·  AMIANTO RERA",
+        nombreMarca: "SCALA VALENCIA",
+        claim: "REHABILITACIÓN DE EDIFICIOS  ·  RETIRADA DE AMIANTO RERA",
         pie: "SCALA VALENCIA  ·  Rehabilitación y Retirada de Amianto",
         contacto: "info@scalavalencia.es",
         paleta: {
-            fondo: "#12233d",
-            panel: "#1b3355",
-            borde: "#2d4d7a",
-            marca: "#d9b168",
-            acento: "#d9b168",
-            texto: "#ffffff",
-            textoTenue: "#9fb3cc",
-            serie: ["#d9b168", "#4a7fbf", "#8aa9d0", "#c08f3e"],
+            oscuro: "#13223b",
+            acento: "#3d6b9e",
+            fondo: "#ffffff",
+            tarjeta: "#eef1f5",
+            pista: "#dde3ea",
+            texto: "#13223b",
+            textoTenue: "#6b7686",
+            textoClaro: "#ffffff",
+            textoClaroTenue: "#aebbd0",
+            serie: ["#13223b", "#3d6b9e", "#8fb0d3", "#5c7d99", "#b9c9dc", "#2a4a70"],
         },
     },
 };
@@ -123,7 +142,19 @@ export interface CapituloPortada {
     color: string;
 }
 
-/** Tarjeta del bloque "Diagnóstico y frentes de obra". */
+/** Barra del bloque "Importe por partida". */
+export interface PartidaPortada {
+    codigo: string;
+    resumen: string;
+    importe: number;
+    importeFormateado: string;
+    /** 0..1 respecto a la partida de mayor importe. */
+    proporcion: number;
+    /** Color del capítulo al que pertenece. */
+    color: string;
+}
+
+/** Tarjeta del bloque "Diagnóstico y frentes de obra" (diseño anterior). */
 export interface TarjetaPortada {
     ordinal: string;
     titulo: string;
@@ -137,10 +168,21 @@ export interface FasePortada {
     diaFin: number;
 }
 
-/** Caja del pie: valor grande sobre etiqueta pequeña. */
+/** Caja de cifra: valor grande sobre etiqueta pequeña. */
 export interface CajaPortada {
     valor: string;
     etiqueta: string;
+}
+
+/**
+ * Foto de portada ya descargada. La descarga la hace quien llama
+ * (`imagenPortada.ts`): este módulo no hace red.
+ */
+export interface ImagenPortada {
+    mimetype: "image/jpeg" | "image/png";
+    datos: Uint8Array;
+    ancho: number;
+    alto: number;
 }
 
 export interface DatosPortada {
@@ -153,9 +195,22 @@ export interface DatosPortada {
 
     expediente: string;
     fecha: string;
+    /** "dd/mm/aaaa" o vacío si no se ha podido calcular. */
+    fechaValidez: string;
     administrador: string;
 
+    /** `null` = sin foto: el bloque superior se pinta en azul noche. */
+    imagen: ImagenPortada | null;
+    /** Etiquetas sobre el título ("Cubiertas", "12 partidas"...). */
+    etiquetas: string[];
+
     capitulos: CapituloPortada[];
+    /** Las de mayor importe, ya ordenadas. */
+    partidas: PartidaPortada[];
+    /** Partidas que no caben en la lista y su importe conjunto. */
+    partidasRestantes: { numero: number; importeFormateado: string } | null;
+    /** "La obra en cifras". */
+    cifras: CajaPortada[];
 
     pemFormateado: string;
     pemAbreviado: string;
@@ -164,7 +219,7 @@ export interface DatosPortada {
     totalFormateado: string;
 
     diagnostico: TarjetaPortada[];
-    /** `null` cuando no hay cronograma validado. La banda no se pinta. */
+    /** `null` cuando no hay cronograma validado. */
     cronograma: FasePortada[] | null;
     cajas: CajaPortada[];
 }
@@ -179,11 +234,17 @@ export interface EntradaPortada {
     expediente: string;
     /** Ya formateada en es-ES por `payloadDocumento`. */
     fecha: string;
+    /** Fecha de validez ya formateada ("dd/mm/aaaa"). */
+    fechaValidez?: string | null;
     administrador: string;
     administradorLocalidad?: string | null;
+    /** Foto de portada descargada. Sin ella, fondo liso. */
+    imagen?: ImagenPortada | null;
+    /** Tipos de trabajo de la visita, para las etiquetas del título. */
+    tiposTrabajo?: readonly string[] | null;
     /** Tarjetas de diagnóstico. Si faltan, se derivan de los capítulos. */
     diagnostico?: TarjetaPortada[] | null;
-    /** Cronograma YA VALIDADO. Si es null o inválido, la banda no se pinta. */
+    /** Cronograma YA VALIDADO. Si es null o inválido, no se usa. */
     cronograma?: FasePortada[] | null;
 }
 
@@ -241,9 +302,8 @@ export function abreviarImporte(euros: number): string {
 /**
  * Tarjetas de diagnóstico derivadas de los capítulos de mayor importe.
  *
- * Es el respaldo cuando la IA no ha respondido, y también lo que se pinta
- * mientras ese bloque no exista. No inventa nada: son los capítulos que el
- * motor ya calculó, ordenados por peso económico.
+ * El diseño con foto ya no las pinta, pero se siguen calculando: los scripts
+ * de prueba las comprueban y no cuesta nada mantenerlas.
  */
 export function diagnosticoPorDefecto(
     capitulos: readonly CapituloPortada[],
@@ -269,6 +329,39 @@ const CAJAS_POR_DEFECTO: CajaPortada[] = [
     { valor: "Incluido", etiqueta: "Gestión residuos RCD" },
 ];
 
+/** Máximo de barras en "Importe por partida". Más no caben en la tarjeta. */
+export const MAXIMO_PARTIDAS_PORTADA = 5;
+
+/** Unidades que dicen algo como cifra de obra ("30 m²"). "1 ud" no dice nada. */
+const UNIDADES_MEDIBLES = new Set(["m", "m²", "m³", "kg", "h", "día", "mes"]);
+
+/**
+ * 30 -> "30" · 54.5 -> "54,5" · 1234.56 -> "1.234,56"
+ *
+ * `useGrouping: "always"` es obligatorio: sin él, es-ES no agrupa los números
+ * de 4 cifras ("1234,56") y la portada no casaba con el desglose, que sí lo hace.
+ */
+const NF_MEDICION = new Intl.NumberFormat("es-ES", { maximumFractionDigits: 2, useGrouping: "always" });
+function formatearMedicion(v: number): string {
+    return NF_MEDICION.format(v);
+}
+
+/**
+ * "IMPERMEABILIZACIÓN CON MALLA" -> "Impermeabilización con malla".
+ * Los resúmenes de la tarifa vienen en caja alta; en una etiqueta pequeña bajo
+ * una cifra grande, la caja alta grita y no cabe.
+ */
+function aFrase(texto: string): string {
+    const limpio = texto.replace(/\s+/g, " ").trim();
+    if (limpio === "" || limpio !== limpio.toUpperCase()) return limpio;
+    const minusculas = limpio.toLocaleLowerCase("es-ES");
+    return minusculas.charAt(0).toLocaleUpperCase("es-ES") + minusculas.slice(1);
+}
+
+function plural(n: number, singular: string, pluralTexto: string): string {
+    return `${n} ${n === 1 ? singular : pluralTexto}`;
+}
+
 // ---------------------------------------------------------------------------
 // Construcción
 // ---------------------------------------------------------------------------
@@ -278,9 +371,20 @@ export function construirPortada(
     entrada: EntradaPortada
 ): DatosPortada {
     const identidad = identidadDe(entrada.subcuenta);
+    const serie = identidad.paleta.serie;
 
     const importesCent = presupuesto.capitulos.map((c) => aCentimos(c.total));
     const porcentajes = repartirPorcentajes(importesCent, aCentimos(presupuesto.pem));
+
+    // Color por capítulo, cíclico. El donut es un anillo: el último sector toca
+    // al primero. Si con el ciclo les toca el mismo color (7 capítulos con 6
+    // colores), se verían como un solo sector: el último se desplaza uno.
+    const colores = presupuesto.capitulos.map((_, i) => serie[i % serie.length]);
+    const n = colores.length;
+    if (n > 2 && colores[n - 1] === colores[0]) {
+        const libre = serie.find((c) => c !== colores[0] && c !== colores[n - 2]);
+        if (libre) colores[n - 1] = libre;
+    }
 
     const capitulos: CapituloPortada[] = presupuesto.capitulos.map((c, i) => ({
         codigo: c.codigo,
@@ -289,26 +393,105 @@ export function construirPortada(
         importe: c.total,
         importeFormateado: `${formatearImporte(c.total)} €`,
         porcentaje: porcentajes[i],
-        color: identidad.paleta.serie[i % identidad.paleta.serie.length],
+        color: colores[i],
     }));
 
-    const administrador = entrada.administradorLocalidad
-        ? `${entrada.administrador} · ${entrada.administradorLocalidad}`
-        : entrada.administrador;
+    // --- Partidas: todas las líneas, por importe descendente ---------------
+    // El orden es estable a igualdad de importe (orden del documento), así el
+    // SVG sigue siendo determinista.
+    const lineas = presupuesto.capitulos.flatMap((c, i) =>
+        c.lineas.map((l, j) => ({ l, color: colores[i], orden: i * 1000 + j }))
+    );
+    const porImporte = [...lineas].sort((a, b) => b.l.importe - a.l.importe || a.orden - b.orden);
+    const mayor = porImporte[0]?.l.importe ?? 0;
+
+    const partidas: PartidaPortada[] = porImporte.slice(0, MAXIMO_PARTIDAS_PORTADA).map(({ l, color }) => ({
+        codigo: l.codigo,
+        resumen: aFrase(l.resumen),
+        importe: l.importe,
+        importeFormateado: `${formatearImporte(l.importe)} €`,
+        proporcion: mayor > 0 ? l.importe / mayor : 0,
+        color,
+    }));
+
+    const restantes = porImporte.slice(MAXIMO_PARTIDAS_PORTADA);
+    const partidasRestantes =
+        restantes.length > 0
+            ? {
+                  numero: restantes.length,
+                  importeFormateado: `${formatearImporte(
+                      restantes.reduce((acc, r) => acc + aCentimos(r.l.importe), 0) / 100
+                  )} €`,
+              }
+            : null;
+
+    // --- La obra en cifras: mediciones reales + datos del presupuesto -------
+    // Sin repetir: la misma partida puede aparecer en dos capítulos con la misma
+    // medición, y dos cajas idénticas no dicen nada.
+    const cifras: CajaPortada[] = [];
+    for (const { l } of porImporte) {
+        if (cifras.length >= 2) break;
+        if (!(UNIDADES_MEDIBLES.has(l.unidad) || (l.unidad === "ud" && l.cantidad > 1))) continue;
+        const caja = { valor: `${formatearMedicion(l.cantidad)} ${l.unidad}`, etiqueta: aFrase(l.resumen) };
+        if (cifras.some((c) => c.valor === caja.valor && c.etiqueta === caja.etiqueta)) continue;
+        cifras.push(caja);
+    }
+
+    const numeroPartidas = lineas.length;
+    const relleno: CajaPortada[] = [
+        {
+            valor: plural(numeroPartidas, "partida", "partidas"),
+            etiqueta: `en ${plural(capitulos.length, "capítulo", "capítulos")}`,
+        },
+        { valor: `${DIAS_VALIDEZ} días`, etiqueta: "validez del presupuesto" },
+        { valor: "2 años", etiqueta: "garantía de ejecución" },
+    ];
+    for (const caja of relleno) {
+        if (cifras.length >= 4) break;
+        cifras.push(caja);
+    }
+
+    // --- Etiquetas sobre el título -----------------------------------------
+    const cronogramaValido =
+        validarCronograma(entrada.cronograma).length === 0 ? entrada.cronograma ?? null : null;
+
+    const tipos = [...new Set((entrada.tiposTrabajo ?? []).map((t) => t.trim()).filter(Boolean))];
+    const etiquetas: string[] = tipos.slice(0, 3);
+    if (tipos.length > 3) etiquetas.push(`+${tipos.length - 3}`);
+    if (cronogramaValido && cronogramaValido.length > 0) {
+        etiquetas.push(`Plazo ${plural(cronogramaValido[cronogramaValido.length - 1].diaFin, "día", "días")}`);
+    }
+    if (etiquetas.length === 0) {
+        etiquetas.push(plural(numeroPartidas, "partida", "partidas"), plural(capitulos.length, "capítulo", "capítulos"));
+    }
+
+    // Sin nombre de despacho no se pone la localidad sola: salía "Adm.:  · Valencia".
+    const nombreAdministrador = entrada.administrador.trim();
+    const administrador =
+        nombreAdministrador && entrada.administradorLocalidad?.trim()
+            ? `${nombreAdministrador} · ${entrada.administradorLocalidad.trim()}`
+            : nombreAdministrador;
 
     return {
         identidad,
 
-        antetitulo: "PROPUESTA TÉCNICA DE OBRA",
+        antetitulo: "PRESUPUESTO DE OBRA",
         titulo: entrada.titulo?.trim() || "Propuesta de intervención",
         comunidad: entrada.comunidad,
         localidad: entrada.localidad,
 
         expediente: entrada.expediente,
         fecha: entrada.fecha,
+        fechaValidez: entrada.fechaValidez?.trim() ?? "",
         administrador,
 
+        imagen: entrada.imagen ?? null,
+        etiquetas,
+
         capitulos,
+        partidas,
+        partidasRestantes,
+        cifras,
 
         pemFormateado: `${formatearImporte(presupuesto.pem)} €`,
         pemAbreviado: abreviarImporte(presupuesto.pem),
@@ -321,7 +504,7 @@ export function construirPortada(
                 ? entrada.diagnostico.slice(0, 5)
                 : diagnosticoPorDefecto(capitulos),
 
-        cronograma: validarCronograma(entrada.cronograma).length === 0 ? entrada.cronograma ?? null : null,
+        cronograma: cronogramaValido,
 
         cajas: CAJAS_POR_DEFECTO,
     };
@@ -376,6 +559,19 @@ export function verificarPortada(
         }
     }
 
+    // Las barras tienen que ser líneas reales del motor, con su importe.
+    const importesMotor = new Map<string, number[]>();
+    for (const c of presupuesto.capitulos) {
+        for (const l of c.lineas) {
+            importesMotor.set(l.codigo, [...(importesMotor.get(l.codigo) ?? []), aCentimos(l.importe)]);
+        }
+    }
+    for (const p of portada.partidas) {
+        if (!(importesMotor.get(p.codigo) ?? []).includes(aCentimos(p.importe))) {
+            fallos.push(`Partida ${p.codigo}: importe ${p.importe} € no es ninguna línea del motor.`);
+        }
+    }
+
     if (portada.pemFormateado !== `${formatearImporte(presupuesto.pem)} €`) {
         fallos.push(`PEM de portada "${portada.pemFormateado}" != ${presupuesto.pem} € del motor.`);
     }
@@ -393,7 +589,7 @@ export function verificarPortada(
  *
  * El cronograma lo propone la IA, así que se trata como entrada no fiable:
  * tramos contiguos, sin solapes ni huecos, arrancando en el día 1. Un
- * cronograma que se contradice a sí mismo no se pinta.
+ * cronograma que se contradice a sí mismo no se usa.
  */
 export function validarCronograma(fases: readonly FasePortada[] | null | undefined): string[] {
     if (!fases || fases.length === 0) return [];

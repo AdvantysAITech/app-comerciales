@@ -249,9 +249,14 @@ export function validarSeleccion(
             const { nodo } = encontrado;
 
             if (esPartida(nodo)) {
-                const obligatoria = nodo.medicion?.obligatoria;
+                // Toda partida que se mide exige medición, no solo las marcadas
+                // `obligatoria` (24/09/2026). El motor descarta en silencio las
+                // cantidades vacías o 0 (mapeo-capitulos.ts), así que una
+                // partida sin medir desaparecía del presupuesto sin avisar a
+                // nadie y el importe salía más bajo.
+                const seMide = nodo.medicion !== undefined;
                 const cantidad = marcado.cantidad;
-                if (obligatoria && (cantidad === undefined || cantidad <= 0)) {
+                if (seMide && (cantidad === undefined || !Number.isFinite(cantidad) || cantidad <= 0)) {
                     errores.push({
                         ruta: marcado.ruta,
                         mensaje: `Falta la medición de "${marcado.caminoLabels.join(" > ")}"`,

@@ -1,5 +1,6 @@
 import type { SeleccionVisita } from "./seleccion";
 import type { DocumentoAdjunto } from "@/lib/documentos/tipos";
+import type { Propuesta } from "@/lib/propuesta/tipos";
 
 /**
  * Borrador del presupuesto guardado en el propio dispositivo.
@@ -30,6 +31,12 @@ export type BorradorPresupuesto = {
      * localStorage, pero un PDF de proyecto reventaría la cuota al instante.
      */
     documentosPorModulo: Record<string, DocumentoAdjunto[]>;
+    /** Dictado de trabajos y medidas por tipo de trabajo (flujo con IA, 27/09/2026). */
+    dictadoPorModulo: Record<string, string>;
+    /** Propuesta de partidas de la IA, con lo que el comercial haya corregido. */
+    propuesta: Propuesta | null;
+    /** URL de la imagen de portada ya subida (29/09/2026). `null` = sin elegir. */
+    imagenPortada: string | null;
 };
 
 export type DatosBorrador = Omit<BorradorPresupuesto, "version" | "guardadoEn">;
@@ -51,7 +58,9 @@ export function tieneContenido(datos: DatosBorrador): boolean {
         // En el módulo Proyectos no hay partidas ni módulos con árbol: el único
         // contenido puede ser el BC3 que acaba de subir. Sin esta comprobación
         // ese borrador se consideraría vacío y no se autoguardaría.
-        Object.values(datos.documentosPorModulo).some((docs) => docs.length > 0)
+        Object.values(datos.documentosPorModulo).some((docs) => docs.length > 0) ||
+        Object.values(datos.dictadoPorModulo ?? {}).some((d) => d.trim() !== "") ||
+        Boolean(datos.imagenPortada)
     );
 }
 
@@ -106,21 +115,50 @@ export function cargarBorrador(subcuenta: string): BorradorPresupuesto | null {
         return {
             version: VERSION_BORRADOR,
             guardadoEn: datos.guardadoEn ?? new Date().toISOString(),
-            nombreComunidad: datos.nombreComunidad ?? "",
-            comunidadElegidaId: datos.comunidadElegidaId ?? null,
-            administradorId: datos.administradorId ?? "",
-            contacto: datos.contacto ?? "",
-            telefono: datos.telefono ?? "",
-            fecha: datos.fecha ?? "",
-            observaciones: datos.observaciones ?? "",
-            modulosElegidos: datos.modulosElegidos ?? [],
-            seleccion: datos.seleccion ?? {},
-            fotosPorModulo: datos.fotosPorModulo ?? {},
-            documentosPorModulo: datos.documentosPorModulo ?? {},
+            ...normalizarDatos(datos),
         };
     } catch {
         return null;
     }
+}
+
+const esObjeto = (v: unknown): v is Record<string, unknown> =>
+    typeof v === "object" && v !== null && !Array.isArray(v);
+const texto = (v: unknown): string => (typeof v === "string" ? v : "");
+const esUrl = (v: unknown): v is string => typeof v === "string" && /^https?:\/\//i.test(v.trim());
+
+/**
+ * Datos de borrador con la forma esperada, venga de donde venga (localStorage
+ * de una versión anterior o el cuerpo de una petición). Lo que no encaja se
+ * sustituye por vacío en vez de propagarse. Lo usa también el servidor antes de
+ * guardar en el almacén de borradores.
+ */
+export function normalizarDatos(bruto: unknown): DatosBorrador {
+    const d = esObjeto(bruto) ? bruto : {};
+    return {
+        nombreComunidad: texto(d.nombreComunidad),
+        comunidadElegidaId: typeof d.comunidadElegidaId === "string" ? d.comunidadElegidaId : null,
+        administradorId: texto(d.administradorId),
+        contacto: texto(d.contacto),
+        telefono: texto(d.telefono),
+        fecha: texto(d.fecha),
+        observaciones: texto(d.observaciones),
+        modulosElegidos: Array.isArray(d.modulosElegidos) ? d.modulosElegidos.filter((k) => typeof k === "string") : [],
+        seleccion: (esObjeto(d.seleccion) ? d.seleccion : {}) as SeleccionVisita,
+        fotosPorModulo: (esObjeto(d.fotosPorModulo) ? d.fotosPorModulo : {}) as Record<string, string[]>,
+        documentosPorModulo: (esObjeto(d.documentosPorModulo) ? d.documentosPorModulo : {}) as Record<
+            string,
+            DocumentoAdjunto[]
+        >,
+        dictadoPorModulo: esObjeto(d.dictadoPorModulo)
+            ? Object.fromEntries(
+                  Object.entries(d.dictadoPorModulo).filter((e): e is [string, string] => typeof e[1] === "string")
+              )
+            : {},
+        propuesta:
+            esObjeto(d.propuesta) && Array.isArray(d.propuesta.lineas) ? (d.propuesta as unknown as Propuesta) : null,
+        imagenPortada: esUrl(d.imagenPortada) ? d.imagenPortada : null,
+    };
 }
 
 export function limpiarBorrador(subcuenta: string): void {

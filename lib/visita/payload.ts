@@ -1,5 +1,12 @@
 import { ETIQUETA_UNIDAD, getModulo, type ModeloNegocioDercas } from "@/lib/catalogo";
+import {
+    PREFIJO_RUTA_PROPUESTA,
+    type LineaDocumento,
+    type LineaPropuesta,
+    type Propuesta,
+} from "@/lib/propuesta/tipos";
 import { VERSION_CATALOGO } from "@/lib/catalogo";
+import { ALERTA_AMIANTO_PROPUESTA, esPartidaAmianto } from "@/lib/catalogo/licencias";
 import {
     alertasActivas,
     partidasDeModulo,
@@ -35,6 +42,12 @@ export type PartidaPayload = {
     unidad?: string;
     cantidad?: number;
     nota?: string;
+    /**
+     * Partida propuesta por IA y revisada por el comercial (27/09/2026). Con
+     * esto la partida no se resuelve por `ruta` en el mapa de la tarifa: trae su
+     * código, precio y unidad. `ruta` empieza por "ia:".
+     */
+    linea?: LineaDocumento;
 };
 
 export type ModuloPayload = {
@@ -44,6 +57,8 @@ export type ModuloPayload = {
     partidas: PartidaPayload[];
     fotos: string[];
     alertas: string[];
+    /** Dictado del comercial para este tipo de trabajo (flujo con IA, 27/09/2026). */
+    dictado?: string;
 };
 
 export type PayloadVisita = {
@@ -70,6 +85,12 @@ export type PayloadVisita = {
     };
     fechaVisita: string;
     observaciones: string;
+    /**
+     * Foto de portada del presupuesto (29/09/2026): URL en la biblioteca de la
+     * subcuenta. Opcional para que las visitas guardadas antes sigan valiendo;
+     * sin ella la portada usa la primera foto de los trabajos.
+     */
+    imagenPortada?: string | null;
     modulos: ModuloPayload[];
 };
 
@@ -89,7 +110,38 @@ export type DatosCaptura = {
     modulosElegidos: string[];
     seleccion: SeleccionVisita;
     fotosPorModulo: Record<string, string[]>;
+    /**
+     * Propuesta por IA revisada por el comercial (27/09/2026). Si viene, las
+     * partidas de cada módulo salen de aquí y `seleccion` se ignora.
+     */
+    propuesta?: Propuesta | null;
+    dictadoPorModulo?: Record<string, string>;
+    /** URL de la imagen de portada ya subida. */
+    imagenPortada?: string | null;
 };
+
+function lineaAPartidaPayload(l: LineaPropuesta): PartidaPayload {
+    const linea: LineaDocumento = {
+        codigo: l.codigo,
+        origen: l.origen,
+        descripcionCorta: l.descripcionCorta,
+        descripcionLarga: l.descripcionLarga,
+        unidad: l.unidad,
+        precioUnitario: l.precioUnitario,
+        precioCype: l.precioCype,
+        capitulo: l.capitulo,
+        url: l.url,
+    };
+    return {
+        ruta: `${PREFIJO_RUTA_PROPUESTA}${l.id}`,
+        camino: [l.descripcionCorta],
+        label: l.descripcionCorta,
+        unidad: l.unidad,
+        cantidad: l.cantidad ?? undefined,
+        nota: l.textoOriginal || undefined,
+        linea,
+    };
+}
 
 function aPartidaPayload(partida: PartidaResuelta): PartidaPayload {
     return {
@@ -107,6 +159,22 @@ export function construirPayload(datos: DatosCaptura): PayloadVisita {
         .map((key) => {
             const modulo = getModulo(datos.subcuenta, key);
             if (!modulo) return null;
+
+            if (datos.propuesta) {
+                const dictado = datos.dictadoPorModulo?.[key]?.trim();
+                const lineas = datos.propuesta.lineas.filter((l) => l.moduloKey === key);
+                return {
+                    key: modulo.key,
+                    label: modulo.label,
+                    modeloNegocioDercas: modulo.modeloNegocioDercas,
+                    partidas: lineas.map(lineaAPartidaPayload),
+                    fotos: datos.fotosPorModulo[key] ?? [],
+                    // El aviso de amianto salía del árbol, que el flujo con IA ya
+                    // no usa (28/09/2026): se deduce de las partidas.
+                    alertas: lineas.some(esPartidaAmianto) ? [ALERTA_AMIANTO_PROPUESTA] : [],
+                    ...(dictado ? { dictado } : {}),
+                };
+            }
 
             return {
                 key: modulo.key,
@@ -143,6 +211,7 @@ export function construirPayload(datos: DatosCaptura): PayloadVisita {
         },
         fechaVisita: datos.fechaVisita,
         observaciones: datos.observaciones.trim(),
+        imagenPortada: datos.imagenPortada?.trim() || null,
         modulos,
     };
 }
@@ -185,7 +254,12 @@ export function resumenLegible(payload: PayloadVisita): string {
                         ? ` - ${formatearCantidad(partida.cantidad)} ${partida.unidad ?? ""}`.trimEnd()
                         : " - sin medir";
                 const nota = partida.nota ? ` (${partida.nota})` : "";
-                lineas.push(`- ${partida.camino.join(" > ")}${medicion}${nota}`);
+                // Partida propuesta: código y precio, para que Miguel lo lea sin abrir la app.
+                const precio =
+                    partida.linea && partida.linea.precioUnitario !== null
+                        ? ` · ${partida.linea.codigo} · ${formatearCantidad(partida.linea.precioUnitario)} €/${partida.linea.unidad}`
+                        : "";
+                lineas.push(`- ${partida.camino.join(" > ")}${medicion}${precio}${nota}`);
             }
         }
 
@@ -230,8 +304,10 @@ export function agruparEnOportunidades(
     payload: PayloadVisita,
     modo: ModoAgrupacion = MODO_AGRUPACION
 ): GrupoOportunidad[] {
-    const conPartidas = payload.modulos.filter((m) => m.partidas.length > 0);
-    if (conPartidas.length === 0) return [];
+    // Un tipo de trabajo sin partidas pero con fotos también viaja (27/09/2026):
+    // sus fotos tienen que salir en el anexo del documento bajo su título.
+    const conPartidas = payload.modulos.filter((m) => m.partidas.length > 0 || m.fotos.length > 0);
+    if (!conPartidas.some((m) => m.partidas.length > 0)) return [];
 
     if (modo === "por_modulo") {
         return conPartidas.map((m) => ({ etiqueta: m.label, modulos: [m] }));

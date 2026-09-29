@@ -769,7 +769,14 @@ export function auditarPayload(payload: PayloadVisita): AuditoriaPayload {
     const propuestas: { ruta: string; codigo: string; nota?: string }[] = [];
     const textoLibre: { ruta: string; nota?: string }[] = [];
 
-    const rutas = new Set(payload.modulos.flatMap((m) => m.partidas).map((p) => p.ruta));
+    // Las partidas propuestas (con `linea`) no pasan por el mapa: traen su
+    // código y su precio. Auditarlas aquí las daría por desconocidas.
+    const rutas = new Set(
+        payload.modulos
+            .flatMap((m) => m.partidas)
+            .filter((p) => !p.linea)
+            .map((p) => p.ruta)
+    );
 
     for (const ruta of rutas) {
         // Antes que nada: un nodo de texto libre nunca es un fallo de mapeo.
@@ -956,6 +963,32 @@ export function construirEntradaPresupuesto(
 
     for (const modulo of payload.modulos) {
         for (const partida of modulo.partidas) {
+            // Partida propuesta y revisada por el comercial (27/09/2026).
+            if (partida.linea) {
+                const cantidad = partida.cantidad ?? 0;
+                if (!Number.isFinite(cantidad) || cantidad <= 0) continue;
+                const l = partida.linea;
+                lineas.push({
+                    codigo: l.codigo,
+                    cantidad,
+                    precioUnitario: l.precioUnitario,
+                    unidadImpresa: l.unidad,
+                    descripcionLarga: l.descripcionLarga,
+                    partidaExterna:
+                        l.origen === "tarifa"
+                            ? null
+                            : {
+                                  resumen: l.descripcionCorta,
+                                  descripcionLarga: l.descripcionLarga,
+                                  unidad: l.unidad,
+                                  capitulo: l.capitulo,
+                                  precioCype: l.precioCype,
+                                  precioVenta: l.precioUnitario ?? 0,
+                              },
+                });
+                continue;
+            }
+
             // Texto libre: no tiene unidad ni precio. Va a los avisos de la API,
             // no al cálculo.
             if (excluidas.has(partida.ruta)) continue;

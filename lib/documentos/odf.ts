@@ -1,6 +1,7 @@
 import { unzipSync, zipSync } from "fflate";
 import { desgloseXml, estilosDesglose } from "./desgloseOdf";
 import type { PresupuestoCalculado } from "./motor";
+import { anexoFotosXml, ESTILOS_ANEXO_FOTOS, type GrupoFotos } from "./anexoFotos";
 
 /**
  * Post-proceso del ODT devuelto por la app de documentos.
@@ -424,6 +425,43 @@ export function declararEnManifiesto(manifestXml: string): string {
     return manifestXml.replace("</manifest:manifest>", `${entrada}</manifest:manifest>`);
 }
 
+/**
+ * Añade el anexo fotográfico al FINAL del cuerpo del documento.
+ *
+ * Sin marcador a propósito: el anexo va siempre detrás de todo, y así no hay
+ * que tocar las plantillas (ver anexoFotos.ts). Si no hay fotos, no cambia nada.
+ */
+export function inyectarAnexoFotos(contentXml: string, grupos: readonly GrupoFotos[]): string {
+    const bloque = anexoFotosXml(grupos);
+    if (!bloque) return contentXml;
+
+    const cierre = contentXml.lastIndexOf("</office:text>");
+    if (cierre === -1) {
+        throw new Error("El content.xml no tiene </office:text>: no se puede añadir el anexo fotográfico.");
+    }
+
+    const conAnexo = contentXml.slice(0, cierre) + bloque + contentXml.slice(cierre);
+    return inyectarEstilos(conAnexo, ESTILOS_ANEXO_FOTOS);
+}
+
+/**
+ * Declara las fotos del anexo en el manifiesto. Mismo motivo que la portada:
+ * sin entrada, la imagen está en el ZIP pero ningún lector la pinta.
+ */
+export function declararFotosEnManifiesto(manifestXml: string, grupos: readonly GrupoFotos[]): string {
+    const entradas = grupos
+        .flatMap((g) => g.fotos)
+        .filter((f) => !manifestXml.includes(`manifest:full-path="${f.ruta}"`))
+        .map((f) => `<manifest:file-entry manifest:full-path="${f.ruta}" manifest:media-type="${f.mimetype}"/>`)
+        .join("");
+    if (!entradas) return manifestXml;
+
+    if (!manifestXml.includes("</manifest:manifest>")) {
+        throw new Error("El manifiesto del ODT no tiene cierre </manifest:manifest>: está corrupto.");
+    }
+    return manifestXml.replace("</manifest:manifest>", `${entradas}</manifest:manifest>`);
+}
+
 // ---------------------------------------------------------------------------
 // Empaquetado
 // ---------------------------------------------------------------------------
@@ -442,6 +480,11 @@ export type OpcionesPostproceso = {
      * el desglose no es un adorno.
      */
     desglose?: PresupuestoCalculado | null;
+    /**
+     * Fotos de la visita, agrupadas por tipo de trabajo. Van en un anexo al
+     * final del documento. Vacío o ausente = sin anexo.
+     */
+    anexoFotos?: readonly GrupoFotos[] | null;
 };
 
 /**
@@ -499,6 +542,26 @@ export function postprocesarOdt(odt: ArrayBuffer, opciones: OpcionesPostproceso 
         ? inyectarDesglose(contentXml, opciones.desglose)
         : eliminarMarcadorDesglose(contentXml);
 
+    // Anexo fotográfico, al final de todo.
+    const grupos = (opciones.anexoFotos ?? []).filter((g) => g.fotos.length > 0);
+    const rutasFotos = new Set<string>();
+    if (grupos.length > 0) {
+        contentXml = inyectarAnexoFotos(contentXml, grupos);
+
+        const manifiesto = entradas["META-INF/manifest.xml"];
+        if (!manifiesto) {
+            throw new Error("El ODT no contiene META-INF/manifest.xml: no se pueden declarar las fotos.");
+        }
+        entradas["META-INF/manifest.xml"] = codificador.encode(
+            declararFotosEnManifiesto(decodificador.decode(manifiesto), grupos)
+        );
+
+        for (const foto of grupos.flatMap((g) => g.fotos)) {
+            entradas[foto.ruta] = new Uint8Array(foto.datos);
+            rutasFotos.add(foto.ruta);
+        }
+    }
+
     entradas["content.xml"] = codificador.encode(contentXml);
 
     // fflate respeta el orden de inserción, así que mimetype va primero y con
@@ -509,7 +572,9 @@ export function postprocesarOdt(odt: ArrayBuffer, opciones: OpcionesPostproceso 
     };
     for (const [nombre, datos] of Object.entries(entradas)) {
         if (nombre === "mimetype") continue;
-        salida[nombre] = [datos, { level: nombre === RUTA_PORTADA ? 0 : 9 }];
+        // Imágenes sin comprimir: JPEG y PNG ya lo están.
+        const esImagen = nombre === RUTA_PORTADA || rutasFotos.has(nombre);
+        salida[nombre] = [datos, { level: esImagen ? 0 : 9 }];
     }
 
     const zip = zipSync(salida);

@@ -1,4 +1,5 @@
 import { saFetch, type Subcuenta, getLocationId } from "./client";
+import type { Rol } from "@/lib/roles";
 import { normalizarNombre, normalizarTelefono } from "../texto";
 
 const OBJECT_KEY_ADMINISTRADOR = "custom_objects.administradores_de_fincas";
@@ -80,6 +81,27 @@ function mapearAdministrador(record: SaRecord): Administrador {
         localidad: texto(record.properties, PROP.localidad),
         provincia: texto(record.properties, PROP.provincia),
     };
+}
+
+/**
+ * El administrador tal como lo puede ver este rol.
+ *
+ * POR QUÉ (24/09/2026): la comisión pactada es dato interno de dirección
+ * (DERCAS §3.3), pero `listarAdministradores` la devolvía siempre y las páginas
+ * del formulario y `GET /api/administradores` la mandaban tal cual al
+ * navegador del comercial. Se veía en el HTML de /presupuestos/nuevo.
+ *
+ * Se filtra en el borde (páginas y rutas), no en `listarAdministradores`: el
+ * servidor sí la necesita para calcular.
+ */
+export function administradorParaRol<T extends { comisionPactada?: number }>(
+    administrador: T,
+    rol: Rol
+): T {
+    if (rol === "direccion") return administrador;
+    const copia = { ...administrador };
+    delete copia.comisionPactada;
+    return copia;
 }
 
 /**

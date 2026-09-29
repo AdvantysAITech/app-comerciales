@@ -5,10 +5,28 @@ import type { CapituloPortada, DatosPortada, PaletaPortada } from "./portada";
  *
  * Render de la infografía de portada. SVG plano, sin librería de gráficos y
  * sin dependencias: el donut son arcos calculados a mano y el resto son
- * rectángulos y textos en coordenadas fijas.
+ * rectángulos, textos y la foto de portada incrustada en base64.
  *
  * Determinista por construcción: mismo `DatosPortada` -> mismo SVG, byte a
  * byte. No hay fechas, ni aleatoriedad, ni orden de iteración de objetos.
+ *
+ * ---------------------------------------------------------------------------
+ * DISEÑO CON FOTO (29/09/2026)
+ * ---------------------------------------------------------------------------
+ * De arriba abajo:
+ *   - Foto a sangre con degradado; marca arriba, etiquetas, antetítulo y
+ *     título abajo, sobre la zona oscura del degradado.
+ *   - Banda azul noche: OBRA · CLIENTE · PROPUESTA.
+ *   - Dos tarjetas: distribución por capítulos (donut + leyenda) e importe
+ *     por partida (barras) + la obra en cifras.
+ *   - Base imponible · IVA · Total.
+ *   - Pie con marca y contacto.
+ *
+ * Las tarjetas miden lo que pide su contenido y la foto se queda con el resto
+ * de la página (ver `calcularMaqueta`).
+ *
+ * Sin foto (visita antigua, descarga fallida) el bloque superior se pinta en
+ * azul noche con un degradado hacia el acento: la portada sigue siendo válida.
  *
  * ---------------------------------------------------------------------------
  * LIENZO
@@ -26,31 +44,57 @@ import type { CapituloPortada, DatosPortada, PaletaPortada } from "./portada";
  * que respira que una que se sale del panel.
  *
  * El rasterizador NO hereda las fuentes del sistema. Hay que pasarle el .ttf
- * de la familia declarada aquí; si no la encuentra, sustituye por otra o no
- * pinta el texto. Es el punto que se cierra en H1.
+ * de la familia declarada aquí (ver rasterizar.ts).
  */
 
 const W = 1240;
 const H = 1754;
 const M = 60;
 
+/**
+ * Alturas fijas de abajo arriba. Las tarjetas miden lo que necesita su
+ * contenido (con un mínimo) y la foto se queda con el resto: con pocos
+ * capítulos y pocas partidas la foto crece, en vez de dejar huecos en blanco.
+ */
+const ALTO_BANDA = 136;
+const ALTO_TOTALES = 106;
+const ALTO_PIE = 60;
+const HUECO_BANDA_TARJETAS = 30;
+const HUECO_TARJETAS_TOTALES = 26;
+const HUECO_TOTALES_PIE = 32;
+const ALTO_FOTO_MAXIMO = 820;
+const ALTO_TARJETAS_MINIMO = 480;
+
+type Maqueta = {
+    altoFoto: number;
+    yBanda: number;
+    yTarjetas: number;
+    altoTarjetas: number;
+    yTotales: number;
+    yPie: number;
+};
+
 const FUENTE = "'DejaVu Sans', 'Liberation Sans', Arial, sans-serif";
 
 /**
- * Anchura por carácter, en múltiplos del tamaño de fuente.
+ * Anchura por carácter, en múltiplos del tamaño de fuente, para DejaVu Sans
+ * (medida sobre los .ttf empaquetados: regular / negrita).
  *
  * Un factor único no vale: los nombres del catálogo vienen en CAJA ALTA
- * ("DEMOLICIONES Y ACTUACIONES PREVIAS") y una mayúscula ocupa un 30 % más que
- * una minúscula. Con un promedio de 0,52 el texto se estimaba corto, no se
- * truncaba, y se montaba encima de la columna de importes.
+ * ("DEMOLICIONES Y ACTUACIONES PREVIAS") y una mayúscula ocupa más que una
+ * minúscula, y la negrita de DejaVu es un 12 % más ancha que la regular. Con
+ * un promedio el texto se estimaba corto, no se truncaba, y se montaba encima
+ * de la columna de al lado.
  */
-const ANCHO_ESTRECHO = 0.28; // i l j t f r . , : · ' espacio
-const ANCHO_MINUSCULA = 0.54;
-const ANCHO_MAYUSCULA = 0.68; // y dígitos
-const ANCHO_ANCHO = 0.85; // M W m w
-const FACTOR_NEGRITA = 1.06;
+const METRICAS = {
+    regular: { estrecho: 0.33, minuscula: 0.6, mayuscula: 0.66, digito: 0.64, ancho: 0.93 },
+    negrita: { estrecho: 0.39, minuscula: 0.68, mayuscula: 0.74, digito: 0.7, ancho: 1.01 },
+} as const;
 
-const ESTRECHOS = new Set([..." iljtfr.,:;·'’|!()[]-"]);
+/** Holgura sobre la medida: vale más una línea que respira que una que se sale. */
+const HOLGURA = 1.03;
+
+const ESTRECHOS = new Set([..." iljtfr.,:;·'’|!()[]-/"]);
 const ANCHOS = new Set([..."MWmw@%"]);
 
 // ---------------------------------------------------------------------------
@@ -65,19 +109,24 @@ function esc(texto: string): string {
         .replace(/"/g, "&quot;");
 }
 
-function anchoCaracter(c: string): number {
-    if (ESTRECHOS.has(c)) return ANCHO_ESTRECHO;
-    if (ANCHOS.has(c)) return ANCHO_ANCHO;
-    if (c >= "A" && c <= "Z") return ANCHO_MAYUSCULA;
-    if (c >= "0" && c <= "9") return ANCHO_MAYUSCULA;
-    if (c === c.toUpperCase() && c !== c.toLowerCase()) return ANCHO_MAYUSCULA; // Á, Ñ, Ó...
-    return ANCHO_MINUSCULA;
+function anchoCaracter(c: string, negrita: boolean): number {
+    const m = negrita ? METRICAS.negrita : METRICAS.regular;
+    if (ESTRECHOS.has(c)) return m.estrecho;
+    if (ANCHOS.has(c)) return m.ancho;
+    if (c >= "0" && c <= "9") return m.digito;
+    if (c >= "A" && c <= "Z") return m.mayuscula;
+    if (c === c.toUpperCase() && c !== c.toLowerCase()) return m.mayuscula; // Á, Ñ, Ó...
+    return m.minuscula;
 }
 
-function anchoDe(texto: string, tamano: number, negrita = false): number {
+function anchoDe(texto: string, tamano: number, negrita = false, espaciado = 0): number {
     let unidades = 0;
-    for (const c of texto) unidades += anchoCaracter(c);
-    return unidades * tamano * (negrita ? FACTOR_NEGRITA : 1);
+    let caracteres = 0;
+    for (const c of texto) {
+        unidades += anchoCaracter(c, negrita);
+        caracteres++;
+    }
+    return unidades * tamano * HOLGURA + espaciado * caracteres;
 }
 
 /** Recorta por caracteres reales hasta que quepa, con puntos suspensivos. */
@@ -86,46 +135,79 @@ function truncar(texto: string, maxPx: number, tamano: number, negrita = false):
     if (anchoDe(limpio, tamano, negrita) <= maxPx) return limpio;
 
     const anchoPuntos = anchoDe("…", tamano, negrita);
+    const caracteres = [...limpio];
     let corte = 0;
     let acumulado = 0;
 
-    for (const c of limpio) {
-        const siguiente = acumulado + anchoCaracter(c) * tamano * (negrita ? FACTOR_NEGRITA : 1);
+    for (const c of caracteres) {
+        const siguiente = acumulado + anchoCaracter(c, negrita) * tamano * HOLGURA;
         if (siguiente + anchoPuntos > maxPx) break;
         acumulado = siguiente;
         corte++;
     }
 
-    return `${limpio.slice(0, Math.max(1, corte)).trimEnd()}…`;
+    return `${caracteres.slice(0, Math.max(1, corte)).join("").trimEnd()}…`;
 }
 
-/** Parte en líneas por palabras. La última se trunca si sobra texto. */
-function envolver(texto: string, maxPx: number, tamano: number, maxLineas: number): string[] {
-    const palabras = texto.replace(/\s+/g, " ").trim().split(" ");
+/**
+ * Tamaño de letra con el que `texto` cabe en `maxPx`, bajando de medio en
+ * medio punto desde `tamano` hasta `minimo`. Para cifras y direcciones: un
+ * número truncado ("10.500,7…") cambia la lectura; vale más un punto menos.
+ * Si ni al mínimo cabe, quien llama trunca a ese tamaño.
+ */
+function tamanoQueCabe(texto: string, maxPx: number, tamano: number, minimo: number, negrita = false): number {
+    let t = tamano;
+    while (t > minimo && anchoDe(texto, t, negrita) > maxPx) t -= 0.5;
+    return t;
+}
+
+/** Texto que se encoge hasta `minimo` antes de truncarse. */
+function textoAjustado(
+    x: number,
+    y: number,
+    contenido: string,
+    maxPx: number,
+    minimo: number,
+    o: OpcionesTexto & { tamano: number }
+): string {
+    const negrita = o.peso === "bold";
+    const tamano = tamanoQueCabe(contenido, maxPx, o.tamano, minimo, negrita);
+    return texto(x, y, truncar(contenido, maxPx, tamano, negrita), { ...o, tamano });
+}
+
+/**
+ * Parte en líneas por palabras. Lo que no cabe en `maxLineas` se acumula en la
+ * última, que se trunca con puntos suspensivos.
+ */
+function envolver(texto: string, maxPx: number, tamano: number, maxLineas: number, negrita = false): string[] {
+    const palabras = texto.replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
     const lineas: string[] = [];
     let actual = "";
 
     for (const palabra of palabras) {
         const tentativa = actual ? `${actual} ${palabra}` : palabra;
-        if (anchoDe(tentativa, tamano) <= maxPx) {
+        const esUltima = lineas.length === maxLineas - 1;
+        if (!actual || esUltima || anchoDe(tentativa, tamano, negrita) <= maxPx) {
             actual = tentativa;
-            continue;
-        }
-        if (actual) lineas.push(actual);
-        actual = palabra;
-        if (lineas.length === maxLineas) break;
-    }
-
-    if (actual && lineas.length < maxLineas) lineas.push(actual);
-
-    if (lineas.length === maxLineas) {
-        const consumido = lineas.join(" ").length;
-        if (consumido < texto.replace(/\s+/g, " ").trim().length) {
-            lineas[maxLineas - 1] = truncar(`${lineas[maxLineas - 1]}…`, maxPx, tamano);
+        } else {
+            lineas.push(actual);
+            actual = palabra;
         }
     }
+    if (actual) lineas.push(actual);
 
-    return lineas;
+    return lineas.map((l) => truncar(l, maxPx, tamano, negrita));
+}
+
+/**
+ * "IMPERMEABILIZACIONES Y CUBIERTAS" -> "Impermeabilizaciones y cubiertas".
+ * Los nombres del catálogo vienen en caja alta; en la leyenda gritan y no caben.
+ */
+function aFrase(texto: string): string {
+    const limpio = texto.replace(/\s+/g, " ").trim();
+    if (limpio === "" || limpio !== limpio.toUpperCase()) return limpio;
+    const minusculas = limpio.toLocaleLowerCase("es-ES");
+    return minusculas.charAt(0).toLocaleUpperCase("es-ES") + minusculas.slice(1);
 }
 
 type OpcionesTexto = {
@@ -159,31 +241,48 @@ function rect(
     ancho: number,
     alto: number,
     relleno: string,
-    borde?: string,
-    radio = 0
+    radio = 0,
+    extra = ""
 ): string {
     const atributos = [
         `x="${redondear(x)}"`,
         `y="${redondear(y)}"`,
-        `width="${redondear(ancho)}"`,
-        `height="${redondear(alto)}"`,
+        `width="${redondear(Math.max(0, ancho))}"`,
+        `height="${redondear(Math.max(0, alto))}"`,
         `fill="${relleno}"`,
     ];
-    if (borde) atributos.push(`stroke="${borde}"`, `stroke-width="1"`);
     if (radio) atributos.push(`rx="${radio}"`);
+    if (extra) atributos.push(extra);
     return `<rect ${atributos.join(" ")}/>`;
 }
 
-function linea(x1: number, y1: number, x2: number, y2: number, color: string, grosor = 1): string {
+function linea(
+    x1: number,
+    y1: number,
+    x2: number,
+    y2: number,
+    color: string,
+    grosor = 1,
+    opacidad?: number
+): string {
     return (
         `<line x1="${redondear(x1)}" y1="${redondear(y1)}" x2="${redondear(x2)}" y2="${redondear(y2)}" ` +
-        `stroke="${color}" stroke-width="${grosor}"/>`
+        `stroke="${color}" stroke-width="${grosor}"${opacidad !== undefined ? ` stroke-opacity="${opacidad}"` : ""}/>`
     );
 }
 
 /** Sin esto el SVG se llena de coordenadas con 13 decimales de coma flotante. */
 function redondear(v: number): number {
     return Math.round(v * 100) / 100;
+}
+
+/** Rótulo de sección: versalitas espaciadas. */
+function rotulo(x: number, y: number, etiqueta: string, color: string): string {
+    return texto(x, y, etiqueta, { tamano: 15, peso: "bold", color, espaciado: 2.4 });
+}
+
+function aBase64(datos: Uint8Array): string {
+    return Buffer.from(datos.buffer, datos.byteOffset, datos.byteLength).toString("base64");
 }
 
 // ---------------------------------------------------------------------------
@@ -265,293 +364,436 @@ function donut(
     return piezas.join("\n");
 }
 
-// ---------------------------------------------------------------------------
-// Bandas
-// ---------------------------------------------------------------------------
-
-function cabecera(d: DatosPortada, p: PaletaPortada): string {
-    const anchoMarca = anchoDe(d.identidad.nombreMarca, 54, true) + 18;
-
-    return [
-        rect(0, 0, W, 14, p.acento),
-        texto(M, 112, d.identidad.nombreMarca, { tamano: 54, peso: "bold", color: p.marca }),
-        d.identidad.nombreMarcaSecundario
-            ? texto(M + anchoMarca + 14, 112, d.identidad.nombreMarcaSecundario, {
-                  tamano: 54,
-                  peso: "bold",
-                  color: p.texto,
-              })
-            : "",
-        texto(M, 143, d.identidad.claim, { tamano: 16, color: p.textoTenue, espaciado: 1.2 }),
-        linea(M, 165, W - M, 165, p.acento, 2),
-    ].join("\n");
-}
-
-function titular(d: DatosPortada, p: PaletaPortada): string {
-    const comunidad = `${d.comunidad}  ·  ${d.localidad}`;
-
-    return [
-        texto(M, 212, d.antetitulo, { tamano: 16, color: p.textoTenue, espaciado: 2 }),
-        texto(M, 260, truncar(d.titulo, W - 2 * M, 36, true), {
-            tamano: 36,
-            peso: "bold",
-            color: p.texto,
-        }),
-        texto(M, 306, truncar(comunidad, W - 2 * M, 30, true), {
-            tamano: 30,
-            peso: "bold",
-            color: p.acento,
-        }),
-    ].join("\n");
-}
-
-function cajasMeta(d: DatosPortada, p: PaletaPortada): string {
-    const campos: Array<[string, string]> = [
-        ["EXPEDIENTE", d.expediente],
-        ["FECHA", d.fecha],
-        ["ADMINISTRADOR", d.administrador],
-    ];
-
-    const hueco = 20;
-    const ancho = (W - 2 * M - hueco * 2) / 3;
-
-    return campos
-        .map(([etiqueta, valor], i) => {
-            const x = M + i * (ancho + hueco);
-            return [
-                rect(x, 336, ancho, 72, p.panel, p.borde, 3),
-                texto(x + 16, 362, etiqueta, { tamano: 13, color: p.textoTenue, espaciado: 1 }),
-                texto(x + 16, 391, truncar(valor, ancho - 44, 20, true), {
-                    tamano: 20,
-                    peso: "bold",
-                    color: p.texto,
-                }),
-            ].join("\n");
-        })
-        .join("\n");
-}
-
-function rotulo(y: number, etiqueta: string, p: PaletaPortada): string {
-    return [
-        texto(M, y, etiqueta, { tamano: 15, color: p.acento, espaciado: 1.8, peso: "600" }),
-        linea(M, y + 12, W - M, y + 12, p.borde),
-    ].join("\n");
-}
-
-function diagnostico(d: DatosPortada, p: PaletaPortada, y0: number): string {
-    if (d.diagnostico.length === 0) return "";
-
-    const hueco = 15;
-    const ancho = (W - 2 * M - hueco * (d.diagnostico.length - 1)) / d.diagnostico.length;
-    const alto = 172;
-
-    return d.diagnostico
-        .map((t, i) => {
-            const x = M + i * (ancho + hueco);
-            const util = ancho - 34;
-
-            // El título va a 3 líneas como máximo: los nombres de capítulo del
-            // catálogo son largos y en caja alta ("DEMOLICIONES Y ACTUACIONES
-            // PREVIAS" no baja de tres líneas en una tarjeta de 210 px).
-            const titulo = envolver(t.titulo, util, 15, 3);
-            const cuerpo = envolver(t.texto, util, 12, 2);
-            const yTitulo = y0 + 64;
-            const yCuerpo = yTitulo + (titulo.length - 1) * 19 + 26;
-
-            return [
-                rect(x, y0, ancho, alto, p.panel, p.borde, 3),
-                rect(x, y0, 4, alto, p.acento),
-                texto(x + 18, y0 + 40, t.ordinal, { tamano: 26, peso: "bold", color: p.acento }),
-                ...titulo.map((linea, j) =>
-                    texto(x + 18, yTitulo + j * 19, linea, { tamano: 15, peso: "bold", color: p.texto })
-                ),
-                ...cuerpo.map((linea, j) =>
-                    texto(x + 18, yCuerpo + j * 16, linea, { tamano: 12, color: p.textoTenue })
-                ),
-            ].join("\n");
-        })
-        .join("\n");
-}
-
-/** Alto de la banda económica. Se necesita antes de pintarla, para apilar. */
-export function altoEconomia(numeroCapitulos: number): number {
-    return numeroCapitulos * altoFila(numeroCapitulos) + 12 + 3 * 38;
-}
-
-function altoFila(numeroCapitulos: number): number {
-    return numeroCapitulos <= 8 ? 42 : 32;
-}
-
-function economia(d: DatosPortada, p: PaletaPortada, y0: number): string {
-    const n = d.capitulos.length;
-    const fila = altoFila(n);
-    const tamano = n <= 8 ? 19 : 16;
-
-    const listaAncho = 640;
-    const listaX = M;
-
-    const piezas: string[] = [];
-
-    // --- Listado de capítulos ---
-    d.capitulos.forEach((c, i) => {
-        const y = y0 + i * fila;
-        if (i % 2 === 0) piezas.push(rect(listaX, y, listaAncho, fila, p.panel));
-        piezas.push(rect(listaX, y + 6, 3, fila - 12, c.color));
-        piezas.push(
-            texto(listaX + 16, y + fila / 2 + tamano / 3, c.codigoJerarquico, {
-                tamano,
-                color: p.textoTenue,
-            })
-        );
-        // El nombre se recorta contra el hueco REAL que deja el importe. Con un
-        // ancho fijo, "DEMOLICIONES Y ACTUACIONES PREVIAS" se montaba sobre la
-        // columna de la derecha.
-        const anchoNombre = listaAncho - 78 - 16 - anchoDe(c.importeFormateado, tamano, true) - 20;
-        piezas.push(
-            texto(listaX + 78, y + fila / 2 + tamano / 3, truncar(c.nombre, anchoNombre, tamano), {
-                tamano,
-                color: p.texto,
-            })
-        );
-        piezas.push(
-            texto(listaX + listaAncho - 16, y + fila / 2 + tamano / 3, c.importeFormateado, {
-                tamano,
-                peso: "bold",
-                color: p.acento,
-                anclaje: "end",
-            })
-        );
-    });
-
-    // --- Cierre económico ---
-    const cierreY = y0 + n * fila + 12;
-    piezas.push(linea(listaX, cierreY - 6, listaX + listaAncho, cierreY - 6, p.borde));
-
-    const cierre: Array<[string, string, boolean]> = [
-        ["PEM (sin IVA)", d.pemFormateado, false],
-        [d.ivaEtiqueta, d.ivaFormateado, false],
-        ["TOTAL", d.totalFormateado, true],
-    ];
-
-    cierre.forEach(([etiqueta, valor, destacado], i) => {
-        const y = cierreY + i * 38 + 26;
-        piezas.push(
-            texto(listaX + 16, y, etiqueta, {
-                tamano: destacado ? 22 : 19,
-                peso: destacado ? "bold" : "600",
-                color: destacado ? p.acento : p.texto,
-            })
-        );
-        piezas.push(
-            texto(listaX + listaAncho - 16, y, valor, {
-                tamano: destacado ? 22 : 19,
-                peso: "bold",
-                color: destacado ? p.acento : p.texto,
-                anclaje: "end",
-            })
-        );
-    });
-
-    // --- Donut y leyenda ---
-    const cx = 1030;
-    const cy = y0 + (n * fila) / 2 + 20;
-    const rExterior = n <= 8 ? 140 : 132;
-    const rInterior = rExterior - 58;
-
-    piezas.push(donut(cx, cy, rExterior, rInterior, d.capitulos));
-    piezas.push(
-        texto(cx, cy + 4, d.pemAbreviado, { tamano: 34, peso: "bold", color: p.acento, anclaje: "middle" })
-    );
-    piezas.push(texto(cx, cy + 30, "PEM", { tamano: 15, color: p.textoTenue, anclaje: "middle" }));
-
-    const leyendaX = 716;
-    const leyendaAlto = 30;
-    const leyendaY = cy - (n * leyendaAlto) / 2 + 10;
-
-    d.capitulos.forEach((c, i) => {
-        const y = leyendaY + i * leyendaAlto;
-        piezas.push(rect(leyendaX, y - 10, 11, 11, c.color, undefined, 2));
-        piezas.push(
-            texto(leyendaX + 19, y, truncar(c.nombre, 140, 12), { tamano: 12, color: p.texto })
-        );
-        piezas.push(
-            texto(leyendaX + 19, y + 14, `${formatearPorcentaje(c.porcentaje)} %`, {
-                tamano: 12,
-                color: p.textoTenue,
-            })
-        );
-    });
-
-    return piezas.join("\n");
-}
-
 function formatearPorcentaje(v: number): string {
     return v.toLocaleString("es-ES", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 }
 
-function cronograma(d: DatosPortada, p: PaletaPortada, y0: number): string {
-    if (!d.cronograma || d.cronograma.length === 0) return "";
+// ---------------------------------------------------------------------------
+// Maqueta
+// ---------------------------------------------------------------------------
 
-    const total = d.cronograma[d.cronograma.length - 1].diaFin;
-    if (total <= 0) return "";
+/** Cifras de la obra que caben por fila, y alto de cada caja. */
+const CIFRAS_POR_FILA = 2;
+const ALTO_CIFRA = 82;
+const HUECO_CIFRA = 14;
+const FILA_PARTIDA = 58;
 
-    const ancho = W - 2 * M;
-    const alto = 38;
-    const piezas: string[] = [rect(M, y0, ancho, alto, p.panel)];
+function altoCifras(numero: number): number {
+    const filas = Math.ceil(numero / CIFRAS_POR_FILA);
+    return filas === 0 ? 0 : filas * ALTO_CIFRA + (filas - 1) * HUECO_CIFRA;
+}
 
-    d.cronograma.forEach((f, i) => {
-        const x = M + ((f.diaInicio - 1) / total) * ancho;
-        const w = ((f.diaFin - f.diaInicio + 1) / total) * ancho;
+/** Leyenda holgada (tres líneas por capítulo) hasta 4 capítulos; compacta a partir de 5. */
+function leyendaHolgada(numeroCapitulos: number): boolean {
+    return numeroCapitulos <= 4;
+}
 
-        if (i % 2 === 0) piezas.push(rect(x, y0, w, alto, p.acento));
+const FILA_LEYENDA_HOLGADA = 104;
+const FILA_LEYENDA_COMPACTA = 42;
+const FILA_LEYENDA_COMPACTA_MAXIMA = 62;
 
-        // Una etiqueta que no cabe en su tramo estorba más de lo que informa.
-        if (w >= anchoDe(f.etiqueta, 13) + 10) {
-            piezas.push(
-                texto(x + w / 2, y0 + alto + 24, f.etiqueta, {
-                    tamano: 13,
-                    color: p.textoTenue,
-                    anclaje: "middle",
-                })
-            );
-        }
+/** Alto que necesita cada tarjeta y, con eso, dónde cae cada bloque. */
+function calcularMaqueta(d: DatosPortada): Maqueta {
+    const n = d.capitulos.length;
+    const holgada = leyendaHolgada(n);
+    const altoIzquierda =
+        84 + Math.max(holgada ? 276 : 232, n * (holgada ? FILA_LEYENDA_HOLGADA : FILA_LEYENDA_COMPACTA)) + 36;
+
+    const altoDerecha =
+        92 +
+        d.partidas.length * FILA_PARTIDA +
+        (d.partidasRestantes ? 26 : 0) +
+        (d.cifras.length > 0 ? 58 + altoCifras(d.cifras.length) : 0) +
+        26;
+
+    const altoFijo =
+        ALTO_BANDA + HUECO_BANDA_TARJETAS + HUECO_TARJETAS_TOTALES + ALTO_TOTALES + HUECO_TOTALES_PIE + ALTO_PIE;
+    const altoTarjetas = Math.max(altoIzquierda, altoDerecha, ALTO_TARJETAS_MINIMO, H - altoFijo - ALTO_FOTO_MAXIMO);
+    const altoFoto = H - altoFijo - altoTarjetas;
+
+    const yBanda = altoFoto;
+    const yTarjetas = yBanda + ALTO_BANDA + HUECO_BANDA_TARJETAS;
+    const yTotales = yTarjetas + altoTarjetas + HUECO_TARJETAS_TOTALES;
+    const yPie = H - ALTO_PIE;
+
+    return { altoFoto, yBanda, yTarjetas, altoTarjetas, yTotales, yPie };
+}
+
+// ---------------------------------------------------------------------------
+// Bloque superior: foto, marca y título
+// ---------------------------------------------------------------------------
+
+function definiciones(p: PaletaPortada, m: Maqueta): string {
+    return [
+        "<defs>",
+        `<clipPath id="recorte-foto"><rect x="0" y="0" width="${W}" height="${m.altoFoto}"/></clipPath>`,
+        // Degradado de lectura: oscuro arriba (marca), claro en medio (se ve la
+        // obra) y casi opaco abajo (título).
+        `<linearGradient id="sombra-foto" x1="0" y1="0" x2="0" y2="1">`,
+        `<stop offset="0" stop-color="${p.oscuro}" stop-opacity="0.78"/>`,
+        `<stop offset="0.3" stop-color="${p.oscuro}" stop-opacity="0.2"/>`,
+        `<stop offset="0.55" stop-color="${p.oscuro}" stop-opacity="0.28"/>`,
+        `<stop offset="1" stop-color="${p.oscuro}" stop-opacity="0.96"/>`,
+        `</linearGradient>`,
+        `<linearGradient id="sin-foto" x1="0" y1="0" x2="1" y2="1">`,
+        `<stop offset="0" stop-color="${p.oscuro}"/>`,
+        `<stop offset="1" stop-color="${p.acento}"/>`,
+        `</linearGradient>`,
+        "</defs>",
+    ].join("\n");
+}
+
+function bloqueFoto(d: DatosPortada, p: PaletaPortada, m: Maqueta): string {
+    const piezas: string[] = [];
+
+    if (d.imagen) {
+        // `slice` recorta la foto para llenar el hueco sin deformarla, venga
+        // apaisada o vertical.
+        const uri = `data:${d.imagen.mimetype};base64,${aBase64(d.imagen.datos)}`;
+        piezas.push(
+            `<image x="0" y="0" width="${W}" height="${m.altoFoto}" preserveAspectRatio="xMidYMid slice" ` +
+                `clip-path="url(#recorte-foto)" href="${uri}"/>`
+        );
+    } else {
+        piezas.push(rect(0, 0, W, m.altoFoto, "url(#sin-foto)"));
+    }
+    piezas.push(rect(0, 0, W, m.altoFoto, "url(#sombra-foto)"));
+
+    // --- Marca ---
+    // letter-spacing también se añade tras la última letra: se compensa medio
+    // espaciado para que la marca quede centrada de verdad.
+    const espaciadoMarca = 12;
+    piezas.push(
+        texto(W / 2 + espaciadoMarca / 2, 108, d.identidad.nombreMarca, {
+            tamano: 50,
+            peso: "bold",
+            color: p.textoClaro,
+            anclaje: "middle",
+            espaciado: espaciadoMarca,
+        })
+    );
+    piezas.push(linea(W / 2 - 80, 138, W / 2 + 80, 138, p.textoClaro, 2, 0.9));
+    piezas.push(
+        texto(W / 2 + 1.2, 178, d.identidad.claim, {
+            tamano: 16,
+            color: p.textoClaro,
+            anclaje: "middle",
+            espaciado: 2.4,
+            opacidad: 0.88,
+        })
+    );
+
+    // --- Título, anclado abajo ---
+    const tamanoTitulo = 46;
+    const interlineado = 56;
+    const lineasTitulo = envolver(d.titulo, W - 2 * M, tamanoTitulo, 2, true);
+    const yUltima = m.altoFoto - 42;
+    const yPrimera = yUltima - (lineasTitulo.length - 1) * interlineado;
+
+    lineasTitulo.forEach((l, i) => {
+        piezas.push(
+            texto(M, yPrimera + i * interlineado, l, { tamano: tamanoTitulo, peso: "bold", color: p.textoClaro })
+        );
+    });
+
+    const yAntetitulo = yPrimera - 62;
+    piezas.push(
+        texto(M, yAntetitulo, d.antetitulo, {
+            tamano: 17,
+            color: p.textoClaroTenue,
+            espaciado: 5,
+            peso: "600",
+        })
+    );
+
+    // --- Etiquetas ---
+    const altoEtiqueta = 40;
+    const yEtiquetas = yAntetitulo - 34 - altoEtiqueta;
+    let x = M;
+    for (const e of d.etiquetas) {
+        const textoEtiqueta = truncar(e, 360, 16, true);
+        const ancho = anchoDe(textoEtiqueta, 16, true) + 36;
+        if (x + ancho > W - M) break;
+        piezas.push(
+            rect(
+                x,
+                yEtiquetas,
+                ancho,
+                altoEtiqueta,
+                p.oscuro,
+                altoEtiqueta / 2,
+                `fill-opacity="0.82" stroke="${p.textoClaro}" stroke-opacity="0.28" stroke-width="1"`
+            )
+        );
+        piezas.push(
+            texto(x + ancho / 2, yEtiquetas + 26, textoEtiqueta, {
+                tamano: 16,
+                peso: "bold",
+                color: p.textoClaro,
+                anclaje: "middle",
+            })
+        );
+        x += ancho + 12;
+    }
+
+    return piezas.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Banda: obra · cliente · propuesta
+// ---------------------------------------------------------------------------
+
+function banda(d: DatosPortada, p: PaletaPortada, m: Maqueta): string {
+    const y0 = m.yBanda;
+    // Columnas desiguales a propósito: OBRA lleva la dirección, que es lo más
+    // largo y lo que más importa leer entera. Los textos que no caben se
+    // encogen un poco antes de truncarse.
+    const anchos = [420, 370, W - 2 * M - 790];
+    const cliente = d.administrador ? `Adm.: ${d.administrador}` : d.comunidad;
+    const fecha = d.fechaValidez ? `${d.fecha} · Válida hasta ${d.fechaValidez}` : d.fecha;
+
+    const columnas: Array<[string, string, string]> = [
+        ["OBRA", d.comunidad, d.localidad],
+        ["CLIENTE", "Comunidad de Propietarios", cliente],
+        ["PROPUESTA", `Nº ${d.expediente}`, fecha],
+    ];
+
+    const piezas: string[] = [rect(0, y0, W, ALTO_BANDA, p.oscuro)];
+
+    let x0 = M;
+    columnas.forEach(([etiqueta, valor, detalle], i) => {
+        const x = i === 0 ? x0 : x0 + 28;
+        const util = anchos[i] - (i === 1 ? 56 : 28);
+
+        if (i > 0) piezas.push(linea(x0, y0 + 30, x0, y0 + ALTO_BANDA - 30, p.textoClaro, 1, 0.18));
+
+        piezas.push(texto(x, y0 + 44, etiqueta, { tamano: 14, color: p.textoClaroTenue, espaciado: 3 }));
+        piezas.push(textoAjustado(x, y0 + 81, valor, util, 16, { tamano: 21, peso: "bold", color: p.textoClaro }));
+        piezas.push(textoAjustado(x, y0 + 109, detalle, util, 13, { tamano: 16, color: p.textoClaroTenue }));
+        x0 += anchos[i];
     });
 
     return piezas.join("\n");
 }
 
-function cajasPie(d: DatosPortada, p: PaletaPortada, y0: number): string {
-    const hueco = 18;
-    const ancho = (W - 2 * M - hueco * (d.cajas.length - 1)) / d.cajas.length;
+// ---------------------------------------------------------------------------
+// Tarjeta izquierda: distribución por capítulos
+// ---------------------------------------------------------------------------
 
-    return d.cajas
-        .map((c, i) => {
-            const x = M + i * (ancho + hueco);
-            return [
-                rect(x, y0, ancho, 78, p.panel, p.borde, 3),
-                texto(x + ancho / 2, y0 + 34, truncar(c.valor, ancho - 20, 22, true), {
-                    tamano: 22,
-                    peso: "bold",
-                    color: p.texto,
-                    anclaje: "middle",
-                }),
-                texto(x + ancho / 2, y0 + 60, truncar(c.etiqueta, ancho - 20, 14), {
+function tarjetaCapitulos(d: DatosPortada, p: PaletaPortada, m: Maqueta, x0: number, ancho: number): string {
+    const y0 = m.yTarjetas;
+    const piezas: string[] = [
+        rect(x0, y0, ancho, m.altoTarjetas, p.tarjeta, 18),
+        rotulo(x0 + 30, y0 + 52, "DISTRIBUCIÓN POR CAPÍTULOS", p.texto),
+    ];
+
+    const n = d.capitulos.length;
+    const arriba = y0 + 84;
+    const abajo = y0 + m.altoTarjetas - 36;
+    const cy = (arriba + abajo) / 2;
+
+    const holgada = leyendaHolgada(n);
+    const rExterior = holgada ? 138 : 116;
+    const rInterior = holgada ? 92 : 76;
+    const cx = x0 + 30 + rExterior;
+
+    piezas.push(donut(cx, cy, rExterior, rInterior, d.capitulos));
+
+    // Centro del donut: la base imponible. Si no cabe entera, abreviada.
+    const tamanoCentro = holgada ? 26 : 21;
+    const cabeEntero = anchoDe(d.pemFormateado, tamanoCentro, true) <= 2 * rInterior - 18;
+    piezas.push(
+        texto(cx, cy + 6, cabeEntero ? d.pemFormateado : d.pemAbreviado, {
+            tamano: tamanoCentro,
+            peso: "bold",
+            color: p.texto,
+            anclaje: "middle",
+        })
+    );
+    piezas.push(
+        texto(cx, cy + 31, "Base imponible", { tamano: holgada ? 14 : 12, color: p.textoTenue, anclaje: "middle" })
+    );
+
+    // --- Leyenda ---
+    const lx = cx + rExterior + 32;
+    const derecha = x0 + ancho - 26;
+
+    if (holgada) {
+        // Tres bloques por capítulo: código y %, nombre (2 líneas), importe.
+        const yInicio = cy - (n * FILA_LEYENDA_HOLGADA) / 2 + 24;
+        d.capitulos.forEach((c, i) => {
+            const y = yInicio + i * FILA_LEYENDA_HOLGADA;
+            piezas.push(rect(lx, y - 13, 14, 14, c.color, 3));
+            piezas.push(texto(lx + 22, y, `Cap. ${c.codigoJerarquico}`, { tamano: 17, peso: "bold", color: p.texto }));
+            piezas.push(
+                texto(derecha, y, `${formatearPorcentaje(c.porcentaje)} %`, {
                     tamano: 14,
                     color: p.textoTenue,
-                    anclaje: "middle",
-                }),
-            ].join("\n");
-        })
-        .join("\n");
+                    anclaje: "end",
+                })
+            );
+            envolver(aFrase(c.nombre), derecha - lx - 22, 14, 2).forEach((l, j) => {
+                piezas.push(texto(lx + 22, y + 24 + j * 18, l, { tamano: 14, color: p.textoTenue }));
+            });
+            piezas.push(texto(lx + 22, y + 72, c.importeFormateado, { tamano: 19, peso: "bold", color: p.texto }));
+        });
+    } else {
+        // Compacta: código + nombre, y debajo importe y %. La fila crece con el
+        // hueco disponible (6 capítulos no van tan apretados como 12).
+        const fila = Math.min(FILA_LEYENDA_COMPACTA_MAXIMA, Math.max(FILA_LEYENDA_COMPACTA, (abajo - arriba) / n));
+        const tamano = fila >= 52 ? 15 : 13;
+        const salto = fila >= 52 ? 20 : 17;
+        const yInicio = cy - (n * fila) / 2 + (fila - salto) / 2 + tamano * 0.8;
+        d.capitulos.forEach((c, i) => {
+            const y = yInicio + i * fila;
+            piezas.push(rect(lx, y - tamano + 2, tamano - 2, tamano - 2, c.color, 2));
+            const anchoCodigo = anchoDe(c.codigoJerarquico, tamano, true) + 8;
+            piezas.push(texto(lx + tamano + 6, y, c.codigoJerarquico, { tamano, peso: "bold", color: p.texto }));
+            piezas.push(
+                texto(
+                    lx + tamano + 6 + anchoCodigo,
+                    y,
+                    truncar(aFrase(c.nombre), derecha - lx - tamano - 6 - anchoCodigo, tamano),
+                    { tamano, color: p.textoTenue }
+                )
+            );
+            piezas.push(
+                texto(lx + tamano + 6, y + salto, c.importeFormateado, { tamano, peso: "bold", color: p.texto })
+            );
+            piezas.push(
+                texto(derecha, y + salto, `${formatearPorcentaje(c.porcentaje)} %`, {
+                    tamano,
+                    color: p.textoTenue,
+                    anclaje: "end",
+                })
+            );
+        });
+    }
+
+    return piezas.join("\n");
 }
 
-function pie(d: DatosPortada, p: PaletaPortada): string {
+// ---------------------------------------------------------------------------
+// Tarjeta derecha: importe por partida + la obra en cifras
+// ---------------------------------------------------------------------------
+
+function tarjetaPartidas(d: DatosPortada, p: PaletaPortada, m: Maqueta, x0: number, ancho: number): string {
+    const y0 = m.yTarjetas;
+    const izquierda = x0 + 30;
+    const derecha = x0 + ancho - 30;
+    const util = derecha - izquierda;
+
+    const piezas: string[] = [
+        rect(x0, y0, ancho, m.altoTarjetas, p.tarjeta, 18),
+        rotulo(izquierda, y0 + 52, "IMPORTE POR PARTIDA", p.texto),
+    ];
+
+    // --- Barras ---
+    let y = y0 + 92;
+    for (const partida of d.partidas) {
+        const anchoImporte = anchoDe(partida.importeFormateado, 16, true);
+        const codigo = partida.codigo.trim();
+        const anchoCodigo = codigo ? anchoDe(codigo, 16, true) + 14 : 0;
+
+        if (codigo) piezas.push(texto(izquierda, y, codigo, { tamano: 16, peso: "bold", color: p.texto }));
+        piezas.push(
+            texto(izquierda + anchoCodigo, y, truncar(partida.resumen, util - anchoCodigo - anchoImporte - 18, 15), {
+                tamano: 15,
+                color: p.textoTenue,
+            })
+        );
+        piezas.push(
+            texto(derecha, y, partida.importeFormateado, { tamano: 16, peso: "bold", color: p.texto, anclaje: "end" })
+        );
+        piezas.push(rect(izquierda, y + 12, util, 12, p.pista, 6));
+        piezas.push(rect(izquierda, y + 12, Math.max(12, util * partida.proporcion), 12, partida.color, 6));
+        y += FILA_PARTIDA;
+    }
+
+    if (d.partidasRestantes) {
+        const { numero, importeFormateado } = d.partidasRestantes;
+        piezas.push(
+            texto(
+                izquierda,
+                y - 4,
+                `+ ${numero} ${numero === 1 ? "partida más" : "partidas más"} · ${importeFormateado}`,
+                { tamano: 14, color: p.textoTenue }
+            )
+        );
+        y += 26;
+    }
+
+    // --- La obra en cifras, justo debajo de las barras ---
+    if (d.cifras.length === 0) return piezas.join("\n");
+
+    const yRotulo = y + 22;
+    const yCajas = yRotulo + 22;
+    const anchoCaja = (util - HUECO_CIFRA) / CIFRAS_POR_FILA;
+
+    piezas.push(rotulo(izquierda, yRotulo, "LA OBRA EN CIFRAS", p.texto));
+
+    d.cifras.forEach((c, i) => {
+        const cx = izquierda + (i % CIFRAS_POR_FILA) * (anchoCaja + HUECO_CIFRA);
+        const cy = yCajas + Math.floor(i / CIFRAS_POR_FILA) * (ALTO_CIFRA + HUECO_CIFRA);
+        piezas.push(rect(cx, cy, anchoCaja, ALTO_CIFRA, p.fondo, 12));
+        piezas.push(
+            textoAjustado(cx + 20, cy + 40, c.valor, anchoCaja - 40, 16, { tamano: 26, peso: "bold", color: p.texto })
+        );
+        piezas.push(
+            texto(cx + 20, cy + 64, truncar(c.etiqueta, anchoCaja - 40, 14), { tamano: 14, color: p.textoTenue })
+        );
+    });
+
+    return piezas.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Totales y pie
+// ---------------------------------------------------------------------------
+
+function totales(d: DatosPortada, p: PaletaPortada, m: Maqueta): string {
+    const y0 = m.yTotales;
+    const hueco = 30;
+    const anchos = [330, 330, W - 2 * M - 660 - 2 * hueco];
+    const cajas: Array<[string, string, boolean]> = [
+        ["BASE IMPONIBLE", d.pemFormateado, false],
+        [d.ivaEtiqueta.toUpperCase(), d.ivaFormateado, false],
+        ["TOTAL (IVA INCLUIDO)", d.totalFormateado, true],
+    ];
+
+    const piezas: string[] = [];
+    let x = M;
+    cajas.forEach(([etiqueta, valor, destacado], i) => {
+        const ancho = anchos[i];
+        piezas.push(rect(x, y0, ancho, ALTO_TOTALES, destacado ? p.oscuro : p.tarjeta, 16));
+        piezas.push(
+            texto(x + 28, y0 + 40, etiqueta, {
+                tamano: 14,
+                color: destacado ? p.textoClaroTenue : p.textoTenue,
+                espaciado: 2.4,
+            })
+        );
+        const tamano = destacado ? 36 : 29;
+        piezas.push(
+            texto(x + 28, y0 + 84, truncar(valor, ancho - 56, tamano, true), {
+                tamano,
+                peso: "bold",
+                color: destacado ? p.textoClaro : p.texto,
+            })
+        );
+        x += ancho + hueco;
+    });
+
+    return piezas.join("\n");
+}
+
+function pie(d: DatosPortada, p: PaletaPortada, m: Maqueta): string {
     return [
-        linea(M, H - 76, W - M, H - 76, p.acento, 2),
-        texto(M, H - 44, d.identidad.pie, { tamano: 15, peso: "bold", color: p.texto }),
-        texto(W - M, H - 44, d.identidad.contacto, {
+        rect(0, m.yPie, W, ALTO_PIE, p.oscuro),
+        texto(M, m.yPie + 37, d.identidad.pie, { tamano: 15, peso: "bold", color: p.textoClaro }),
+        texto(W - M, m.yPie + 37, d.identidad.contacto, {
             tamano: 15,
-            color: p.textoTenue,
+            color: p.textoClaroTenue,
             anclaje: "end",
         }),
     ].join("\n");
@@ -569,34 +811,19 @@ function pie(d: DatosPortada, p: PaletaPortada): string {
  */
 export function renderizarPortada(d: DatosPortada): string {
     const p = d.identidad.paleta;
-
-    const yDiagnostico = 470;
-    const altoDiagnostico = d.diagnostico.length > 0 ? 172 : 0;
-
-    const yEconomiaRotulo = yDiagnostico + altoDiagnostico + 48;
-    const yEconomia = yEconomiaRotulo + 38;
-    const finEconomia = yEconomia + altoEconomia(d.capitulos.length);
-
-    const hayCronograma = Boolean(d.cronograma && d.cronograma.length > 0);
-    const yCronogramaRotulo = finEconomia + 56;
-    const yCronograma = yCronogramaRotulo + 26;
-    const finCronograma = hayCronograma ? yCronograma + 38 + 30 : finEconomia;
-
-    const yCajas = finCronograma + 44;
+    const m = calcularMaqueta(d);
+    const anchoIzquierda = 540;
+    const hueco = 30;
 
     const cuerpo = [
+        definiciones(p, m),
         rect(0, 0, W, H, p.fondo),
-        cabecera(d, p),
-        titular(d, p),
-        cajasMeta(d, p),
-        altoDiagnostico ? rotulo(yDiagnostico - 30, "DIAGNÓSTICO Y FRENTES DE OBRA", p) : "",
-        diagnostico(d, p, yDiagnostico),
-        rotulo(yEconomiaRotulo, "RESUMEN ECONÓMICO", p),
-        economia(d, p, yEconomia),
-        hayCronograma ? rotulo(yCronogramaRotulo, "CRONOGRAMA ORIENTATIVO", p) : "",
-        cronograma(d, p, yCronograma),
-        cajasPie(d, p, yCajas),
-        pie(d, p),
+        bloqueFoto(d, p, m),
+        banda(d, p, m),
+        tarjetaCapitulos(d, p, m, M, anchoIzquierda),
+        tarjetaPartidas(d, p, m, M + anchoIzquierda + hueco, W - 2 * M - anchoIzquierda - hueco),
+        totales(d, p, m),
+        pie(d, p, m),
     ]
         .filter(Boolean)
         .join("\n");

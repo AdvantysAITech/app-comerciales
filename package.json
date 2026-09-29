@@ -11,6 +11,8 @@
     "tarifa:validar": "node scripts/tarifa/validar-tarifa.mjs",
     "motor:probar": "tsx scripts/tarifa/probar-motor.ts",
     "ajustes:probar": "tsx scripts/tarifa/probar-ajustes.ts",
+    "numero:probar": "tsx scripts/tarifa/probar-numero.ts",
+    "permisos:probar": "tsx scripts/tarifa/probar-permisos.ts",
     "mapeo:auditar": "tsx scripts/tarifa/auditar-mapeo.ts",
     "estado:probar": "tsx scripts/tarifa/probar-estado.ts",
     "contador:probar": "tsx scripts/tarifa/probar-contador.ts",
@@ -26,10 +28,13 @@
     "modulos:probar": "tsx scripts/tarifa/probar-modulos-nuevos.ts",
     "licencias:probar": "tsx scripts/tarifa/probar-licencias.ts",
     "ghl:comparar": "tsx scripts/ghl/comparar-subcuentas.ts",
-    "ids:probar": "tsx scripts/ghl/probar-ids.ts"
+    "ids:probar": "tsx scripts/ghl/probar-ids.ts",
+    "borradores:probar": "tsx scripts/borradores/probar-conexion.ts",
+    "propuesta:probar": "tsx scripts/propuesta/probar-propuesta.ts"
   },
   "dependencies": {
     "@resvg/resvg-js": "^2.6.2",
+    "@upstash/redis": "^1.39.0",
     "bcryptjs": "^3.0.3",
     "dejavu-fonts-ttf": "^2.37.3",
     "fflate": "^0.8.3",

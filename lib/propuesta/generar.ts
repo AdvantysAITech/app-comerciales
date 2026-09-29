@@ -1,0 +1,645 @@
+import { aCentimos, aEuros } from "@/lib/documentos/motor";
+import { catalogo, listarCapitulos, listarPartidas, obtenerPartida, type PartidaTarifa } from "@/lib/documentos/tarifa";
+import { extraerJson, llamarClaude, textoDescargado, type BloqueRespuesta } from "@/lib/ia/claude";
+import { HERRAMIENTAS_CYPE, mensajeCype, PROMPT_CASAR_TARIFA, PROMPT_CYPE, PROMPT_EXTRAER } from "@/lib/ia/prompts";
+import { leerDecimal } from "@/lib/numero";
+import { capituloPermitido, MOTIVO_SIN_LICENCIA, partidaPermitida, textoMencionaAmianto } from "@/lib/catalogo/licencias";
+import {
+    normalizarUnidad,
+    type ConsultaCype,
+    type DictadoModulo,
+    type LineaPropuesta,
+    type Propuesta,
+} from "./tipos";
+
+/**
+ * lib/propuesta/generar.ts
+ *
+ * Dictado -> propuesta de partidas. SOLO SERVIDOR: importa la tarifa con los
+ * costes internos.
+ *
+ *   1. extraer trabajos del dictado (Claude, sin herramientas)
+ *   2. casar cada trabajo con la tarifa 2026 (candidatas por texto + Claude elige)
+ *   3. lo que no case queda `pendienteCype`; el formulario lo pide por separado a
+ *      /api/propuesta/cype, una llamada por línea y en paralelo, para que cada
+ *      una quepa en el minuto que da Vercel.
+ *
+ * Aritmética (medición x %, margen) en TypeScript. El modelo solo transcribe.
+ */
+
+// ---------------------------------------------------------------------------
+// 1. Extracción
+// ---------------------------------------------------------------------------
+
+export type Trabajo = {
+    id: string;
+    moduloKey: string;
+    tipoTrabajo: string;
+    accion: string;
+    elemento: string;
+    detalle: string;
+    cantidad: number | null;
+    medicionTotal: number | null;
+    porcentaje: number | null;
+    unidad: string | null;
+    textoOriginal: string;
+    dudas: string[];
+};
+
+type RespuestaExtraccion = {
+    trabajos?: Partial<Trabajo>[];
+    observaciones?: unknown[];
+    sugerencias?: unknown[];
+};
+
+/**
+ * Número de la respuesta del modelo. Si llega como texto se lee con
+ * `leerDecimal` (28/09/2026): la versión anterior quitaba TODOS los puntos y
+ * "12.5" se convertía en 125, el mismo fallo que ya se corrigió en la revisión
+ * de dirección el 24/09/2026.
+ */
+const numero = (v: unknown): number | null => {
+    if (typeof v === "number" && Number.isFinite(v)) return v;
+    if (typeof v === "string") return leerDecimal(v);
+    return null;
+};
+const texto = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
+const textos = (v: unknown): string[] => (Array.isArray(v) ? v.map(texto).filter(Boolean) : []);
+
+export function mensajeExtraccion(modulos: DictadoModulo[]): string {
+    return modulos
+        .map((m) => `## ${m.label} [clave: ${m.key}]\n${m.dictado.trim()}`)
+        .join("\n\n");
+}
+
+/**
+ * Fotos que se mandan a la IA. Topes por latencia y coste: cada foto son ~1.600
+ * tokens y segundos de descarga en Anthropic, y la extracción tiene que caber
+ * en el minuto de Vercel junto con el paso de la tarifa. Al anexo del documento
+ * van TODAS; a la IA, las primeras de cada tipo de trabajo.
+ */
+export const FOTOS_IA_POR_MODULO = 4;
+export const FOTOS_IA_TOTAL = 16;
+
+/** Solo https: son URLs públicas de la biblioteca de medios de GHL. */
+function fotosParaIa(modulos: DictadoModulo[]): Map<string, string[]> {
+    const porModulo = new Map<string, string[]>();
+    let total = 0;
+    for (const m of modulos) {
+        const urls = [...new Set(m.fotos ?? [])]
+            .filter((u) => /^https:\/\/[^\s]+$/i.test(u))
+            .slice(0, FOTOS_IA_POR_MODULO)
+            .slice(0, Math.max(0, FOTOS_IA_TOTAL - total));
+        total += urls.length;
+        if (urls.length) porModulo.set(m.key, urls);
+    }
+    return porModulo;
+}
+
+/**
+ * Mensaje con texto e imágenes intercalados: cada tipo de trabajo, su dictado
+ * y justo después sus fotos, rotuladas "Foto N de <tipo>" para que la IA pueda
+ * citarlas en dudas y sugerencias.
+ */
+export function contenidoExtraccion(modulos: DictadoModulo[], fotos: Map<string, string[]>): unknown[] {
+    const bloques: unknown[] = [];
+    for (const m of modulos) {
+        bloques.push({ type: "text", text: `## ${m.label} [clave: ${m.key}]\n${m.dictado.trim()}` });
+        (fotos.get(m.key) ?? []).forEach((url, i) => {
+            bloques.push({ type: "text", text: `Foto ${i + 1} de ${m.label}:` });
+            bloques.push({ type: "image", source: { type: "url", url } });
+        });
+    }
+    return bloques;
+}
+
+/** Valida la salida del modelo. Un trabajo sin módulo conocido se asigna al primero. */
+export function sanearExtraccion(bruto: RespuestaExtraccion, modulos: DictadoModulo[]) {
+    const claves = new Set(modulos.map((m) => m.key));
+    const trabajos: Trabajo[] = (bruto.trabajos ?? []).map((t, i) => {
+        const moduloKey = claves.has(texto(t.moduloKey)) ? texto(t.moduloKey) : modulos[0].key;
+        return {
+            id: `t${i + 1}`,
+            moduloKey,
+            tipoTrabajo: texto(t.tipoTrabajo) || modulos.find((m) => m.key === moduloKey)!.label,
+            accion: texto(t.accion),
+            elemento: texto(t.elemento),
+            detalle: texto(t.detalle),
+            cantidad: numero(t.cantidad),
+            medicionTotal: numero(t.medicionTotal),
+            porcentaje: numero(t.porcentaje),
+            unidad: texto(t.unidad) || null,
+            textoOriginal: texto(t.textoOriginal),
+            dudas: textos(t.dudas),
+        };
+    });
+    return {
+        trabajos: trabajos.filter((t) => t.accion || t.elemento),
+        observaciones: textos(bruto.observaciones),
+        sugerencias: textos(bruto.sugerencias),
+    };
+}
+
+// ---------------------------------------------------------------------------
+// 2. Tarifa
+// ---------------------------------------------------------------------------
+
+const VACIAS = new Set(
+    "de la el en y con por para del los las a un una al o su sus que se mas muy tipo zona".split(" ")
+);
+
+/**
+ * Raíces de 4 letras sin tildes. Tosco a propósito: "pintar" ~ "pintura",
+ * "impermeabilizar" ~ "impermeabilizacion". Recoge de más, pero quien elige es
+ * el modelo; lo que no puede pasar es que la buena no esté en la lista.
+ */
+function raices(t: string): string[] {
+    return t
+        .normalize("NFD")
+        .replace(/[̀-ͯ]/g, "")
+        .toLowerCase()
+        .split(/[^a-z0-9ñ]+/)
+        .filter((p) => p.length > 2 && !VACIAS.has(p))
+        .map((p) => p.slice(0, 4));
+}
+
+const indiceTarifa: { partida: PartidaTarifa; raices: Set<string> }[] = listarPartidas().map((p) => ({
+    partida: p,
+    raices: new Set(raices(p.descripcionCorta)),
+}));
+
+/**
+ * Partidas de la tarifa que comparten más palabras con el trabajo. Solo las
+ * que la subcuenta puede presupuestar (licencias, 28/09/2026).
+ */
+export function candidatasTarifa(
+    t: Pick<Trabajo, "accion" | "elemento" | "detalle">,
+    subcuenta: string,
+    limite = 15
+): PartidaTarifa[] {
+    const fuertes = raices(`${t.accion} ${t.elemento}`);
+    const debiles = raices(t.detalle);
+    return indiceTarifa
+        .filter(({ partida }) => partidaPermitida(subcuenta, partida))
+        .map(({ partida, raices: r }) => ({
+            partida,
+            puntos: fuertes.filter((x) => r.has(x)).length * 2 + debiles.filter((x) => r.has(x)).length,
+        }))
+        .filter((c) => c.puntos > 0)
+        .sort((a, b) => b.puntos - a.puntos)
+        .slice(0, limite)
+        .map((c) => c.partida);
+}
+
+// ---------------------------------------------------------------------------
+// 3. Construcción de la propuesta
+// ---------------------------------------------------------------------------
+
+const redondear2 = (n: number) => aEuros(aCentimos(n));
+
+/** Medición final: dicha, o total x % (en TypeScript, nunca en el modelo). */
+export function medicionDe(t: Trabajo): { cantidad: number | null; nota: string | null } {
+    if (t.cantidad !== null && t.cantidad > 0) return { cantidad: t.cantidad, nota: null };
+    if (t.medicionTotal !== null && t.porcentaje !== null) {
+        // En enteros: 33,3 x 15 % en coma flotante da 4,99499... y redondeaba a
+        // 4,99. Con centésimas enteras sale 499,5 céntimos -> 5,00.
+        const centimos = Math.round((Math.round(t.medicionTotal * 100) * Math.round(t.porcentaje * 100)) / 10000);
+        const cantidad = centimos / 100;
+        return {
+            cantidad: cantidad > 0 ? cantidad : null,
+            nota: `${String(t.medicionTotal).replace(".", ",")} × ${String(t.porcentaje).replace(".", ",")} %`,
+        };
+    }
+    if (t.medicionTotal !== null && t.medicionTotal > 0) return { cantidad: t.medicionTotal, nota: null };
+    return { cantidad: null, nota: null };
+}
+
+function capituloMasFrecuente(candidatas: PartidaTarifa[]): string {
+    const cuenta = new Map<string, number>();
+    for (const c of candidatas) cuenta.set(c.capitulo, (cuenta.get(c.capitulo) ?? 0) + 1);
+    return [...cuenta.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "03";
+}
+
+const nuevoId = () => crypto.randomUUID().slice(0, 8);
+
+function avisoDe(t: Trabajo, extra: (string | null)[]): string | null {
+    const partes = [...t.dudas, ...extra].filter((x): x is string => Boolean(x));
+    return partes.length ? partes.join(" · ") : null;
+}
+
+export function consultaDe(t: Trabajo): ConsultaCype {
+    return {
+        tipoTrabajo: t.tipoTrabajo,
+        accion: t.accion,
+        elemento: t.elemento,
+        detalle: t.detalle,
+        unidad: t.unidad,
+        textoOriginal: t.textoOriginal,
+    };
+}
+
+/**
+ * Presupuesto de tiempo de la ruta /api/propuesta/extraer. Vercel corta a los
+ * 60 s: se deja margen para serializar y responder.
+ */
+const PRESUPUESTO_MS = 54_000;
+
+type ParteModulo = {
+    lineas: LineaPropuesta[];
+    observaciones: string[];
+    sugerencias: string[];
+    fotosAnalizadas: number;
+    avisos: string[];
+};
+
+/**
+ * Pasos 1 y 2. Devuelve la propuesta con las líneas sin casar `pendienteCype`.
+ *
+ * UN TIPO DE TRABAJO POR LLAMADA, TODOS EN PARALELO (27/09/2026). Con los seis
+ * tipos de trabajo de la prueba en una sola llamada (unos 15 trabajos), la
+ * extracción más la elección de tarifa se iban a 46 s y la ruta caía por
+ * tiempo. Por tipo de trabajo cada llamada es pequeña, el total es el del más
+ * lento y no la suma, y si uno falla los demás salen igual.
+ */
+export async function generarPropuesta(modulos: DictadoModulo[], subcuenta: string): Promise<Propuesta> {
+    const limite = Date.now() + PRESUPUESTO_MS;
+    const fotos = fotosParaIa(modulos);
+    const nFotos = [...fotos.values()].reduce((s, f) => s + f.length, 0);
+    const totalFotos = modulos.reduce((s, m) => s + (m.fotos?.length ?? 0), 0);
+    const avisos: string[] = [];
+    if (totalFotos > nFotos) {
+        avisos.push(
+            `La IA ha revisado ${nFotos} de ${totalFotos} fotos (máximo ${FOTOS_IA_POR_MODULO} por tipo de trabajo). ` +
+                `En el documento salen todas.`
+        );
+    }
+
+    const resultados = await Promise.allSettled(
+        modulos.map((m) => propuestaDeModulo(m, fotos.get(m.key) ?? [], limite, subcuenta))
+    );
+
+    const partes: ParteModulo[] = [];
+    const fallos: unknown[] = [];
+    resultados.forEach((r, i) => {
+        if (r.status === "fulfilled") {
+            partes.push(r.value);
+            return;
+        }
+        fallos.push(r.reason);
+        const motivo = r.reason instanceof Error ? r.reason.message : "error desconocido";
+        console.error(`[propuesta] ${modulos[i].key}: ${motivo}`);
+        avisos.push(
+            `No se ha podido analizar «${modulos[i].label}» (${motivo}). Pulsa «Rehacer con IA» o añade sus partidas a mano.`
+        );
+    });
+
+    // Si no ha salido NINGÚN tipo de trabajo, es un error de verdad (clave, red,
+    // cuota): se propaga para que el formulario lo enseñe.
+    if (partes.length === 0) throw fallos[0] instanceof Error ? fallos[0] : new Error("No se ha podido generar la propuesta.");
+
+    return {
+        generadaEn: new Date().toISOString(),
+        lineas: partes.flatMap((p) => p.lineas),
+        observaciones: partes.flatMap((p) => p.observaciones),
+        sugerencias: partes.flatMap((p) => p.sugerencias),
+        fotosAnalizadas: partes.reduce((s, p) => s + p.fotosAnalizadas, 0),
+        avisos: [...avisos, ...partes.flatMap((p) => p.avisos)],
+    };
+}
+
+const restante = (limite: number) => limite - Date.now();
+
+async function propuestaDeModulo(
+    m: DictadoModulo,
+    urls: string[],
+    limite: number,
+    subcuenta: string
+): Promise<ParteModulo> {
+    const avisos: string[] = [];
+    const inicio = Date.now();
+    const soloDictado = { ...m, fotos: [] };
+
+    // 1. Extracción. Deja como mínimo 12 s para la tarifa.
+    let extraccion;
+    let fotosAnalizadas = urls.length;
+    try {
+        extraccion = await llamarClaude({
+            sistema: PROMPT_EXTRAER,
+            mensaje: urls.length > 0 ? contenidoExtraccion([m], new Map([[m.key, urls]])) : mensajeExtraccion([m]),
+            maxTokens: 4000,
+            timeoutMs: Math.max(5_000, restante(limite) - 12_000),
+        });
+    } catch (error) {
+        // Una foto que Anthropic no puede descargar tumba la petición entera. Sin
+        // fotos la propuesta sigue siendo útil: se repite solo con el dictado.
+        if (urls.length === 0 || restante(limite) < 15_000) throw error;
+        console.error(`[propuesta] ${m.key}: extracción con fotos fallida, se repite sin fotos:`, error);
+        avisos.push(`«${m.label}»: no se han podido enviar las fotos a la IA; sale solo del dictado.`);
+        fotosAnalizadas = 0;
+        extraccion = await llamarClaude({
+            sistema: PROMPT_EXTRAER,
+            mensaje: mensajeExtraccion([soloDictado]),
+            maxTokens: 4000,
+            timeoutMs: Math.max(5_000, restante(limite) - 8_000),
+        });
+    }
+    const tExtraccion = Date.now() - inicio;
+
+    const extraidos = sanearExtraccion(extraerJson<RespuestaExtraccion>(extraccion.texto), [m]);
+    const { observaciones, sugerencias } = extraidos;
+
+    // Licencias (28/09/2026): un trabajo de amianto en una subcuenta sin
+    // licencia no se propone. No se quita en silencio: se dice cuál y por qué.
+    const trabajos = extraidos.trabajos.filter((t) => {
+        const frase = [t.accion, t.elemento, t.detalle, t.textoOriginal].join(" ");
+        if (subcuenta !== "vertical-projects" || !textoMencionaAmianto(frase)) return true;
+        avisos.push(`«${t.textoOriginal || frase.trim()}»: no se incluye. ${MOTIVO_SIN_LICENCIA}`);
+        return false;
+    });
+    if (trabajos.length === 0) return { lineas: [], observaciones, sugerencias, fotosAnalizadas, avisos };
+
+    // 2. Tarifa. Si no da tiempo o falla, no se pierde la propuesta: esas
+    //    líneas se buscan en CYPE y el comercial puede cambiarlas por una de la
+    //    tarifa en la revisión.
+    const candidatas = new Map(trabajos.map((t) => [t.id, candidatasTarifa(t, subcuenta)]));
+    let elegidos = new Map<string, Eleccion>();
+    try {
+        elegidos = await casarConTarifa(trabajos, candidatas, Math.max(3_000, restante(limite)));
+    } catch (error) {
+        console.error(`[propuesta] ${m.key}: elección de tarifa fallida:`, error);
+        avisos.push(`«${m.label}»: no se ha podido comparar con la tarifa; sus partidas se buscan en CYPE.`);
+    }
+    console.info(
+        `[propuesta] ${m.key}: ${trabajos.length} trabajos, ${fotosAnalizadas} fotos, ` +
+            `extracción ${tExtraccion} ms, total ${Date.now() - inicio} ms`
+    );
+
+    const lineas: LineaPropuesta[] = trabajos.map((t) => {
+        const { cantidad, nota } = medicionDe(t);
+        const faltaMedicion = cantidad === null ? "Falta la medición" : null;
+        const eleccion = elegidos.get(t.id);
+        const partida = eleccion?.codigo ? obtenerPartida(eleccion.codigo) : undefined;
+
+        if (partida) {
+            // Se imprime la unidad de la TARIFA, que es la del precio (28/09/2026).
+            // Antes se imprimía la dictada: "12 metros" de una partida en m²
+            // salía como 12 m x precio/m² sin ningún aviso. El comercial puede
+            // cambiarla en la revisión (decisión 27/09/2026), pero a sabiendas.
+            const dictada = normalizarUnidad(t.unidad);
+            const otraUnidad =
+                dictada && dictada !== partida.unidad
+                    ? `Dictado en ${dictada}, pero la partida se mide en ${partida.unidad}: revisa la medición`
+                    : null;
+            return {
+                id: nuevoId(),
+                moduloKey: t.moduloKey,
+                textoOriginal: t.textoOriginal,
+                codigo: partida.codigo,
+                origen: "tarifa",
+                descripcionCorta: partida.descripcionCorta,
+                descripcionLarga: partida.descripcionLarga,
+                unidad: partida.unidad,
+                cantidad,
+                precioUnitario: partida.tarifaEmpresa,
+                precioReferencia: partida.tarifaEmpresa,
+                precioCype: partida.precioCype,
+                capitulo: partida.capitulo,
+                url: null,
+                aviso: avisoDe(t, [
+                    faltaMedicion,
+                    otraUnidad,
+                    nota ? `Medición calculada: ${nota}` : null,
+                    eleccion?.confianza === "baja" ? `Encaje dudoso: ${eleccion.motivo}` : null,
+                ]),
+                consulta: consultaDe(t),
+            };
+        }
+
+        return {
+            id: nuevoId(),
+            moduloKey: t.moduloKey,
+            textoOriginal: t.textoOriginal,
+            codigo: "",
+            origen: "cype",
+            descripcionCorta: [t.accion, t.elemento].filter(Boolean).join(" ") || t.textoOriginal,
+            descripcionLarga: null,
+            unidad: normalizarUnidad(t.unidad) ?? "ud",
+            cantidad,
+            precioUnitario: null,
+            precioReferencia: null,
+            precioCype: null,
+            capitulo: capituloMasFrecuente(candidatas.get(t.id) ?? []),
+            url: null,
+            aviso: avisoDe(t, [faltaMedicion, nota ? `Medición calculada: ${nota}` : null]),
+            pendienteCype: true,
+            consulta: consultaDe(t),
+        };
+    });
+
+    return { lineas, observaciones, sugerencias, fotosAnalizadas, avisos };
+}
+
+type Eleccion = { codigo: string | null; confianza: string; motivo: string };
+
+async function casarConTarifa(
+    trabajos: Trabajo[],
+    candidatas: Map<string, PartidaTarifa[]>,
+    timeoutMs: number
+): Promise<Map<string, Eleccion>> {
+    const conCandidatas = trabajos.filter((t) => (candidatas.get(t.id)?.length ?? 0) > 0);
+    const elegidos = new Map<string, Eleccion>();
+    if (conCandidatas.length === 0) return elegidos;
+
+    const mensaje = conCandidatas
+        .map((t) =>
+            [
+                `### Trabajo ${t.id} (${t.tipoTrabajo})`,
+                `Acción: ${t.accion} · Elemento: ${t.elemento} · Detalle: ${t.detalle || "-"}`,
+                `Dictado: "${t.textoOriginal}"`,
+                "Candidatas:",
+                ...candidatas.get(t.id)!.map((p) => `- ${p.codigo} | ${p.descripcionCorta} | ${p.unidad}`),
+            ].join("\n")
+        )
+        .join("\n\n");
+
+    const respuesta = await llamarClaude({
+        sistema: PROMPT_CASAR_TARIFA,
+        mensaje,
+        maxTokens: 2000,
+        timeoutMs,
+    });
+    const bruto = extraerJson<{ resultados?: { id?: string; codigo?: string | null; confianza?: string; motivo?: string }[] }>(
+        respuesta.texto
+    );
+
+    for (const r of bruto.resultados ?? []) {
+        const id = texto(r.id);
+        const permitidas = new Set((candidatas.get(id) ?? []).map((p) => p.codigo));
+        const codigo = texto(r.codigo).toUpperCase();
+        // Un código que no estaba entre SUS candidatas se descarta: el modelo no
+        // puede sacar partidas de la manga.
+        elegidos.set(id, {
+            codigo: permitidas.has(codigo) ? codigo : null,
+            confianza: texto(r.confianza) || "media",
+            motivo: texto(r.motivo),
+        });
+    }
+    return elegidos;
+}
+
+// ---------------------------------------------------------------------------
+// 4. CYPE
+// ---------------------------------------------------------------------------
+
+export type ResultadoCype =
+    | {
+          encontrado: true;
+          codigo: string;
+          unidad: LineaPropuesta["unidad"];
+          descripcionCorta: string;
+          descripcionLarga: string | null;
+          precioCype: number;
+          precioVenta: number;
+          capitulo: string;
+          url: string;
+          aviso: string | null;
+      }
+    | { encontrado: false; motivo: string };
+
+type RespuestaCype = {
+    encontrado?: boolean;
+    codigo?: string;
+    unidad?: string;
+    descripcionCorta?: string;
+    descripcionLarga?: string;
+    precio?: string | number;
+    url?: string;
+    capitulo?: string;
+    opciones?: string;
+    confianza?: string;
+    motivo?: string;
+};
+
+/** "1.234,56" / "23,97" / 23.97 -> 23.97. */
+export function leerPrecioEs(v: unknown): number | null {
+    if (typeof v === "number") return Number.isFinite(v) && v > 0 ? v : null;
+    if (typeof v !== "string") return null;
+    const limpio = v.replace(/[€\s]/g, "");
+    if (!/^\d{1,3}(\.\d{3})*(,\d{1,2})?$|^\d+(,\d{1,2})?$|^\d+(\.\d{1,2})?$/.test(limpio)) return null;
+    const n = limpio.includes(",") ? Number(limpio.replace(/\./g, "").replace(",", ".")) : Number(limpio);
+    return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/**
+ * Comprueba la respuesta de CYPE contra lo que se descargó DE VERDAD. Si el
+ * código o el precio no aparecen en las páginas de generadordeprecios.info que
+ * trajo web_fetch, se descarta: preferimos "no encontrado" a un precio inventado.
+ */
+export function validarCype(
+    bruto: RespuestaCype,
+    descargado: { texto: string; urls: string[] },
+    capituloPorDefecto: string,
+    subcuenta: string
+): ResultadoCype {
+    if (!bruto.encontrado) return { encontrado: false, motivo: texto(bruto.motivo) || "No se ha encontrado en CYPE." };
+
+    const codigo = texto(bruto.codigo).toUpperCase();
+    if (!/^[A-Z0-9]{3,10}$/.test(codigo)) return { encontrado: false, motivo: `Código CYPE no válido: "${codigo}".` };
+
+    const precioTexto = typeof bruto.precio === "number" ? String(bruto.precio).replace(".", ",") : texto(bruto.precio);
+    const precioCype = leerPrecioEs(precioTexto);
+    if (precioCype === null) return { encontrado: false, motivo: `Precio de CYPE ilegible: "${precioTexto}".` };
+
+    if (!descargado.texto) {
+        return { encontrado: false, motivo: "No se ha llegado a descargar la página de CYPE." };
+    }
+    if (!descargado.texto.toUpperCase().includes(codigo)) {
+        return { encontrado: false, motivo: `El código ${codigo} no aparece en la página descargada.` };
+    }
+    const cifra = precioTexto.replace(/[€\s]/g, "");
+    if (!descargado.texto.includes(cifra)) {
+        return { encontrado: false, motivo: `El precio ${cifra} no aparece en la página descargada.` };
+    }
+
+    const url = texto(bruto.url);
+    let host = "";
+    try {
+        host = new URL(url).hostname;
+    } catch {
+        /* se trata abajo */
+    }
+    if (!/(^|\.)generadordeprecios\.info$/.test(host)) {
+        return { encontrado: false, motivo: "La página no es del Generador de Precios de CYPE." };
+    }
+
+    const unidad = normalizarUnidad(bruto.unidad) ?? "ud";
+    const capitulos = new Set(listarCapitulos().map((c) => c.codigo).filter((c) => capituloPermitido(subcuenta, c)));
+    const capitulo = capitulos.has(texto(bruto.capitulo)) ? texto(bruto.capitulo) : capituloPorDefecto;
+
+    // Licencias (28/09/2026): CYPE sí tiene unidades de obra de amianto.
+    // Con el capítulo YA resuelto: si el modelo se inventa el "07" para un
+    // trabajo que no es de amianto, ya se ha rebajado al de por defecto.
+    const candidata = {
+        codigo,
+        capitulo,
+        descripcionCorta: texto(bruto.descripcionCorta),
+        descripcionLarga: texto(bruto.descripcionLarga),
+    };
+    if (!partidaPermitida(subcuenta, candidata)) return { encontrado: false, motivo: MOTIVO_SIN_LICENCIA };
+
+    // Margen de la empresa en TypeScript, igual que la tarifa (CYPE x 1,25).
+    const precioVenta = redondear2(precioCype * (catalogo.meta.margenEmpresa || 1));
+
+    const avisos = [
+        texto(bruto.opciones) ? `Opciones supuestas: ${texto(bruto.opciones)}` : null,
+        texto(bruto.confianza) === "baja" ? `Encaje dudoso: ${texto(bruto.motivo)}` : null,
+    ].filter(Boolean);
+
+    return {
+        encontrado: true,
+        codigo,
+        unidad,
+        descripcionCorta: texto(bruto.descripcionCorta) || codigo,
+        descripcionLarga: texto(bruto.descripcionLarga) || null,
+        precioCype,
+        precioVenta,
+        capitulo,
+        url,
+        aviso: avisos.length ? avisos.join(" · ") : null,
+    };
+}
+
+export async function buscarEnCype(
+    consulta: ConsultaCype,
+    capituloPorDefecto: string,
+    subcuenta: string
+): Promise<ResultadoCype> {
+    let respuesta: { texto: string; bloques: BloqueRespuesta[] };
+    try {
+        respuesta = await llamarClaude({
+            sistema: PROMPT_CYPE,
+            mensaje: mensajeCype(
+                consulta,
+                listarCapitulos()
+                    .filter((c) => capituloPermitido(subcuenta, c.codigo))
+                    .map((c) => ({ codigo: c.codigo, nombre: c.nombre }))
+            ),
+            herramientas: HERRAMIENTAS_CYPE,
+            maxTokens: 4000,
+            timeoutMs: 52_000,
+        });
+    } catch (error) {
+        if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) {
+            return { encontrado: false, motivo: "CYPE ha tardado demasiado. Vuelve a intentarlo o pon el precio a mano." };
+        }
+        throw error;
+    }
+
+    let bruto: RespuestaCype;
+    try {
+        bruto = extraerJson<RespuestaCype>(respuesta.texto);
+    } catch (error) {
+        return { encontrado: false, motivo: error instanceof Error ? error.message : "Respuesta ilegible." };
+    }
+    return validarCype(bruto, textoDescargado(respuesta.bloques), capituloPorDefecto, subcuenta);
+}

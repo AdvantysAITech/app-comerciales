@@ -1,6 +1,8 @@
 import { sesionApp } from "@/lib/sesion";
-import { listarOportunidades } from "@/lib/ghl/oportunidades";
-import { ETAPAS_PRESUPUESTO, type ClaveEtapa } from "@/lib/ghl/ids";
+import { filtroPropietario, listarOportunidades } from "@/lib/ghl/oportunidades";
+import { ETAPAS_PRESUPUESTO } from "@/lib/ghl/ids";
+import { clasificar } from "@/lib/panel";
+import { almacenDisponible, listarBorradores, type ResumenBorrador } from "@/lib/borradores/almacen";
 import { PanelPresupuestos } from "@/components/PanelPresupuesto";
 import { SelectorSubcuenta } from "@/components/SelectorSubcuenta";
 
@@ -12,11 +14,23 @@ export default async function DashboardPage() {
     }
 
     const subcuenta = sesion.subcuenta;
-    const oportunidades = await listarOportunidades(subcuenta, ETAPAS_PRESUPUESTO);
+    // Comercial: solo las suyas en la subcuenta activa. Dirección: todas.
+    const [oportunidades, borradores] = await Promise.all([
+        listarOportunidades(subcuenta, ETAPAS_PRESUPUESTO, filtroPropietario(sesion)),
+        // Un fallo del almacén de borradores no tumba el panel: se ven las
+        // oportunidades y los borradores vuelven en la siguiente carga.
+        almacenDisponible()
+            ? listarBorradores(sesion).catch((error): ResumenBorrador[] => {
+                  console.error("[panel] No se han podido leer los borradores:", error);
+                  return [];
+              })
+            : Promise.resolve<ResumenBorrador[]>([]),
+    ]);
 
     const total = oportunidades.length;
-    const etapasPorRevisar: readonly ClaveEtapa[] = ["PRESUPUESTO_EN_REVISION", "PRESUPUESTO_ENVIADO", "EN_NEGOCIACION"];
-    const porRevisar = oportunidades.filter((op) => op.etapa !== null && etapasPorRevisar.includes(op.etapa)).length;
+    // Mismo criterio que la etiqueta de las tarjetas (lib/panel.ts): generado y
+    // sin validar por dirección.
+    const porRevisar = oportunidades.filter((op) => clasificar(op).porRevisar).length;
     const ganados = oportunidades.filter((op) => op.etapa === "GANADA").length;
     const perdidos = oportunidades.filter((op) => op.etapa === "PERDIDA").length;
 
@@ -59,7 +73,11 @@ export default async function DashboardPage() {
                 <EstadisticaItem etiqueta="Perdidos" valor={perdidos} icono="x" />
             </div>
 
-            <PanelPresupuestos oportunidades={oportunidades} />
+            <PanelPresupuestos
+                oportunidades={oportunidades}
+                borradores={borradores}
+                mostrarAutor={sesion.rol === "direccion"}
+            />
 
             <footer className="relative mt-10 flex items-center justify-center gap-1 text-xs text-muted">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3.5 w-3.5">

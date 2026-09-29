@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sesionApp } from "@/lib/sesion";
+import { oportunidadAutorizada } from "@/lib/permisos";
 import type { SubcuentaSlug } from "@/lib/subcuenta";
 import { subirArchivoSa } from "@/lib/ghl/media";
 import { obtenerComunidad } from "@/lib/ghl/comunidades";
 import { obtenerAdministrador } from "@/lib/ghl/administradores";
-import { adjuntarPresupuesto } from "@/lib/ghl/oportunidades";
+import { adjuntarPresupuesto, obtenerOportunidad } from "@/lib/ghl/oportunidades";
 import {
     consultarEstado,
     descargarOdt,
@@ -19,11 +20,13 @@ import { leerPayloadVisita } from "@/lib/documentos/visitaGuardada";
 import { presupuestarConAjustes } from "@/lib/documentos/mapeo-capitulos";
 import { leerAjustes } from "@/lib/documentos/ajustes";
 import { cifrasDelCalculo, type PresupuestoCalculado } from "@/lib/documentos/motor";
-import { prepararDocumento } from "@/lib/documentos/payloadDocumento";
+import { calcularFechaValidez, prepararDocumento } from "@/lib/documentos/payloadDocumento";
 import { assertPortada, construirPortada } from "@/lib/documentos/portada";
+import { prepararImagenPortada } from "@/lib/documentos/imagenPortada";
 import { renderizarPortada } from "@/lib/documentos/portada.svg";
 import { rasterizarSvg } from "@/lib/documentos/rasterizar";
 import { convertirAPdf, conversionDisponible, MIMETYPE_PDF, nombrePdf } from "@/lib/documentos/pdf";
+import { prepararAnexoFotos } from "@/lib/documentos/anexoFotos";
 
 /**
  * Estado de una generación en curso. El cliente llama a esto en bucle.
@@ -111,21 +114,28 @@ function registrarAvisos(requestId: string, avisos: readonly string[]): void {
 /**
  * Compone la infografía y devuelve el PNG, o `null` si no se ha podido.
  *
+ * Desde el 29/09/2026 la portada lleva arriba la foto que sube el comercial
+ * ("Imagen de portada"), o la primera foto de los trabajos si no hay. La
+ * descarga va aquí dentro: si falla, la portada sale con fondo liso (aviso),
+ * nunca sin portada por culpa de la foto.
+ *
  * NUNCA lanza. Un presupuesto sin portada es un presupuesto válido; bloquear la
  * emisión por un adorno de portada sería el peor intercambio posible con un
  * comercial esperando en obra. El motivo se devuelve como aviso para que quede
  * constancia de por qué salió sin ella.
  */
-function componerPortada(
+async function componerPortada(
     subcuenta: SubcuentaSlug,
     contexto: Contexto,
     numeroReferencia: string,
     /** Título que ha generado la IA. Si falta, la portada usa su respaldo. */
     titulo: string | null,
     avisos: string[]
-): Uint8Array | null {
+): Promise<Uint8Array | null> {
     try {
         const { presupuesto, payload, comunidad, administrador } = contexto;
+
+        const imagen = await prepararImagenPortada(payload, avisos);
 
         const portada = construirPortada(presupuesto, {
             subcuenta,
@@ -134,8 +144,11 @@ function componerPortada(
             localidad: comunidad.localidad!,
             expediente: numeroReferencia,
             fecha: payload.fechaVisita.split("-").reverse().join("/"),
+            fechaValidez: calcularFechaValidez(payload.fechaVisita),
             administrador: administrador.nombreDespacho ?? "",
             administradorLocalidad: administrador.localidad,
+            imagen,
+            tiposTrabajo: payload.modulos.map((m) => m.label),
         });
 
         // Si la portada no cuadra con el motor, no se pinta. Una infografía que
@@ -173,6 +186,21 @@ export async function GET(
 
     // "scala-valencia-<oportunidadId>-v<n>"
     const oportunidadId = requestId.slice(subcuenta.length + 1).replace(/-v\d+$/, "");
+
+    // Esta ruta también CIERRA la generación (sube el documento y escribe en la
+    // oportunidad): solo la puede consultar quien puede ver la oportunidad.
+    try {
+        if (!(await oportunidadAutorizada(sesion, oportunidadId))) {
+            return NextResponse.json({ error: "No encontrado" }, { status: 404 });
+        }
+    } catch (error) {
+        // No se ha podido comprobar (GHL caído un momento). Se responde "sigue
+        // generando" a propósito: el cliente trata cualquier `error` como
+        // generación fallida, y esto es solo un corte. En la siguiente vuelta
+        // del bucle se vuelve a comprobar; todavía no se ha escrito nada.
+        console.error(`[documentos] ${requestId}: no se ha podido comprobar el acceso:`, error);
+        return NextResponse.json({ requestId, estado: "generando" });
+    }
 
     try {
         let detalle;
@@ -333,13 +361,14 @@ export async function GET(
         // quedaba en `validado`: la ficha mostraba "Generando..." con el botón
         // bloqueado y no había forma de reintentar sin recargar.
         try {
-            // La descarga del ODT y el rasterizado de la portada son
-            // independientes: van en paralelo para no sumar sus tiempos.
-            const [odtCrudo, portadaPng] = await Promise.all([
+            // La descarga del ODT, el rasterizado de la portada y la descarga
+            // de las fotos del anexo son independientes: van en paralelo para
+            // no sumar sus tiempos. `prepararAnexoFotos` no lanza: una foto que
+            // falla se queda fuera con un aviso.
+            const [odtCrudo, portadaPng, anexoFotos] = await Promise.all([
                 descargarOdt(requestId),
-                Promise.resolve(
-                    componerPortada(subcuenta, contexto, registro.numeroReferencia, tituloGenerado, avisos)
-                ),
+                componerPortada(subcuenta, contexto, registro.numeroReferencia, tituloGenerado, avisos),
+                prepararAnexoFotos(contexto.payload, avisos),
             ]);
 
             // Bordes de tablas, portada y desglose de partidas (ver odf.ts).
@@ -350,7 +379,7 @@ export async function GET(
             let odt: ArrayBuffer;
             let conPortada = Boolean(portadaPng);
             try {
-                odt = postprocesarOdt(odtCrudo, { portadaPng, desglose: contexto.presupuesto });
+                odt = postprocesarOdt(odtCrudo, { portadaPng, desglose: contexto.presupuesto, anexoFotos });
             } catch (error) {
                 const faltaPortada =
                     error instanceof MarcadorPortadaAusenteError && error.marcador === MARCADOR_PORTADA;
@@ -360,7 +389,7 @@ export async function GET(
                     `Publicado SIN portada: la plantilla no contiene ${MARCADOR_PORTADA}. ` +
                         `Revisa SOLUCIONA_PLANTILLA_*_URL con npm run plantilla:verificar.`
                 );
-                odt = postprocesarOdt(odtCrudo, { portadaPng: null, desglose: contexto.presupuesto });
+                odt = postprocesarOdt(odtCrudo, { portadaPng: null, desglose: contexto.presupuesto, anexoFotos });
                 conPortada = false;
             }
 
@@ -403,6 +432,12 @@ export async function GET(
             // se descarga desde la app. Pero si esto falla, dirección NO se
             // entera, así que el aviso se registra como tal.
             try {
+                // Etapa actual: decide si la publicacion hace avanzar la
+                // oportunidad a "Presupuesto en revision" (ver adjuntarPresupuesto).
+                // Si no se puede leer, no se mueve: mejor quedarse quieta que
+                // retroceder una oportunidad ya enviada.
+                const etapaActual = (await obtenerOportunidad(subcuenta, oportunidadId))?.etapa ?? null;
+
                 await adjuntarPresupuesto(
                     subcuenta,
                     oportunidadId,
@@ -412,7 +447,8 @@ export async function GET(
                         mimetype,
                         bytes: contenido.byteLength,
                     },
-                    { PRESUPUESTO_GENERADO: true }
+                    { PRESUPUESTO_GENERADO: true },
+                    etapaActual
                 );
             } catch (error) {
                 const motivo = error instanceof Error ? error.message : "error desconocido";

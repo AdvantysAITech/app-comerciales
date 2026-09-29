@@ -1,3 +1,5 @@
+import { orientacionExif } from "./exif";
+
 const LADO_MAXIMO = 1920;
 const CALIDAD = 0.8;
 const BYTES_SIN_TOCAR = 1024 * 1024;
@@ -95,10 +97,21 @@ export async function normalizarFoto(archivo: File): Promise<ResultadoNormalizac
     try {
         // Atajo: un JPEG que ya viene ligero y dentro de medidas se sube tal
         // cual. Recomprimirlo solo restaría calidad.
+        //
+        // Salvo que lleve una orientación EXIF distinta de la normal: el
+        // anexo fotográfico del presupuesto la pierde (LibreOffice no la
+        // aplica) y la foto saldría tumbada. Recomprimida, la rotación queda
+        // en los píxeles. Ver lib/imagen/exif.ts.
+        const orientacion =
+            archivo.type === "image/jpeg"
+                ? orientacionExif(new Uint8Array(await archivo.slice(0, 128 * 1024).arrayBuffer()))
+                : null;
+
         const yaVale =
             !convertida &&
             archivo.type === "image/jpeg" &&
             archivo.size <= BYTES_SIN_TOCAR &&
+            (orientacion === null || orientacion === 1) &&
             Math.max(bitmap.width, bitmap.height) <= LADO_MAXIMO;
 
         if (yaVale) {

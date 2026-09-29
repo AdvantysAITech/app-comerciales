@@ -5,6 +5,13 @@ import Link from "next/link";
 import type { AjustesPresupuesto } from "@/lib/documentos/ajustes";
 import type { RegistroDocumento } from "@/lib/documentos/estado";
 import type { FilaRevision, PartidaBuscable, VistaRevision } from "@/lib/documentos/revision";
+import {
+    decimalOCero,
+    desviacion,
+    leerDecimal,
+    UMBRAL_DESVIACION_MEDICION,
+    UMBRAL_DESVIACION_PRECIO,
+} from "@/lib/numero";
 
 /**
  * Revisión del presupuesto por dirección.
@@ -52,7 +59,15 @@ type Props = {
 };
 
 type Borrador = { cantidad: string; precio: string; excluida: boolean };
-type Anadida = { codigo: string; descripcion: string; unidad: string; cantidad: string; precio: string };
+type Anadida = {
+    codigo: string;
+    descripcion: string;
+    unidad: string;
+    cantidad: string;
+    precio: string;
+    /** Precio de tarifa al añadirla. Solo para avisar si se aleja mucho. */
+    precioTarifa: number;
+};
 
 type RespuestaEstado = {
     requestId?: string;
@@ -80,12 +95,15 @@ const NF = new Intl.NumberFormat("es-ES", {
 
 const eur = (v: number) => `${NF.format(v)} €`;
 
-/** Acepta coma decimal: en un teclado español nadie escribe el punto. */
-function aNumero(valor: string): number {
-    const limpio = valor.replace(/\./g, "").replace(",", ".").trim();
-    const n = Number(limpio);
-    return Number.isFinite(n) ? n : 0;
-}
+/**
+ * Número para los totales en vivo. La lectura y sus reglas (coma o punto
+ * decimal) viven en lib/numero.ts. Lo ilegible cuenta aquí como 0, pero NO se
+ * puede guardar: ver `camposIlegibles`.
+ */
+const aNumero = decimalOCero;
+
+/** Campo que no se puede leer como número. Vacío también cuenta: no hay 0 implícito. */
+const ilegible = (valor: string) => leerDecimal(valor) === null;
 
 const texto = (v: number) => String(v).replace(".", ",");
 
@@ -132,6 +150,23 @@ export function RevisionPresupuesto({
         return { pem: aEuros(pem), iva: aEuros(iva), total: aEuros(pem + iva) };
     }, [filas, borradores, anadidas, ivaTipo]);
 
+    // Campos que no son un número. Mientras haya alguno no se guarda ni se
+    // genera: antes se convertían en 0 en silencio y la partida salía gratis.
+    const camposIlegibles = useMemo(() => {
+        let n = 0;
+        for (const fila of filas) {
+            const b = borradores[fila.codigo];
+            if (!b || b.excluida) continue;
+            if (ilegible(b.cantidad)) n++;
+            if (ilegible(b.precio)) n++;
+        }
+        for (const a of anadidas) {
+            if (ilegible(a.cantidad)) n++;
+            if (ilegible(a.precio)) n++;
+        }
+        return n;
+    }, [filas, borradores, anadidas]);
+
     function editar(codigo: string, cambio: Partial<Borrador>) {
         setBorradores((previo) => ({ ...previo, [codigo]: { ...previo[codigo], ...cambio } }));
         setSucio(true);
@@ -145,9 +180,15 @@ export function RevisionPresupuesto({
             const b = borradores[fila.codigo];
             if (!b) continue;
 
-            const ajuste: Record<string, unknown> = {};
-            if (b.excluida) ajuste.excluida = true;
+            // Una partida quitada solo viaja como excluida. Sus campos no se
+            // validan en pantalla, y mandar un 0 de un campo vacío hacía que el
+            // servidor rechazara el guardado entero.
+            if (b.excluida) {
+                lineas[fila.codigo] = { excluida: true };
+                continue;
+            }
 
+            const ajuste: Record<string, unknown> = {};
             const cantidad = aNumero(b.cantidad);
             const precio = aNumero(b.precio);
             if (cantidad !== fila.cantidadBase) ajuste.cantidad = cantidad;
@@ -169,6 +210,11 @@ export function RevisionPresupuesto({
     }
 
     async function guardar(): Promise<boolean> {
+        if (camposIlegibles > 0) {
+            setError("Hay importes o mediciones que no son un número. Corrige los campos en rojo.");
+            return false;
+        }
+
         setTrabajando("guardando");
         setError(null);
 
@@ -365,7 +411,20 @@ export function RevisionPresupuesto({
                             <h2 className="text-sm font-semibold leading-snug text-ink">
                                 {capitulo.codigoJerarquico} {capitulo.nombre}
                             </h2>
-                            <span className="shrink-0 text-xs text-muted">{eur(capitulo.total)}</span>
+                            {/* En vivo, como los totales de abajo: el `capitulo.total` del
+                                servidor se quedaba en la cifra anterior mientras la fila ya
+                                mostraba la nueva, y la pantalla daba dos importes distintos. */}
+                            <span className="shrink-0 text-xs text-muted">
+                                {eur(
+                                    aEuros(
+                                        capitulo.filas.reduce((suma, f) => {
+                                            const b = borradores[f.codigo];
+                                            if (!b || b.excluida) return suma;
+                                            return suma + importeDe(aNumero(b.cantidad), aNumero(b.precio));
+                                        }, 0)
+                                    )
+                                )}
+                            </span>
                         </header>
 
                         {/* Cabecera de columnas: solo en pantalla grande. */}
@@ -411,6 +470,7 @@ export function RevisionPresupuesto({
                                     <Campo
                                         etiqueta={`Medición (${a.unidad})`}
                                         valor={a.cantidad}
+                                        invalido={ilegible(a.cantidad)}
                                         onChange={(v) => {
                                             const copia = [...anadidas];
                                             copia[i] = { ...a, cantidad: v };
@@ -421,6 +481,7 @@ export function RevisionPresupuesto({
                                     <Campo
                                         etiqueta="Precio (€)"
                                         valor={a.precio}
+                                        invalido={ilegible(a.precio)}
                                         onChange={(v) => {
                                             const copia = [...anadidas];
                                             copia[i] = { ...a, precio: v };
@@ -429,6 +490,14 @@ export function RevisionPresupuesto({
                                         }}
                                     />
                                 </div>
+
+                                <AvisoDesviacion
+                                    precio={leerDecimal(a.precio)}
+                                    precioTarifa={a.precioTarifa}
+                                    cantidad={null}
+                                    cantidadObra={null}
+                                    unidad={a.unidad}
+                                />
 
                                 <div className="mt-2 flex items-center justify-between gap-3 sm:mt-0 sm:contents">
                                     <span className="text-sm font-medium text-ink sm:text-right">
@@ -497,6 +566,7 @@ export function RevisionPresupuesto({
                                                 unidad: p.unidad,
                                                 cantidad: "1",
                                                 precio: texto(p.precio),
+                                                precioTarifa: p.precio,
                                             },
                                         ]);
                                         setSucio(true);
@@ -564,13 +634,22 @@ export function RevisionPresupuesto({
             </section>
 
             {/* Acciones */}
+            {camposIlegibles > 0 && (
+                <p className="mt-4 text-center text-xs text-red-600 dark:text-red-400">
+                    {camposIlegibles === 1
+                        ? "Hay 1 campo que no es un número. Corrígelo para guardar."
+                        : `Hay ${camposIlegibles} campos que no son un número. Corrígelos para guardar.`}
+                </p>
+            )}
             <div className="mt-4 flex flex-col gap-2 sm:flex-row">
                 <button
                     type="button"
                     onClick={guardar}
-                    disabled={!sucio || trabajando !== null}
+                    disabled={!sucio || trabajando !== null || camposIlegibles > 0}
                     className={`flex-1 rounded-xl border border-hairline py-3 text-sm font-medium text-ink transition ${
-                        !sucio || trabajando !== null ? "cursor-not-allowed opacity-40" : "cursor-pointer hover:bg-surface"
+                        !sucio || trabajando !== null || camposIlegibles > 0
+                            ? "cursor-not-allowed opacity-40"
+                            : "cursor-pointer hover:bg-surface"
                     }`}
                 >
                     {trabajando === "guardando" ? "Guardando..." : "Guardar cambios"}
@@ -578,9 +657,11 @@ export function RevisionPresupuesto({
                 <button
                     type="button"
                     onClick={generar}
-                    disabled={trabajando !== null || generando}
+                    disabled={trabajando !== null || generando || camposIlegibles > 0}
                     className={`flex-1 rounded-xl bg-ink py-3 text-sm font-semibold text-canvas transition ${
-                        trabajando !== null || generando ? "cursor-not-allowed opacity-40" : "cursor-pointer"
+                        trabajando !== null || generando || camposIlegibles > 0
+                            ? "cursor-not-allowed opacity-40"
+                            : "cursor-pointer"
                     }`}
                 >
                     {generando ? "Generando documento..." : "Generar documento"}
@@ -694,16 +775,28 @@ function Fila({
                 <Campo
                     etiqueta={`Medición (${fila.unidad})`}
                     valor={borrador.cantidad}
+                    invalido={!borrador.excluida && ilegible(borrador.cantidad)}
                     deshabilitado={borrador.excluida}
                     onChange={(v) => onEditar({ cantidad: v })}
                 />
                 <Campo
                     etiqueta="Precio (€)"
                     valor={borrador.precio}
+                    invalido={!borrador.excluida && ilegible(borrador.precio)}
                     deshabilitado={borrador.excluida}
                     onChange={(v) => onEditar({ precio: v })}
                 />
             </div>
+
+            {!borrador.excluida && (
+                <AvisoDesviacion
+                    precio={leerDecimal(borrador.precio)}
+                    precioTarifa={fila.precioBase}
+                    cantidad={leerDecimal(borrador.cantidad)}
+                    cantidadObra={fila.cantidadBase}
+                    unidad={fila.unidad}
+                />
+            )}
 
             <div className="mt-2 flex items-center justify-between gap-3 sm:mt-0 sm:contents">
                 <span className="text-sm font-medium text-ink sm:text-right">
@@ -730,11 +823,14 @@ function Campo({
     valor,
     onChange,
     deshabilitado = false,
+    invalido = false,
 }: {
     etiqueta: string;
     valor: string;
     onChange: (valor: string) => void;
     deshabilitado?: boolean;
+    /** El texto no es un número: borde rojo y no se puede guardar. */
+    invalido?: boolean;
 }) {
     return (
         <label className="block min-w-0">
@@ -746,8 +842,64 @@ function Campo({
                 value={valor}
                 disabled={deshabilitado}
                 onChange={(e) => onChange(e.target.value)}
-                className="w-full rounded-lg border border-hairline bg-canvas px-2 py-2 text-right text-sm text-ink focus:outline-none disabled:opacity-50"
+                aria-invalid={invalido}
+                className={`w-full rounded-lg border bg-canvas px-2 py-2 text-right text-sm text-ink focus:outline-none disabled:opacity-50 ${
+                    invalido ? "border-red-500" : "border-hairline"
+                }`}
             />
         </label>
+    );
+}
+
+/**
+ * Aviso, no bloqueo, cuando una cifra se aleja mucho de su referencia.
+ *
+ * Dirección puede querer cambiar un precio a propósito, así que no se impide.
+ * Pero un 145 donde la tarifa dice 12,15 casi siempre es un dedo o un punto mal
+ * leído, y antes pasaba al documento sin que nadie lo viera. Ocupa toda la fila
+ * en pantalla grande (`sm:col-span-full`) para no descuadrar la rejilla.
+ */
+function AvisoDesviacion({
+    precio,
+    precioTarifa,
+    cantidad,
+    cantidadObra,
+    unidad,
+}: {
+    precio: number | null;
+    precioTarifa: number;
+    cantidad: number | null;
+    cantidadObra: number | null;
+    unidad: string;
+}) {
+    const avisos: string[] = [];
+
+    const dPrecio = precio === null ? null : desviacion(precio, precioTarifa);
+    if (dPrecio !== null && dPrecio > UMBRAL_DESVIACION_PRECIO) {
+        avisos.push(
+            `Precio ${precio! > precioTarifa ? "muy por encima" : "muy por debajo"} de la tarifa ` +
+                `(${NF.format(precioTarifa)} €). Comprueba que es correcto.`
+        );
+    }
+
+    if (cantidad !== null && cantidadObra !== null) {
+        const dCantidad = desviacion(cantidad, cantidadObra);
+        if (dCantidad !== null && dCantidad >= UMBRAL_DESVIACION_MEDICION) {
+            avisos.push(
+                `Medición muy distinta de la tomada en obra (${String(cantidadObra).replace(".", ",")} ${unidad}).`
+            );
+        }
+    }
+
+    if (avisos.length === 0) return null;
+
+    return (
+        <div className="mt-2 sm:col-span-full sm:mt-0">
+            {avisos.map((a) => (
+                <p key={a} className="text-[11px] leading-relaxed text-amber-700 dark:text-amber-400">
+                    {a}
+                </p>
+            ))}
+        </div>
     );
 }
