@@ -38,8 +38,14 @@ const ESTILO_CAMPO =
     "w-full rounded-xl border border-hairline bg-canvas px-3 py-2.5 text-sm text-ink placeholder:text-muted focus:border-ink/30 focus:outline-none";
 const ESTILO_LABEL = "mb-1.5 block text-xs text-muted";
 
-export type AdministradorListado = { id: string; nombreDespacho?: string };
-export type ComunidadListado = { id: string; nombreDireccion: string; administradorId?: string };
+export type AdministradorListado = { id: string; nombreDespacho?: string; localidad?: string; provincia?: string };
+export type ComunidadListado = {
+    id: string;
+    nombreDireccion: string;
+    administradorId?: string;
+    localidad?: string;
+    provincia?: string;
+};
 
 /**
  * Carcasa del diálogo.
@@ -341,7 +347,10 @@ export function AltaAdministrador({
 
                 <div className="grid grid-cols-2 gap-3">
                     <label>
-                        <span className={ESTILO_LABEL}>Localidad</span>
+                        {/* Obligatorias (29/09/2026): la localidad del
+                            administrador se imprime en el presupuesto y sin ella
+                            la generación del documento se rechaza. */}
+                        <span className={ESTILO_LABEL}>Localidad *</span>
                         <input
                             type="text"
                             value={localidad}
@@ -352,7 +361,7 @@ export function AltaAdministrador({
                     </label>
 
                     <label>
-                        <span className={ESTILO_LABEL}>Provincia</span>
+                        <span className={ESTILO_LABEL}>Provincia *</span>
                         <input
                             type="text"
                             value={provincia}
@@ -387,7 +396,9 @@ export function AltaAdministrador({
                     onCerrar={onCerrar}
                     onGuardar={guardar}
                     guardando={guardando}
-                    bloqueado={nombreDespacho.trim() === ""}
+                    bloqueado={
+                        nombreDespacho.trim() === "" || localidad.trim() === "" || provincia.trim() === ""
+                    }
                     textoGuardar="Crear administrador"
                 />
             </div>
@@ -475,11 +486,12 @@ export function AltaComunidad({
 
                 <div className="grid grid-cols-2 gap-3">
                     <label>
-                        {/* Localidad y provincia NO son opcionales de verdad: se
+                        {/* Localidad y provincia son obligatorias (29/09/2026): se
                             imprimen en el presupuesto y la localidad es la de la
-                            línea de firma. Si van vacías, el documento sale con
-                            huecos. */}
-                        <span className={ESTILO_LABEL}>Localidad</span>
+                            línea de firma. Sin ellas la generación del documento
+                            se rechaza, y el comercial no lo descubría hasta
+                            después de guardar la visita. */}
+                        <span className={ESTILO_LABEL}>Localidad *</span>
                         <input
                             type="text"
                             value={localidad}
@@ -490,7 +502,7 @@ export function AltaComunidad({
                     </label>
 
                     <label>
-                        <span className={ESTILO_LABEL}>Provincia</span>
+                        <span className={ESTILO_LABEL}>Provincia *</span>
                         <input
                             type="text"
                             value={provincia}
@@ -551,7 +563,9 @@ export function AltaComunidad({
                     onCerrar={onCerrar}
                     onGuardar={guardar}
                     guardando={guardando}
-                    bloqueado={nombreDireccion.trim() === ""}
+                    bloqueado={
+                        nombreDireccion.trim() === "" || localidad.trim() === "" || provincia.trim() === ""
+                    }
                     textoGuardar="Crear comunidad"
                 />
             </div>

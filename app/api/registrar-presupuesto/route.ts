@@ -52,6 +52,10 @@ export async function POST(request: NextRequest) {
     // registros huerfanos en GHL si llega una peticion incompleta.
     const faltan = [
         !entrada.comunidadNombre?.trim() && "comunidad",
+        // Obligatorio (29/09/2026): la generación del documento exige el
+        // administrador enlazado, y tras este alta la oportunidad sale de
+        // "Visita concertada", así que ya no se podría corregir desde la app.
+        !(typeof entrada.administradorId === "string" && entrada.administradorId.trim()) && "administrador",
         !entrada.contacto?.trim() && "contacto",
         !entrada.telefono?.trim() && "telefono",
         !entrada.fechaVisita && "fecha de visita",
