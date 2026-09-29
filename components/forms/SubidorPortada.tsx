@@ -100,9 +100,9 @@ export function SubidorPortada({ imagen, onImagenChange, disabled = false }: Pro
                             onClick={() => onImagenChange(null)}
                             disabled={disabled}
                             aria-label="Quitar imagen de portada"
-                            className="absolute right-1 top-1 flex h-6 w-6 cursor-pointer items-center justify-center rounded-full bg-ink/60 text-canvas disabled:opacity-50"
+                            className="absolute right-1 top-1 flex h-8 w-8 cursor-pointer items-center justify-center rounded-full bg-ink/60 text-canvas disabled:opacity-50"
                         >
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="h-3 w-3">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="h-3.5 w-3.5">
                                 <path d="M18 6 6 18M6 6l12 12" />
                             </svg>
                         </button>

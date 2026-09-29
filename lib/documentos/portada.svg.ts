@@ -150,6 +150,32 @@ function truncar(texto: string, maxPx: number, tamano: number, negrita = false):
 }
 
 /**
+ * Tamaño de letra con el que `texto` cabe en `maxPx`, bajando de medio en
+ * medio punto desde `tamano` hasta `minimo`. Para cifras y direcciones: un
+ * número truncado ("10.500,7…") cambia la lectura; vale más un punto menos.
+ * Si ni al mínimo cabe, quien llama trunca a ese tamaño.
+ */
+function tamanoQueCabe(texto: string, maxPx: number, tamano: number, minimo: number, negrita = false): number {
+    let t = tamano;
+    while (t > minimo && anchoDe(texto, t, negrita) > maxPx) t -= 0.5;
+    return t;
+}
+
+/** Texto que se encoge hasta `minimo` antes de truncarse. */
+function textoAjustado(
+    x: number,
+    y: number,
+    contenido: string,
+    maxPx: number,
+    minimo: number,
+    o: OpcionesTexto & { tamano: number }
+): string {
+    const negrita = o.peso === "bold";
+    const tamano = tamanoQueCabe(contenido, maxPx, o.tamano, minimo, negrita);
+    return texto(x, y, truncar(contenido, maxPx, tamano, negrita), { ...o, tamano });
+}
+
+/**
  * Parte en líneas por palabras. Lo que no cabe en `maxLineas` se acumula en la
  * última, que se trunca con puntos suspensivos.
  */
@@ -519,9 +545,10 @@ function bloqueFoto(d: DatosPortada, p: PaletaPortada, m: Maqueta): string {
 
 function banda(d: DatosPortada, p: PaletaPortada, m: Maqueta): string {
     const y0 = m.yBanda;
-    // Columnas desiguales a propósito: "Comunidad de Propietarios" en negrita
-    // no cabe en un tercio exacto, y la fecha con la validez tampoco va sobrada.
-    const anchos = [360, 400, W - 2 * M - 760];
+    // Columnas desiguales a propósito: OBRA lleva la dirección, que es lo más
+    // largo y lo que más importa leer entera. Los textos que no caben se
+    // encogen un poco antes de truncarse.
+    const anchos = [420, 370, W - 2 * M - 790];
     const cliente = d.administrador ? `Adm.: ${d.administrador}` : d.comunidad;
     const fecha = d.fechaValidez ? `${d.fecha} · Válida hasta ${d.fechaValidez}` : d.fecha;
 
@@ -541,10 +568,8 @@ function banda(d: DatosPortada, p: PaletaPortada, m: Maqueta): string {
         if (i > 0) piezas.push(linea(x0, y0 + 30, x0, y0 + ALTO_BANDA - 30, p.textoClaro, 1, 0.18));
 
         piezas.push(texto(x, y0 + 44, etiqueta, { tamano: 14, color: p.textoClaroTenue, espaciado: 3 }));
-        piezas.push(
-            texto(x, y0 + 81, truncar(valor, util, 21, true), { tamano: 21, peso: "bold", color: p.textoClaro })
-        );
-        piezas.push(texto(x, y0 + 109, truncar(detalle, util, 16), { tamano: 16, color: p.textoClaroTenue }));
+        piezas.push(textoAjustado(x, y0 + 81, valor, util, 16, { tamano: 21, peso: "bold", color: p.textoClaro }));
+        piezas.push(textoAjustado(x, y0 + 109, detalle, util, 13, { tamano: 16, color: p.textoClaroTenue }));
         x0 += anchos[i];
     });
 
@@ -712,11 +737,7 @@ function tarjetaPartidas(d: DatosPortada, p: PaletaPortada, m: Maqueta, x0: numb
         const cy = yCajas + Math.floor(i / CIFRAS_POR_FILA) * (ALTO_CIFRA + HUECO_CIFRA);
         piezas.push(rect(cx, cy, anchoCaja, ALTO_CIFRA, p.fondo, 12));
         piezas.push(
-            texto(cx + 20, cy + 40, truncar(c.valor, anchoCaja - 40, 26, true), {
-                tamano: 26,
-                peso: "bold",
-                color: p.texto,
-            })
+            textoAjustado(cx + 20, cy + 40, c.valor, anchoCaja - 40, 16, { tamano: 26, peso: "bold", color: p.texto })
         );
         piezas.push(
             texto(cx + 20, cy + 64, truncar(c.etiqueta, anchoCaja - 40, 14), { tamano: 14, color: p.textoTenue })

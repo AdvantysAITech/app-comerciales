@@ -1,5 +1,6 @@
 import type { SubcuentaSlug } from "@/lib/subcuenta";
 import { aCentimos, formatearImporte, formatearTipoIva, type PresupuestoCalculado } from "./motor";
+import { DIAS_VALIDEZ } from "./payloadDocumento";
 
 /**
  * lib/documentos/portada.ts
@@ -334,9 +335,15 @@ export const MAXIMO_PARTIDAS_PORTADA = 5;
 /** Unidades que dicen algo como cifra de obra ("30 m²"). "1 ud" no dice nada. */
 const UNIDADES_MEDIBLES = new Set(["m", "m²", "m³", "kg", "h", "día", "mes"]);
 
-/** 30 -> "30" · 54.5 -> "54,5" · 1250 -> "1.250" */
+/**
+ * 30 -> "30" · 54.5 -> "54,5" · 1234.56 -> "1.234,56"
+ *
+ * `useGrouping: "always"` es obligatorio: sin él, es-ES no agrupa los números
+ * de 4 cifras ("1234,56") y la portada no casaba con el desglose, que sí lo hace.
+ */
+const NF_MEDICION = new Intl.NumberFormat("es-ES", { maximumFractionDigits: 2, useGrouping: "always" });
 function formatearMedicion(v: number): string {
-    return v.toLocaleString("es-ES", { maximumFractionDigits: 2 });
+    return NF_MEDICION.format(v);
 }
 
 /**
@@ -369,6 +376,16 @@ export function construirPortada(
     const importesCent = presupuesto.capitulos.map((c) => aCentimos(c.total));
     const porcentajes = repartirPorcentajes(importesCent, aCentimos(presupuesto.pem));
 
+    // Color por capítulo, cíclico. El donut es un anillo: el último sector toca
+    // al primero. Si con el ciclo les toca el mismo color (7 capítulos con 6
+    // colores), se verían como un solo sector: el último se desplaza uno.
+    const colores = presupuesto.capitulos.map((_, i) => serie[i % serie.length]);
+    const n = colores.length;
+    if (n > 2 && colores[n - 1] === colores[0]) {
+        const libre = serie.find((c) => c !== colores[0] && c !== colores[n - 2]);
+        if (libre) colores[n - 1] = libre;
+    }
+
     const capitulos: CapituloPortada[] = presupuesto.capitulos.map((c, i) => ({
         codigo: c.codigo,
         codigoJerarquico: c.codigoJerarquico,
@@ -376,14 +393,14 @@ export function construirPortada(
         importe: c.total,
         importeFormateado: `${formatearImporte(c.total)} €`,
         porcentaje: porcentajes[i],
-        color: serie[i % serie.length],
+        color: colores[i],
     }));
 
     // --- Partidas: todas las líneas, por importe descendente ---------------
     // El orden es estable a igualdad de importe (orden del documento), así el
     // SVG sigue siendo determinista.
     const lineas = presupuesto.capitulos.flatMap((c, i) =>
-        c.lineas.map((l, j) => ({ l, color: serie[i % serie.length], orden: i * 1000 + j }))
+        c.lineas.map((l, j) => ({ l, color: colores[i], orden: i * 1000 + j }))
     );
     const porImporte = [...lineas].sort((a, b) => b.l.importe - a.l.importe || a.orden - b.orden);
     const mayor = porImporte[0]?.l.importe ?? 0;
@@ -409,10 +426,16 @@ export function construirPortada(
             : null;
 
     // --- La obra en cifras: mediciones reales + datos del presupuesto -------
-    const cifras: CajaPortada[] = porImporte
-        .filter(({ l }) => UNIDADES_MEDIBLES.has(l.unidad) || (l.unidad === "ud" && l.cantidad > 1))
-        .slice(0, 2)
-        .map(({ l }) => ({ valor: `${formatearMedicion(l.cantidad)} ${l.unidad}`, etiqueta: aFrase(l.resumen) }));
+    // Sin repetir: la misma partida puede aparecer en dos capítulos con la misma
+    // medición, y dos cajas idénticas no dicen nada.
+    const cifras: CajaPortada[] = [];
+    for (const { l } of porImporte) {
+        if (cifras.length >= 2) break;
+        if (!(UNIDADES_MEDIBLES.has(l.unidad) || (l.unidad === "ud" && l.cantidad > 1))) continue;
+        const caja = { valor: `${formatearMedicion(l.cantidad)} ${l.unidad}`, etiqueta: aFrase(l.resumen) };
+        if (cifras.some((c) => c.valor === caja.valor && c.etiqueta === caja.etiqueta)) continue;
+        cifras.push(caja);
+    }
 
     const numeroPartidas = lineas.length;
     const relleno: CajaPortada[] = [
@@ -420,7 +443,7 @@ export function construirPortada(
             valor: plural(numeroPartidas, "partida", "partidas"),
             etiqueta: `en ${plural(capitulos.length, "capítulo", "capítulos")}`,
         },
-        { valor: "30 días", etiqueta: "validez del presupuesto" },
+        { valor: `${DIAS_VALIDEZ} días`, etiqueta: "validez del presupuesto" },
         { valor: "2 años", etiqueta: "garantía de ejecución" },
     ];
     for (const caja of relleno) {
@@ -442,9 +465,12 @@ export function construirPortada(
         etiquetas.push(plural(numeroPartidas, "partida", "partidas"), plural(capitulos.length, "capítulo", "capítulos"));
     }
 
-    const administrador = entrada.administradorLocalidad
-        ? `${entrada.administrador} · ${entrada.administradorLocalidad}`
-        : entrada.administrador;
+    // Sin nombre de despacho no se pone la localidad sola: salía "Adm.:  · Valencia".
+    const nombreAdministrador = entrada.administrador.trim();
+    const administrador =
+        nombreAdministrador && entrada.administradorLocalidad?.trim()
+            ? `${nombreAdministrador} · ${entrada.administradorLocalidad.trim()}`
+            : nombreAdministrador;
 
     return {
         identidad,

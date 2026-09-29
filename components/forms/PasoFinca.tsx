@@ -61,7 +61,6 @@ export function PasoFinca({
     /** Índice de la opción resaltada con teclado. `visibles.length` = "Crear". */
     const [activo, setActivo] = useState(-1);
 
-    const contenedorRef = useRef<HTMLDivElement>(null);
     const listaRef = useRef<HTMLUListElement>(null);
     const idLista = useId();
 
@@ -91,17 +90,10 @@ export function PasoFinca({
     const ofrecerConNombre = texto !== "" && !hayCoincidenciaExacta;
     const indiceCrear = visibles.length;
 
-    // Cerrar al tocar fuera del buscador.
-    useEffect(() => {
-        if (!abierto) return;
-        function alPulsarFuera(e: PointerEvent) {
-            if (contenedorRef.current && !contenedorRef.current.contains(e.target as Node)) {
-                setAbierto(false);
-            }
-        }
-        document.addEventListener("pointerdown", alPulsarFuera);
-        return () => document.removeEventListener("pointerdown", alPulsarFuera);
-    }, [abierto]);
+    // La lista NO se cierra al tocar fuera (29/09/2026): en el móvil, deslizar
+    // la página para ver más cuenta como "tocar fuera", la lista se cerraba y
+    // con ella desaparecía "+ Crear comunidad", que es justo lo que este paso
+    // tiene que dejar a mano. Se pliega con la flecha o con Escape.
 
     // Mantener visible la opción resaltada con teclado.
     useEffect(() => {
@@ -146,7 +138,7 @@ export function PasoFinca({
                     ¿Qué finca vas a visitar?
                 </p>
 
-                <div ref={contenedorRef}>
+                <div>
                     <div className="relative">
                         <input
                             type="text"
@@ -154,7 +146,10 @@ export function PasoFinca({
                             role="combobox"
                             aria-label="Buscar comunidad"
                             aria-expanded={abierto}
-                            aria-controls={idLista}
+                            aria-controls={abierto ? idLista : undefined}
+                            aria-activedescendant={
+                                abierto && activo >= 0 ? `${idLista}-${activo}` : undefined
+                            }
                             aria-autocomplete="list"
                             autoComplete="off"
                             value={consulta}
@@ -207,6 +202,7 @@ export function PasoFinca({
                                 {visibles.map((c, i) => (
                                     <li
                                         key={c.id}
+                                        id={`${idLista}-${i}`}
                                         role="option"
                                         aria-selected={activo === i}
                                         data-indice={i}
@@ -243,6 +239,7 @@ export function PasoFinca({
                             {/* Crear: fuera del scroll para que siempre se vea. */}
                             <button
                                 type="button"
+                                id={`${idLista}-${indiceCrear}`}
                                 data-indice={indiceCrear}
                                 onMouseEnter={() => setActivo(indiceCrear)}
                                 onClick={crear}

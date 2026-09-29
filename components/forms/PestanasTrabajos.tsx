@@ -61,9 +61,18 @@ export function PestanasTrabajos({ trabajos, activo, onCambiar, children }: Prop
     // Al cambiar de pestaña: la pestaña activa se centra en la tira (móvil) y,
     // si el comienzo del panel ha quedado fuera de pantalla (se venía de
     // "Siguiente", abajo del todo), se sube hasta él.
+    //
+    // La tira se mueve SOLO en horizontal, con `scrollTo` sobre ella: con
+    // `scrollIntoView` se desplazaba también la página entera, y al abrir un
+    // borrador la pantalla bajaba sola hasta las pestañas (29/09/2026). Y en el
+    // primer render no se toca el scroll vertical.
     useEffect(() => {
-        const pestana = tiraRef.current?.querySelector<HTMLElement>(`[data-trabajo="${CSS.escape(activo)}"]`);
-        pestana?.scrollIntoView({ block: "nearest", inline: "center", behavior: "smooth" });
+        const tira = tiraRef.current;
+        const pestana = tira?.querySelector<HTMLElement>(`[data-trabajo="${CSS.escape(activo)}"]`);
+        if (tira && pestana && tira.scrollWidth > tira.clientWidth) {
+            const destino = pestana.offsetLeft - (tira.clientWidth - pestana.offsetWidth) / 2;
+            tira.scrollTo({ left: Math.max(0, destino), behavior: primerRender.current ? "auto" : "smooth" });
+        }
 
         if (primerRender.current) {
             primerRender.current = false;
@@ -79,11 +88,11 @@ export function PestanasTrabajos({ trabajos, activo, onCambiar, children }: Prop
 
     return (
         <div className="lg:grid lg:grid-cols-[230px_minmax(0,1fr)] lg:gap-4">
-            <div className="mb-3 flex items-center justify-between gap-2 lg:hidden">
+            <div className="mb-3 flex items-center justify-between gap-2 lg:col-span-2 lg:mb-2">
                 <p className="text-[11px] text-muted">
                     {completos} de {trabajos.length} {trabajos.length === 1 ? "trabajo listo" : "trabajos listos"}
                 </p>
-                <p className="text-[11px] text-muted">
+                <p className="text-[11px] text-muted lg:hidden">
                     {indice + 1} / {trabajos.length}
                 </p>
             </div>
@@ -93,11 +102,8 @@ export function PestanasTrabajos({ trabajos, activo, onCambiar, children }: Prop
                 ref={tiraRef}
                 role="tablist"
                 aria-label="Trabajos seleccionados"
-                className="-mx-1 flex snap-x gap-2 overflow-x-auto px-1 pb-2 lg:sticky lg:top-4 lg:mx-0 lg:flex-col lg:self-start lg:overflow-visible lg:px-0 lg:pb-0"
+                className="relative -mx-1 flex snap-x gap-2 overflow-x-auto px-1 pb-2 lg:sticky lg:top-4 lg:mx-0 lg:flex-col lg:self-start lg:overflow-visible lg:px-0 lg:pb-0"
             >
-                <p className="mb-1 hidden text-[11px] text-muted lg:block">
-                    {completos} de {trabajos.length} {trabajos.length === 1 ? "trabajo listo" : "trabajos listos"}
-                </p>
                 {trabajos.map((t) => {
                     const seleccionada = t.key === activo;
                     return (
@@ -105,7 +111,9 @@ export function PestanasTrabajos({ trabajos, activo, onCambiar, children }: Prop
                             key={t.key}
                             type="button"
                             role="tab"
+                            id={`pestana-${t.key}`}
                             aria-selected={seleccionada}
+                            aria-controls="panel-trabajo"
                             data-trabajo={t.key}
                             onClick={() => onCambiar(t.key)}
                             className={`flex min-h-11 shrink-0 snap-start cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-left transition lg:w-full ${
@@ -132,7 +140,13 @@ export function PestanasTrabajos({ trabajos, activo, onCambiar, children }: Prop
                 })}
             </div>
 
-            <div ref={panelRef} role="tabpanel" className="min-w-0 scroll-mt-4">
+            <div
+                ref={panelRef}
+                id="panel-trabajo"
+                role="tabpanel"
+                aria-labelledby={`pestana-${activo}`}
+                className="min-w-0 scroll-mt-4"
+            >
                 {children}
 
                 {trabajos.length > 1 && (

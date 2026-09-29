@@ -31,6 +31,7 @@ import {
     describirAntiguedad,
     guardarBorrador,
     limpiarBorrador,
+    normalizarDatos,
     tieneContenido,
     type DatosBorrador,
 } from "@/lib/visita/borrador";
@@ -264,7 +265,11 @@ export function FormularioPresupuesto({
     const [reintento, setReintento] = useState(0);
     const [confirmandoEliminar, setConfirmandoEliminar] = useState(false);
     /** Lo último que el servidor tiene guardado, serializado. Evita guardados vacíos. */
-    const ultimoEnviado = useRef<string | null>(borrador ? JSON.stringify(borrador.datos) : null);
+    // Normalizado, con la misma forma que `datosActuales`: un borrador guardado
+    // antes de añadir un campo (p. ej. `imagenPortada`) no lo trae, el
+    // serializado no coincidía y se reenviaba nada más abrirlo, subiendo en el
+    // panel como si se hubiera tocado (29/09/2026).
+    const ultimoEnviado = useRef<string | null>(borrador ? JSON.stringify(normalizarDatos(borrador.datos)) : null);
     const creando = useRef(false);
     /** Una vez enviado el presupuesto, el borrador no se vuelve a escribir. */
     const enviado = useRef(false);
@@ -1313,7 +1318,7 @@ export function FormularioPresupuesto({
                                         <button
                                             type="button"
                                             onClick={() => setModuloActivo(modulo.key)}
-                                            aria-pressed={true}
+                                            aria-label={`Abrir ${modulo.label}`}
                                             className="flex cursor-pointer items-center gap-2 py-2 pl-3 pr-1 font-medium text-ink"
                                         >
                                             <span aria-hidden="true">✓</span>
