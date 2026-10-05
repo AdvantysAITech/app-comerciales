@@ -3,7 +3,13 @@ import { catalogo, listarCapitulos, listarPartidas, obtenerPartida, type Partida
 import { extraerJson, llamarClaude, textoDescargado, type BloqueRespuesta } from "@/lib/ia/claude";
 import { HERRAMIENTAS_CYPE, mensajeCype, PROMPT_CASAR_TARIFA, PROMPT_CYPE, PROMPT_EXTRAER } from "@/lib/ia/prompts";
 import { leerDecimal } from "@/lib/numero";
-import { capituloPermitido, MOTIVO_SIN_LICENCIA, partidaPermitida, textoMencionaAmianto } from "@/lib/catalogo/licencias";
+import {
+    capituloPermitido,
+    esPartidaAmianto,
+    MOTIVO_SIN_LICENCIA,
+    partidaPermitida,
+    textoMencionaAmianto,
+} from "@/lib/catalogo/licencias";
 import {
     normalizarUnidad,
     type ConsultaCype,
@@ -179,8 +185,14 @@ export function candidatasTarifa(
 ): PartidaTarifa[] {
     const fuertes = raices(`${t.accion} ${t.elemento}`);
     const debiles = raices(t.detalle);
+    // Amianto solo si el trabajo lo dice (05/10/2026). "Retirada" + "cubierta"
+    // puntuaba igual que AMI002 (placas de fibrocemento de cubierta): la IA lo
+    // elegía para retirar terrazo o tela asfáltica, saltaba la alerta RERA y el
+    // mínimo de 3 fotos bloqueaba el presupuesto sin que nadie hablara de amianto.
+    const hablaDeAmianto = textoMencionaAmianto(`${t.accion} ${t.elemento} ${t.detalle}`);
     return indiceTarifa
         .filter(({ partida }) => partidaPermitida(subcuenta, partida))
+        .filter(({ partida }) => hablaDeAmianto || !esPartidaAmianto(partida))
         .map(({ partida, raices: r }) => ({
             partida,
             puntos: fuertes.filter((x) => r.has(x)).length * 2 + debiles.filter((x) => r.has(x)).length,
