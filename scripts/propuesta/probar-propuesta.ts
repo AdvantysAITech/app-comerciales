@@ -91,6 +91,12 @@ const propuesta = (lineas: LineaPropuesta[]): Propuesta => ({ generadaEn: "", li
     comprobar(!enVertical.some((p) => p.codigo.startsWith("AMI")), "Vertical: ninguna candidata AMI de la tarifa");
     comprobar(enScala.some((p) => p.codigo.startsWith("AMI")), "Scala: sí recibe candidatas AMI");
 
+    const sinAmianto = { accion: "retirada", elemento: "terrazo y tela asfáltica de cubierta", detalle: "suelo flotante sobre plots" };
+    comprobar(
+        !candidatasTarifa(sinAmianto, SCALA).some((p) => p.codigo.startsWith("AMI")),
+        "Scala: 'retirada de cubierta' sin mencionar amianto no recibe candidatas AMI"
+    );
+
     const conAmianto = propuesta([
         linea({ id: "a", moduloKey: "m", codigo: amianto.codigo, capitulo: amianto.capitulo, unidad: amianto.unidad }),
     ]);
