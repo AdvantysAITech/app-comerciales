@@ -77,7 +77,7 @@ const USUARIOS: UsuarioConfigurado[] = [
   {
     email: process.env.TONI_EMAIL,
     passwordHashB64: process.env.TONI_PASSWORD_HASH_B64,
-    nombre: "Toni Yañez",
+    nombre: "Toni Llaneza",
     rol: "comercial",
     // Excepcion al DERCAS 9.1 (decision de Jacob, 23/09/2026): Toni es
     // comercial pero trabaja las dos empresas, asi que tiene el mismo selector
