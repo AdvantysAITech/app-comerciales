@@ -43,7 +43,7 @@ import { DIAS_VALIDEZ } from "./payloadDocumento";
 // ---------------------------------------------------------------------------
 
 export interface PaletaPortada {
-    /** Azul noche de la banda, los titulares y la caja del total. */
+    /** Color oscuro de la banda, los titulares y la caja del total. */
     oscuro: string;
     /** Color de acento: filetes, subrayados, barras secundarias. */
     acento: string;
@@ -68,6 +68,53 @@ export interface PaletaPortada {
     serie: readonly string[];
 }
 
+// ---------------------------------------------------------------------------
+// Estilo de composición
+// ---------------------------------------------------------------------------
+
+/**
+ * Familias tipográficas de la portada, con respaldo.
+ *
+ * Cada familia tiene que estar empaquetada en `rasterizar.ts`: resvg no usa las
+ * fuentes del sistema. Si una falta, resvg salta a la siguiente de la lista
+ * (DejaVu Sans, que siempre se carga), así que nunca sale una portada sin texto.
+ */
+export const FUENTE_DEJAVU = "'DejaVu Sans', 'Liberation Sans', Arial, sans-serif";
+export const FUENTE_OSWALD = "Oswald, 'DejaVu Sans', sans-serif";
+export const FUENTE_LATO = "Lato, 'DejaVu Sans', sans-serif";
+
+/**
+ * Lo que separa visualmente una subcuenta de otra más allá del color.
+ *
+ * Scala Valencia y Vertical Projects no pueden parecer la misma empresa (sus
+ * clientes no deben poder relacionarlas): misma maqueta de datos, pero
+ * distinta tipografía, distinta colocación de la marca, esquinas y filetes.
+ */
+export interface EstiloPortada {
+    /** Marca, título, rótulos y cifras grandes. */
+    fuenteTitulos: string;
+    /** Resto del texto. */
+    fuenteTexto: string;
+    /**
+     * Anchura de la fuente de titulares respecto a DejaVu Sans, que es con la
+     * que están medidas las métricas de `portada.svg.ts`. Con una condensada
+     * (Oswald, ~0,72) se puede subir el cuerpo del título sin que se parta
+     * antes de tiempo. 1 = DejaVu.
+     */
+    escalaAnchoTitulos: number;
+    /**
+     * "centrada": marca centrada con subrayado corto.
+     * "lateral": marca alineada a la izquierda tras un filete vertical de acento.
+     */
+    marca: "centrada" | "lateral";
+    /** Tarjetas, cajas y etiquetas con esquinas redondeadas o en ángulo recto. */
+    esquinas: "redondeadas" | "rectas";
+    /** Filete de acento en el canto de tarjetas, banda y pie. */
+    fileteAcento: boolean;
+    /** Relleno de la caja del TOTAL: el color oscuro o el de acento. */
+    total: "oscuro" | "acento";
+}
+
 /**
  * Branding por subcuenta (DERCAS 5.1). Los datos fiscales completos y el
  * logotipo vectorial los aporta Miguel; hasta entonces la marca va como texto,
@@ -80,32 +127,44 @@ export interface IdentidadPortada {
     pie: string;
     contacto: string;
     paleta: PaletaPortada;
+    estilo: EstiloPortada;
 }
 
 const IDENTIDAD: Record<SubcuentaSlug, IdentidadPortada> = {
+    // Grafito y dorado del logotipo, Oswald + Lato (las mismas que incrusta la
+    // plantilla ODT de Vertical). Nada de azules: no debe recordar a Scala.
     "vertical-projects": {
         nombreMarca: "VERTICAL PROJECTS",
         claim: "TRABAJOS VERTICALES  ·  ACCESO POR CUERDA  ·  FACHADAS",
         pie: "VERTICAL PROJECTS  ·  Trabajos Verticales y Accesos Especiales",
-        contacto: "info@verticalprojects.es   ·   +34 963 858 534",
+        contacto: "info@verticalprojects.es   ·   963 858 534",
         paleta: {
-            oscuro: "#12233d",
+            oscuro: "#1c1917",
             acento: "#c9a45c",
             fondo: "#ffffff",
-            tarjeta: "#eef1f5",
-            pista: "#dde3ea",
-            texto: "#12233d",
-            textoTenue: "#6b7686",
+            tarjeta: "#f6f1e7",
+            pista: "#e6dccb",
+            texto: "#1c1917",
+            textoTenue: "#7d756b",
             textoClaro: "#ffffff",
-            textoClaroTenue: "#aebbd0",
-            serie: ["#12233d", "#c9a45c", "#4a7fbf", "#8aa9d0", "#7c5f2a", "#2d4d7a"],
+            textoClaroTenue: "#cfc6b8",
+            serie: ["#1c1917", "#c9a45c", "#7d756b", "#e2c992", "#5c4a2e", "#a8803f"],
+        },
+        estilo: {
+            fuenteTitulos: FUENTE_OSWALD,
+            fuenteTexto: FUENTE_LATO,
+            escalaAnchoTitulos: 0.8,
+            marca: "lateral",
+            esquinas: "rectas",
+            fileteAcento: true,
+            total: "acento",
         },
     },
     "scala-valencia": {
         nombreMarca: "SCALA VALENCIA",
         claim: "REHABILITACIÓN DE EDIFICIOS  ·  RETIRADA DE AMIANTO RERA",
         pie: "SCALA VALENCIA  ·  Rehabilitación y Retirada de Amianto",
-        contacto: "info@scalavalencia.es",
+        contacto: "info@scalavalencia.com",
         paleta: {
             oscuro: "#13223b",
             acento: "#3d6b9e",
@@ -117,6 +176,15 @@ const IDENTIDAD: Record<SubcuentaSlug, IdentidadPortada> = {
             textoClaro: "#ffffff",
             textoClaroTenue: "#aebbd0",
             serie: ["#13223b", "#3d6b9e", "#8fb0d3", "#5c7d99", "#b9c9dc", "#2a4a70"],
+        },
+        estilo: {
+            fuenteTitulos: FUENTE_DEJAVU,
+            fuenteTexto: FUENTE_DEJAVU,
+            escalaAnchoTitulos: 1,
+            marca: "centrada",
+            esquinas: "redondeadas",
+            fileteAcento: false,
+            total: "oscuro",
         },
     },
 };
@@ -199,7 +267,7 @@ export interface DatosPortada {
     fechaValidez: string;
     administrador: string;
 
-    /** `null` = sin foto: el bloque superior se pinta en azul noche. */
+    /** `null` = sin foto: el bloque superior se pinta en el color oscuro. */
     imagen: ImagenPortada | null;
     /** Etiquetas sobre el título ("Cubiertas", "12 partidas"...). */
     etiquetas: string[];

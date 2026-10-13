@@ -607,6 +607,15 @@ export type DocumentoAdjunto = {
  * (`etapaActual`). Una regeneración con la oportunidad ya enviada o en
  * negociación no la hace retroceder. Va en el mismo PUT por el mismo motivo que
  * la casilla: el documento, el aviso y la etapa llegan juntos o no llega nada.
+ *
+ * ---------------------------------------------------------------------------
+ * Y EL IMPORTE (13/10/2026)
+ * ---------------------------------------------------------------------------
+ * `monetaryValue` = base imponible SIN IVA (el PEM del motor), para que el
+ * pipeline de GHL sume importes. Hasta ahora todas las oportunidades tenían
+ * valor 0. Lo calcula el motor en TypeScript, el mismo cálculo que imprime el
+ * documento; nunca la IA. Si no llega un importe positivo, el campo NO se envía
+ * (PUT parcial: se queda el valor que hubiera, no se pisa con un 0).
  */
 export async function adjuntarPresupuesto(
     subcuenta: Subcuenta,
@@ -614,7 +623,9 @@ export async function adjuntarPresupuesto(
     documento: DocumentoAdjunto,
     casillas: Partial<Record<CasillaOportunidad, boolean>> = {},
     /** Etapa en la que está la oportunidad al publicar. `null` = desconocida: no se mueve. */
-    etapaActual: ClaveEtapa | null = null
+    etapaActual: ClaveEtapa | null = null,
+    /** Base imponible (sin IVA) calculada por el motor. `null`, 0 o no finita: no se envía. */
+    importeSinIva: number | null = null
 ) {
     if (!Number.isInteger(documento.bytes) || documento.bytes <= 0) {
         throw new Error(
@@ -649,6 +660,7 @@ export async function adjuntarPresupuesto(
     }
 
     const avanzaARevision = etapaActual !== null && ETAPAS_ANTES_DE_REVISION.includes(etapaActual);
+    const valor = valorMonetario(importeSinIva);
 
     const data = await saFetch(subcuenta, `/opportunities/${oportunidadId}`, {
         method: "PUT",
@@ -657,8 +669,22 @@ export async function adjuntarPresupuesto(
             ...(avanzaARevision
                 ? { pipelineStageId: idsGhl(subcuenta).etapas.PRESUPUESTO_EN_REVISION }
                 : {}),
+            ...(valor !== null ? { monetaryValue: valor } : {}),
         }),
     });
 
     return data.opportunity ?? data;
+}
+
+/**
+ * Importe para `monetaryValue`: euros redondeados a 2 decimales (half-up, el
+ * mismo criterio que `aCentimos` del motor), o `null` si no hay nada que enviar.
+ *
+ * Se redondea aquí y no se importa el motor para no arrastrar la tarifa a todo
+ * lo que usa este módulo de GHL.
+ */
+export function valorMonetario(importe: number | null | undefined): number | null {
+    if (typeof importe !== "number" || !Number.isFinite(importe)) return null;
+    const centimos = Math.round((importe + Number.EPSILON) * 100);
+    return centimos > 0 ? centimos / 100 : null;
 }

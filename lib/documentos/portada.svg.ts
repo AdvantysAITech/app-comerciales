@@ -1,4 +1,4 @@
-import type { CapituloPortada, DatosPortada, PaletaPortada } from "./portada";
+import type { CapituloPortada, DatosPortada, EstiloPortada, PaletaPortada } from "./portada";
 
 /**
  * lib/documentos/portada.svg.ts
@@ -44,7 +44,19 @@ import type { CapituloPortada, DatosPortada, PaletaPortada } from "./portada";
  * que respira que una que se sale del panel.
  *
  * El rasterizador NO hereda las fuentes del sistema. Hay que pasarle el .ttf
- * de la familia declarada aquí (ver rasterizar.ts).
+ * de cada familia declarada (ver rasterizar.ts).
+ *
+ * ---------------------------------------------------------------------------
+ * IDENTIDAD POR SUBCUENTA (13/10/2026)
+ * ---------------------------------------------------------------------------
+ * La maqueta de datos es común, pero tipografía, colocación de la marca,
+ * esquinas, filetes y caja del total salen de `identidad.estilo`: la portada de
+ * Vertical Projects no puede recordar a la de Scala Valencia.
+ *
+ * La familia del texto corrido se declara una vez en un <g> que envuelve todo
+ * y se hereda; solo los titulares la cambian. Las métricas de abajo son de
+ * DejaVu Sans: con Oswald y Lato, más estrechas, la estimación peca de larga,
+ * que es el lado seguro (se trunca antes, nunca se desborda).
  */
 
 const W = 1240;
@@ -73,8 +85,6 @@ type Maqueta = {
     yTotales: number;
     yPie: number;
 };
-
-const FUENTE = "'DejaVu Sans', 'Liberation Sans', Arial, sans-serif";
 
 /**
  * Anchura por carácter, en múltiplos del tamaño de fuente, para DejaVu Sans
@@ -217,16 +227,18 @@ type OpcionesTexto = {
     anclaje?: "start" | "middle" | "end";
     espaciado?: number;
     opacidad?: number;
+    /** Familia propia. Sin ella, hereda la del <g> raíz (texto corrido). */
+    familia?: string;
 };
 
 function texto(x: number, y: number, contenido: string, o: OpcionesTexto = {}): string {
     const atributos = [
         `x="${redondear(x)}"`,
         `y="${redondear(y)}"`,
-        `font-family="${FUENTE}"`,
         `font-size="${o.tamano ?? 16}"`,
         `fill="${o.color ?? "#ffffff"}"`,
     ];
+    if (o.familia) atributos.push(`font-family="${o.familia}"`);
     if (o.peso && o.peso !== "normal") atributos.push(`font-weight="${o.peso}"`);
     if (o.anclaje && o.anclaje !== "start") atributos.push(`text-anchor="${o.anclaje}"`);
     if (o.espaciado) atributos.push(`letter-spacing="${o.espaciado}"`);
@@ -276,9 +288,16 @@ function redondear(v: number): number {
     return Math.round(v * 100) / 100;
 }
 
-/** Rótulo de sección: versalitas espaciadas. */
-function rotulo(x: number, y: number, etiqueta: string, color: string): string {
-    return texto(x, y, etiqueta, { tamano: 15, peso: "bold", color, espaciado: 2.4 });
+/** Rótulo de sección: versalitas espaciadas, en la fuente de titulares. */
+function rotulo(x: number, y: number, etiqueta: string, color: string, e: EstiloPortada): string {
+    // Una condensada a 15 px se queda escuálida: se sube en proporción.
+    const tamano = e.escalaAnchoTitulos < 1 ? 18 : 15;
+    return texto(x, y, etiqueta, { tamano, peso: "bold", color, espaciado: 2.4, familia: e.fuenteTitulos });
+}
+
+/** Radio de esquina según el estilo: el de siempre o ángulo recto. */
+function radio(e: EstiloPortada, redondeado: number): number {
+    return e.esquinas === "rectas" ? 0 : redondeado;
 }
 
 function aBase64(datos: Uint8Array): string {
@@ -444,6 +463,7 @@ function definiciones(p: PaletaPortada, m: Maqueta): string {
 }
 
 function bloqueFoto(d: DatosPortada, p: PaletaPortada, m: Maqueta): string {
+    const e = d.identidad.estilo;
     const piezas: string[] = [];
 
     if (d.imagen) {
@@ -460,58 +480,89 @@ function bloqueFoto(d: DatosPortada, p: PaletaPortada, m: Maqueta): string {
     piezas.push(rect(0, 0, W, m.altoFoto, "url(#sombra-foto)"));
 
     // --- Marca ---
-    // letter-spacing también se añade tras la última letra: se compensa medio
-    // espaciado para que la marca quede centrada de verdad.
-    const espaciadoMarca = 12;
-    piezas.push(
-        texto(W / 2 + espaciadoMarca / 2, 108, d.identidad.nombreMarca, {
-            tamano: 50,
-            peso: "bold",
-            color: p.textoClaro,
-            anclaje: "middle",
-            espaciado: espaciadoMarca,
-        })
-    );
-    piezas.push(linea(W / 2 - 80, 138, W / 2 + 80, 138, p.textoClaro, 2, 0.9));
-    piezas.push(
-        texto(W / 2 + 1.2, 178, d.identidad.claim, {
-            tamano: 16,
-            color: p.textoClaro,
-            anclaje: "middle",
-            espaciado: 2.4,
-            opacidad: 0.88,
-        })
-    );
+    if (e.marca === "lateral") {
+        // Alineada a la izquierda tras un filete vertical de acento.
+        piezas.push(rect(M, 62, 8, 124, p.acento));
+        piezas.push(
+            texto(M + 36, 122, d.identidad.nombreMarca, {
+                tamano: 60,
+                peso: "bold",
+                color: p.textoClaro,
+                espaciado: 9,
+                familia: e.fuenteTitulos,
+            })
+        );
+        piezas.push(
+            texto(M + 38, 172, d.identidad.claim, {
+                tamano: 16,
+                peso: "bold",
+                color: p.acento,
+                espaciado: 2.8,
+            })
+        );
+    } else {
+        // letter-spacing también se añade tras la última letra: se compensa
+        // medio espaciado para que la marca quede centrada de verdad.
+        const espaciadoMarca = 12;
+        piezas.push(
+            texto(W / 2 + espaciadoMarca / 2, 108, d.identidad.nombreMarca, {
+                tamano: 50,
+                peso: "bold",
+                color: p.textoClaro,
+                anclaje: "middle",
+                espaciado: espaciadoMarca,
+                familia: e.fuenteTitulos,
+            })
+        );
+        piezas.push(linea(W / 2 - 80, 138, W / 2 + 80, 138, p.textoClaro, 2, 0.9));
+        piezas.push(
+            texto(W / 2 + 1.2, 178, d.identidad.claim, {
+                tamano: 16,
+                color: p.textoClaro,
+                anclaje: "middle",
+                espaciado: 2.4,
+                opacidad: 0.88,
+            })
+        );
+    }
 
     // --- Título, anclado abajo ---
-    const tamanoTitulo = 46;
-    const interlineado = 56;
-    const lineasTitulo = envolver(d.titulo, W - 2 * M, tamanoTitulo, 2, true);
+    // Con una fuente de titulares estrecha el cuerpo sube, y la medida se hace
+    // a escala para que no parta líneas que caben.
+    const lateral = e.marca === "lateral";
+    const tamanoTitulo = lateral ? 58 : 46;
+    const interlineado = lateral ? 66 : 56;
+    const lineasTitulo = envolver(d.titulo, (W - 2 * M) / e.escalaAnchoTitulos, tamanoTitulo, 2, true);
     const yUltima = m.altoFoto - 42;
     const yPrimera = yUltima - (lineasTitulo.length - 1) * interlineado;
 
     lineasTitulo.forEach((l, i) => {
         piezas.push(
-            texto(M, yPrimera + i * interlineado, l, { tamano: tamanoTitulo, peso: "bold", color: p.textoClaro })
+            texto(M, yPrimera + i * interlineado, l, {
+                tamano: tamanoTitulo,
+                peso: "bold",
+                color: p.textoClaro,
+                familia: e.fuenteTitulos,
+            })
         );
     });
 
-    const yAntetitulo = yPrimera - 62;
+    const yAntetitulo = yPrimera - (lateral ? 72 : 62);
     piezas.push(
         texto(M, yAntetitulo, d.antetitulo, {
             tamano: 17,
-            color: p.textoClaroTenue,
+            color: lateral ? p.acento : p.textoClaroTenue,
             espaciado: 5,
-            peso: "600",
+            peso: lateral ? "bold" : "600",
         })
     );
 
     // --- Etiquetas ---
     const altoEtiqueta = 40;
-    const yEtiquetas = yAntetitulo - 34 - altoEtiqueta;
+    const yEtiquetas = yAntetitulo - (lateral ? 46 : 34) - altoEtiqueta;
     let x = M;
-    for (const e of d.etiquetas) {
-        const textoEtiqueta = truncar(e, 360, 16, true);
+    for (const etiqueta of d.etiquetas) {
+        const textoEtiqueta = truncar(etiqueta, 360, 16, true);
         const ancho = anchoDe(textoEtiqueta, 16, true) + 36;
         if (x + ancho > W - M) break;
         piezas.push(
@@ -521,8 +572,10 @@ function bloqueFoto(d: DatosPortada, p: PaletaPortada, m: Maqueta): string {
                 ancho,
                 altoEtiqueta,
                 p.oscuro,
-                altoEtiqueta / 2,
-                `fill-opacity="0.82" stroke="${p.textoClaro}" stroke-opacity="0.28" stroke-width="1"`
+                radio(e, altoEtiqueta / 2),
+                e.esquinas === "rectas"
+                    ? `fill-opacity="0.82" stroke="${p.acento}" stroke-opacity="0.9" stroke-width="1.5"`
+                    : `fill-opacity="0.82" stroke="${p.textoClaro}" stroke-opacity="0.28" stroke-width="1"`
             )
         );
         piezas.push(
@@ -558,7 +611,9 @@ function banda(d: DatosPortada, p: PaletaPortada, m: Maqueta): string {
         ["PROPUESTA", `Nº ${d.expediente}`, fecha],
     ];
 
+    const e = d.identidad.estilo;
     const piezas: string[] = [rect(0, y0, W, ALTO_BANDA, p.oscuro)];
+    if (e.fileteAcento) piezas.push(rect(0, y0, W, 6, p.acento));
 
     let x0 = M;
     columnas.forEach(([etiqueta, valor, detalle], i) => {
@@ -567,7 +622,14 @@ function banda(d: DatosPortada, p: PaletaPortada, m: Maqueta): string {
 
         if (i > 0) piezas.push(linea(x0, y0 + 30, x0, y0 + ALTO_BANDA - 30, p.textoClaro, 1, 0.18));
 
-        piezas.push(texto(x, y0 + 44, etiqueta, { tamano: 14, color: p.textoClaroTenue, espaciado: 3 }));
+        piezas.push(
+            texto(x, y0 + 44, etiqueta, {
+                tamano: 14,
+                color: e.fileteAcento ? p.acento : p.textoClaroTenue,
+                espaciado: 3,
+                ...(e.fileteAcento ? { peso: "bold" as const } : {}),
+            })
+        );
         piezas.push(textoAjustado(x, y0 + 81, valor, util, 16, { tamano: 21, peso: "bold", color: p.textoClaro }));
         piezas.push(textoAjustado(x, y0 + 109, detalle, util, 13, { tamano: 16, color: p.textoClaroTenue }));
         x0 += anchos[i];
@@ -582,9 +644,11 @@ function banda(d: DatosPortada, p: PaletaPortada, m: Maqueta): string {
 
 function tarjetaCapitulos(d: DatosPortada, p: PaletaPortada, m: Maqueta, x0: number, ancho: number): string {
     const y0 = m.yTarjetas;
+    const e = d.identidad.estilo;
     const piezas: string[] = [
-        rect(x0, y0, ancho, m.altoTarjetas, p.tarjeta, 18),
-        rotulo(x0 + 30, y0 + 52, "DISTRIBUCIÓN POR CAPÍTULOS", p.texto),
+        rect(x0, y0, ancho, m.altoTarjetas, p.tarjeta, radio(e, 18)),
+        e.fileteAcento ? rect(x0, y0, 6, m.altoTarjetas, p.acento) : "",
+        rotulo(x0 + 30, y0 + 52, "DISTRIBUCIÓN POR CAPÍTULOS", p.texto, e),
     ];
 
     const n = d.capitulos.length;
@@ -608,6 +672,7 @@ function tarjetaCapitulos(d: DatosPortada, p: PaletaPortada, m: Maqueta, x0: num
             peso: "bold",
             color: p.texto,
             anclaje: "middle",
+            familia: e.fuenteTitulos,
         })
     );
     piezas.push(
@@ -623,7 +688,7 @@ function tarjetaCapitulos(d: DatosPortada, p: PaletaPortada, m: Maqueta, x0: num
         const yInicio = cy - (n * FILA_LEYENDA_HOLGADA) / 2 + 24;
         d.capitulos.forEach((c, i) => {
             const y = yInicio + i * FILA_LEYENDA_HOLGADA;
-            piezas.push(rect(lx, y - 13, 14, 14, c.color, 3));
+            piezas.push(rect(lx, y - 13, 14, 14, c.color, radio(e, 3)));
             piezas.push(texto(lx + 22, y, `Cap. ${c.codigoJerarquico}`, { tamano: 17, peso: "bold", color: p.texto }));
             piezas.push(
                 texto(derecha, y, `${formatearPorcentaje(c.porcentaje)} %`, {
@@ -646,7 +711,7 @@ function tarjetaCapitulos(d: DatosPortada, p: PaletaPortada, m: Maqueta, x0: num
         const yInicio = cy - (n * fila) / 2 + (fila - salto) / 2 + tamano * 0.8;
         d.capitulos.forEach((c, i) => {
             const y = yInicio + i * fila;
-            piezas.push(rect(lx, y - tamano + 2, tamano - 2, tamano - 2, c.color, 2));
+            piezas.push(rect(lx, y - tamano + 2, tamano - 2, tamano - 2, c.color, radio(e, 2)));
             const anchoCodigo = anchoDe(c.codigoJerarquico, tamano, true) + 8;
             piezas.push(texto(lx + tamano + 6, y, c.codigoJerarquico, { tamano, peso: "bold", color: p.texto }));
             piezas.push(
@@ -683,9 +748,11 @@ function tarjetaPartidas(d: DatosPortada, p: PaletaPortada, m: Maqueta, x0: numb
     const derecha = x0 + ancho - 30;
     const util = derecha - izquierda;
 
+    const e = d.identidad.estilo;
     const piezas: string[] = [
-        rect(x0, y0, ancho, m.altoTarjetas, p.tarjeta, 18),
-        rotulo(izquierda, y0 + 52, "IMPORTE POR PARTIDA", p.texto),
+        rect(x0, y0, ancho, m.altoTarjetas, p.tarjeta, radio(e, 18)),
+        e.fileteAcento ? rect(x0, y0, 6, m.altoTarjetas, p.acento) : "",
+        rotulo(izquierda, y0 + 52, "IMPORTE POR PARTIDA", p.texto, e),
     ];
 
     // --- Barras ---
@@ -705,8 +772,10 @@ function tarjetaPartidas(d: DatosPortada, p: PaletaPortada, m: Maqueta, x0: numb
         piezas.push(
             texto(derecha, y, partida.importeFormateado, { tamano: 16, peso: "bold", color: p.texto, anclaje: "end" })
         );
-        piezas.push(rect(izquierda, y + 12, util, 12, p.pista, 6));
-        piezas.push(rect(izquierda, y + 12, Math.max(12, util * partida.proporcion), 12, partida.color, 6));
+        piezas.push(rect(izquierda, y + 12, util, 12, p.pista, radio(e, 6)));
+        piezas.push(
+            rect(izquierda, y + 12, Math.max(12, util * partida.proporcion), 12, partida.color, radio(e, 6))
+        );
         y += FILA_PARTIDA;
     }
 
@@ -730,14 +799,20 @@ function tarjetaPartidas(d: DatosPortada, p: PaletaPortada, m: Maqueta, x0: numb
     const yCajas = yRotulo + 22;
     const anchoCaja = (util - HUECO_CIFRA) / CIFRAS_POR_FILA;
 
-    piezas.push(rotulo(izquierda, yRotulo, "LA OBRA EN CIFRAS", p.texto));
+    piezas.push(rotulo(izquierda, yRotulo, "LA OBRA EN CIFRAS", p.texto, e));
 
     d.cifras.forEach((c, i) => {
         const cx = izquierda + (i % CIFRAS_POR_FILA) * (anchoCaja + HUECO_CIFRA);
         const cy = yCajas + Math.floor(i / CIFRAS_POR_FILA) * (ALTO_CIFRA + HUECO_CIFRA);
-        piezas.push(rect(cx, cy, anchoCaja, ALTO_CIFRA, p.fondo, 12));
+        piezas.push(rect(cx, cy, anchoCaja, ALTO_CIFRA, p.fondo, radio(e, 12)));
+        if (e.fileteAcento) piezas.push(rect(cx, cy, anchoCaja, 3, p.acento));
         piezas.push(
-            textoAjustado(cx + 20, cy + 40, c.valor, anchoCaja - 40, 16, { tamano: 26, peso: "bold", color: p.texto })
+            textoAjustado(cx + 20, cy + 40, c.valor, anchoCaja - 40, 16, {
+                tamano: 26,
+                peso: "bold",
+                color: p.texto,
+                familia: e.fuenteTitulos,
+            })
         );
         piezas.push(
             texto(cx + 20, cy + 64, truncar(c.etiqueta, anchoCaja - 40, 14), { tamano: 14, color: p.textoTenue })
@@ -761,16 +836,26 @@ function totales(d: DatosPortada, p: PaletaPortada, m: Maqueta): string {
         ["TOTAL (IVA INCLUIDO)", d.totalFormateado, true],
     ];
 
+    const e = d.identidad.estilo;
+    // La caja del total va en el color oscuro (texto claro) o en el de acento
+    // (texto oscuro), según la identidad.
+    const totalEnAcento = e.total === "acento";
+    const rellenoTotal = totalEnAcento ? p.acento : p.oscuro;
+    const etiquetaTotal = totalEnAcento ? p.oscuro : p.textoClaroTenue;
+    const valorTotal = totalEnAcento ? p.oscuro : p.textoClaro;
+
     const piezas: string[] = [];
     let x = M;
     cajas.forEach(([etiqueta, valor, destacado], i) => {
         const ancho = anchos[i];
-        piezas.push(rect(x, y0, ancho, ALTO_TOTALES, destacado ? p.oscuro : p.tarjeta, 16));
+        piezas.push(rect(x, y0, ancho, ALTO_TOTALES, destacado ? rellenoTotal : p.tarjeta, radio(e, 16)));
+        if (e.fileteAcento && !destacado) piezas.push(rect(x, y0, 6, ALTO_TOTALES, p.acento));
         piezas.push(
             texto(x + 28, y0 + 40, etiqueta, {
                 tamano: 14,
-                color: destacado ? p.textoClaroTenue : p.textoTenue,
+                color: destacado ? etiquetaTotal : p.textoTenue,
                 espaciado: 2.4,
+                ...(destacado && totalEnAcento ? { peso: "bold" as const } : {}),
             })
         );
         const tamano = destacado ? 36 : 29;
@@ -778,7 +863,8 @@ function totales(d: DatosPortada, p: PaletaPortada, m: Maqueta): string {
             texto(x + 28, y0 + 84, truncar(valor, ancho - 56, tamano, true), {
                 tamano,
                 peso: "bold",
-                color: destacado ? p.textoClaro : p.texto,
+                color: destacado ? valorTotal : p.texto,
+                familia: e.fuenteTitulos,
             })
         );
         x += ancho + hueco;
@@ -788,9 +874,16 @@ function totales(d: DatosPortada, p: PaletaPortada, m: Maqueta): string {
 }
 
 function pie(d: DatosPortada, p: PaletaPortada, m: Maqueta): string {
+    const e = d.identidad.estilo;
     return [
         rect(0, m.yPie, W, ALTO_PIE, p.oscuro),
-        texto(M, m.yPie + 37, d.identidad.pie, { tamano: 15, peso: "bold", color: p.textoClaro }),
+        e.fileteAcento ? rect(0, m.yPie, W, 4, p.acento) : "",
+        texto(M, m.yPie + 37, d.identidad.pie, {
+            tamano: 15,
+            peso: "bold",
+            color: p.textoClaro,
+            ...(e.fileteAcento ? { espaciado: 1 } : {}),
+        }),
         texto(W - M, m.yPie + 37, d.identidad.contacto, {
             tamano: 15,
             color: p.textoClaroTenue,
@@ -828,9 +921,13 @@ export function renderizarPortada(d: DatosPortada): string {
         .filter(Boolean)
         .join("\n");
 
+    // La familia del texto corrido se hereda desde aquí; los titulares la
+    // sobrescriben con la suya.
     return [
         `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">`,
+        `<g font-family="${d.identidad.estilo.fuenteTexto}">`,
         cuerpo,
+        "</g>",
         "</svg>",
     ].join("\n");
 }

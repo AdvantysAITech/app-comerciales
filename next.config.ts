@@ -1,5 +1,17 @@
 import type { NextConfig } from "next";
 
+/**
+ * .ttf que carga `lib/documentos/rasterizar.ts`. DejaVu para Scala (y respaldo
+ * de todas), Oswald y Lato para la portada de Vertical Projects.
+ */
+const FUENTES_PORTADA = [
+  "./node_modules/dejavu-fonts-ttf/ttf/DejaVuSans*.ttf",
+  "./node_modules/@expo-google-fonts/oswald/400Regular/Oswald_400Regular.ttf",
+  "./node_modules/@expo-google-fonts/oswald/700Bold/Oswald_700Bold.ttf",
+  "./node_modules/@expo-google-fonts/lato/400Regular/Lato_400Regular.ttf",
+  "./node_modules/@expo-google-fonts/lato/700Bold/Lato_700Bold.ttf",
+];
+
 const nextConfig: NextConfig = {
   devIndicators: false,
 
@@ -12,7 +24,12 @@ const nextConfig: NextConfig = {
    * sabe qué hacer con ellos ("Unknown module type"). Se quedan fuera del
    * bundle y se leen del disco en tiempo de ejecución.
    */
-  serverExternalPackages: ["@resvg/resvg-js", "dejavu-fonts-ttf"],
+  serverExternalPackages: [
+    "@resvg/resvg-js",
+    "dejavu-fonts-ttf",
+    "@expo-google-fonts/oswald",
+    "@expo-google-fonts/lato",
+  ],
 
   /**
    * Los .ttf de la portada no los ve el trazador de dependencias: se resuelven
@@ -21,7 +38,8 @@ const nextConfig: NextConfig = {
    * con un PNG perfectamente válido y en blanco.
    */
   outputFileTracingIncludes: {
-    "/api/documentos/estado/**": ["./node_modules/dejavu-fonts-ttf/ttf/DejaVuSans*.ttf"],
+    "/api/documentos/estado/**": FUENTES_PORTADA,
+    "/api/documentos/portada-prueba/**": FUENTES_PORTADA,
   },
 
   experimental: {

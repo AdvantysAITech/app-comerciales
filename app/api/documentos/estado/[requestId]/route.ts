@@ -448,7 +448,10 @@ export async function GET(
                         bytes: contenido.byteLength,
                     },
                     { PRESUPUESTO_GENERADO: true },
-                    etapaActual
+                    etapaActual,
+                    // Valor de la oportunidad: base imponible SIN IVA, del
+                    // mismo cálculo que acaba de imprimir el desglose.
+                    contexto.presupuesto.pem
                 );
             } catch (error) {
                 const motivo = error instanceof Error ? error.message : "error desconocido";

@@ -24,6 +24,11 @@ import { Resvg } from "@resvg/resvg-js";
  *
  * OJO con el formato: resvg admite TTF y OTF, NO woff ni woff2. Con un woff2 no
  * falla: devuelve el PNG con el texto ausente. Comprobado el 10/09/2026.
+ *
+ * Vertical Projects usa además Oswald (titulares) y Lato (texto), las mismas
+ * que incrusta su plantilla ODT (paquetes `@expo-google-fonts/*`, licencia
+ * OFL, TTF). Su portada las declara con DejaVu Sans de respaldo: si faltaran,
+ * saldría con DejaVu, nunca sin texto.
  */
 
 /**
@@ -45,9 +50,16 @@ import { Resvg } from "@resvg/resvg-js";
 const RUTAS_FUENTE = [
     join(process.cwd(), "node_modules/dejavu-fonts-ttf/ttf/DejaVuSans.ttf"),
     join(process.cwd(), "node_modules/dejavu-fonts-ttf/ttf/DejaVuSans-Bold.ttf"),
+    join(process.cwd(), "node_modules/@expo-google-fonts/oswald/400Regular/Oswald_400Regular.ttf"),
+    join(process.cwd(), "node_modules/@expo-google-fonts/oswald/700Bold/Oswald_700Bold.ttf"),
+    join(process.cwd(), "node_modules/@expo-google-fonts/lato/400Regular/Lato_400Regular.ttf"),
+    join(process.cwd(), "node_modules/@expo-google-fonts/lato/700Bold/Lato_700Bold.ttf"),
 ];
 
-/** Familia declarada en `portada.svg.ts`. Tiene que coincidir. */
+/**
+ * Familia por defecto y de respaldo de todas las identidades (ver
+ * `FUENTE_*` en portada.ts). Tiene que coincidir con el .ttf cargado.
+ */
 export const FAMILIA_FUENTE = "DejaVu Sans";
 
 /**
@@ -98,7 +110,7 @@ export function rasterizarSvg(svg: string, opciones: OpcionesRasterizado = {}): 
                 `pintado: resvg no da error con una fuente que no encuentra, simplemente no la ` +
                 `usa. Se han buscado en:\n` +
                 RUTAS_FUENTE.map((r) => `  - ${r}`).join("\n") +
-                `\n\nComprueba que "dejavu-fonts-ttf" está en dependencies (no en ` +
+                `\n\nComprueba que "dejavu-fonts-ttf" y "@expo-google-fonts/*" están en dependencies (no en ` +
                 `devDependencies) y que next.config.ts las incluye en outputFileTracingIncludes.`
         );
     }
